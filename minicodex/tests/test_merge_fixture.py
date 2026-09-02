@@ -1,6 +1,6 @@
 import pytest
 
-from autu_abcdefg import merge
+from .fixtures.autu_abcdefg import merge
 
 
 @pytest.mark.parametrize(

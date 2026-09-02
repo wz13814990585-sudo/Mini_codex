@@ -1,6 +1,6 @@
 import pytest
 
-from calculator import add, divide
+from .fixtures.calculator import add, divide
 
 
 @pytest.mark.parametrize(

@@ -311,7 +311,7 @@ Rules:
                 f"{step.description} "
                 f"(attempts={step.attempts})"
             )
-            for step in plan.steps
+            for step in plan.all_steps()
         )
 
     # =========================================================
@@ -327,7 +327,7 @@ Rules:
             f"\n[Plan] {plan.goal}"
         )
 
-        for step in plan.steps:
+        for step in plan.all_steps():
             print(
                 f"{step.id}. "
                 f"[{step.status.value}] "

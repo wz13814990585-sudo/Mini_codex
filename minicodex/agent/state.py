@@ -28,6 +28,12 @@ class AgentPlan:
     steps: list[PlanStep] = field(
         default_factory=list
     )
+    completed_history: list[PlanStep] = field(
+        default_factory=list
+    )
+
+    def all_steps(self) -> list[PlanStep]:
+        return [*self.completed_history, *self.steps]
 
     def get_current_step(self) -> PlanStep | None:
         for step in self.steps:

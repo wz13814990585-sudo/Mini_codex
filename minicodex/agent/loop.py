@@ -187,13 +187,6 @@ def run_agent_loop(agent, user_input: str) -> str:
                 if "successfully" in str(result).lower():
                     agent.recovery.mark_progress()
 
-            if tool_name == "complete_plan_step":
-                if (
-                    "completed plan step"
-                    in str(result).lower()
-                ):
-                    agent.recovery.mark_progress()
-
             if tool_name == "run_tests":
                 (
                     validation_ok,
@@ -207,15 +200,7 @@ def run_agent_loop(agent, user_input: str) -> str:
                     print(validation_message)
 
                 if validation_ok and validation_message:
-                    lower_message = (
-                        validation_message.lower()
-                    )
-
-                    if (
-                        "improved" in lower_message
-                        or "succeeded" in lower_message
-                    ):
-                        agent.recovery.mark_progress()
+                    agent.recovery.mark_progress()
 
                 if not validation_ok:
                     reason = (

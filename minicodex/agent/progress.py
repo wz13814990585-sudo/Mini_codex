@@ -151,6 +151,13 @@ class ProgressController:
             self.last_validation_failed_count = (
                 failed_count
             )
+
+            if failed_count == 0:
+                return (
+                    True,
+                    "Validation succeeded."
+                )
+
             return True, None
 
         previous = (

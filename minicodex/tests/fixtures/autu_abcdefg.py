@@ -1,4 +1,3 @@
-# autu_abcdefg.py
 """Advanced, stable, k-way merge of already-sorted iterables."""
 
 import heapq

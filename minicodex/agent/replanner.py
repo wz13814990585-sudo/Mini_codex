@@ -15,10 +15,18 @@ class Replanner:
         reason: str
     ) -> AgentPlan:
 
+        completed_history = [
+            *current_plan.completed_history,
+            *(
+                step
+                for step in current_plan.steps
+                if step.status == StepStatus.COMPLETED
+            ),
+        ]
+
         completed_steps = [
             step.description
-            for step in current_plan.steps
-            if step.status == StepStatus.COMPLETED
+            for step in completed_history
         ]
 
         remaining_steps = [
@@ -91,18 +99,38 @@ Return exactly:
 
         data = json.loads(raw)
 
+        completed_descriptions = {
+            description.strip().casefold()
+            for description in completed_steps
+        }
+        revised_steps = [
+            description
+            for description in data["steps"]
+            if description.strip().casefold()
+            not in completed_descriptions
+        ]
+
+        next_step_id = max(
+            (
+                step.id
+                for step in current_plan.all_steps()
+            ),
+            default=0,
+        ) + 1
+
         new_steps = [
             PlanStep(
                 id=index,
                 description=description
             )
             for index, description in enumerate(
-                data["steps"],
-                start=1
+                revised_steps,
+                start=next_step_id
             )
         ]
 
         return AgentPlan(
             goal=data["goal"],
-            steps=new_steps
+            steps=new_steps,
+            completed_history=completed_history,
         )

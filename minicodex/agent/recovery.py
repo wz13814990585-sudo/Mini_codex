@@ -4,10 +4,13 @@ class RecoveryController:
         self,
         max_recovery_level: int = 3
     ):
+        if not 1 <= max_recovery_level <= 3:
+            raise ValueError(
+                "max_recovery_level must be between 1 and 3."
+            )
+
         self.level = 0
-        self.max_recovery_level = (
-            max_recovery_level
-        )
+        self.max_recovery_level = max_recovery_level
 
     def reset(self) -> None:
         self.level = 0
@@ -20,6 +23,9 @@ class RecoveryController:
         reason: str,
         replan_callback
     ) -> tuple[str, bool]:
+
+        if self.level >= self.max_recovery_level:
+            return self._stop_message(), False
 
         # Level 1
         if self.level == 0:
@@ -64,12 +70,13 @@ class RecoveryController:
         # Level 3
         self.level = 3
 
+        return self._stop_message(), False
+
+    def _stop_message(self) -> str:
+
         return (
-            (
-                "The agent remains stalled after "
-                "strategy recovery and replanning."
-            ),
-            False
+            "The agent remains stalled after "
+            "strategy recovery and replanning."
         )
 
     def _strategy_warning(
