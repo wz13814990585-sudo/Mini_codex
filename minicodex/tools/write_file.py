@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from tools.base import BaseTool
+from minicodex.tools.base import BaseTool
+from minicodex.tools.paths import resolve_workspace_path
 
 
 class WriteFileTool(BaseTool):
@@ -45,17 +46,10 @@ class WriteFileTool(BaseTool):
         content: str
     ) -> str:
 
-        file_path = (
-            self.workspace / path
-        ).resolve()
-
-        # 防止写到 workspace 外
-        if self.workspace not in file_path.parents \
-                and file_path != self.workspace:
-
-            raise ValueError(
-                "Writing outside the workspace is not allowed."
-            )
+        file_path = resolve_workspace_path(
+            self.workspace,
+            path,
+        )
 
         # 如果父目录不存在，则自动创建
         file_path.parent.mkdir(

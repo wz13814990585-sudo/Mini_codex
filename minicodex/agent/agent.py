@@ -1,7 +1,13 @@
-from agent.loop import run_agent_loop
-from agent.state import AgentPlan
-from agent.progress import ProgressController
-from agent.recovery import RecoveryController
+import re
+
+from minicodex.agent.loop import run_agent_loop
+from minicodex.agent.state import AgentPlan
+from minicodex.agent.progress import ProgressController
+from minicodex.agent.recovery import RecoveryController
+from minicodex.prompts.system import (
+    build_system_prompt,
+    build_turn_context,
+)
 
 
 class MiniCodexAgent:
@@ -54,7 +60,7 @@ class MiniCodexAgent:
         self.active_plan = None
 
         # 新任务开始时清空状态
-        self.progress.reset()
+        self.progress.reset(new_task=True)
         self.recovery.reset()
 
         # =====================================================
@@ -64,7 +70,8 @@ class MiniCodexAgent:
         if use_planning and self.planner:
             try:
                 self.active_plan = self.planner.create_plan(
-                    user_input
+                    user_input,
+                    max_agent_steps=self.max_steps,
                 )
 
                 self._print_plan(
@@ -99,6 +106,9 @@ class MiniCodexAgent:
             return "No active plan step."
 
         self.recovery.mark_progress()
+        # Stall / duplicate history belongs to the finished
+        # step and must not poison the next one.
+        self.progress.reset()
 
         self._print_plan(
             self.active_plan
@@ -178,11 +188,10 @@ class MiniCodexAgent:
         if current_step is None:
             return False
 
-        text = (
-            current_step.description.lower()
-        )
+        text = current_step.description
+        lowered = text.lower()
 
-        edit_keywords = {
+        english_keywords = (
             "fix",
             "modify",
             "change",
@@ -191,6 +200,12 @@ class MiniCodexAgent:
             "update",
             "remove",
             "refactor",
+            "rewrite",
+            "replace",
+            "create",
+            "write",
+        )
+        chinese_keywords = (
             "修复",
             "修改",
             "实现",
@@ -199,24 +214,35 @@ class MiniCodexAgent:
             "更新",
             "删除",
             "重构",
-        }
+            "新建",
+            "重写",
+            "替换",
+            "写入",
+            "编写",
+        )
+
+        if any(keyword in text for keyword in chinese_keywords):
+            return True
 
         return any(
-            keyword in text
-            for keyword in edit_keywords
+            re.search(rf"\b{keyword}\b", lowered)
+            for keyword in english_keywords
         )
 
     # =========================================================
     # System Prompt
     # =========================================================
 
-    def _build_system_prompt(
-        self,
-        user_input: str,
-        plan,
-        current_step,
-    ) -> str:
+    def _build_system_prompt(self, **kwargs) -> str:
+        return build_system_prompt()
 
+    def _build_turn_context(
+        self,
+        plan=None,
+        current_step=None,
+        remaining_agent_steps: int | None = None,
+        **kwargs,
+    ) -> str:
         plan_text = (
             self._plan_to_text(plan)
             if plan
@@ -233,67 +259,11 @@ class MiniCodexAgent:
                 "No active plan step."
             )
 
-        return f"""
-You are MiniCodex, an autonomous coding agent.
-
-User goal:
-{user_input}
-
-Implementation plan:
-{plan_text}
-
-Current plan step:
-{current_step_text}
-
-Focus primarily on completing the current plan step.
-
-Rules:
-
-1. Inspect relevant code before modifying it.
-
-2. Prefer search_code when locating code.
-
-3. Prefer patch_file for targeted edits.
-
-4. Use write_file mainly for new files or when
-   full replacement is genuinely required.
-
-5. Validate changes after modifying code.
-
-6. Prefer run_tests when tests exist.
-
-7. If validation fails and enough evidence exists,
-   make a targeted fix instead of repeatedly
-   rerunning the same validation.
-
-8. Do not repeat substantially identical actions
-   without obtaining new information.
-
-9. Make the smallest reasonable code change.
-
-10. Do not change unrelated code merely to make
-    tests pass.
-
-11. Do not claim success unless tool output
-    confirms success.
-
-12. Trust real tool observations over assumptions
-    in the plan.
-
-13. When the CURRENT plan step is genuinely
-    complete, call complete_plan_step.
-
-14. If the plan itself is based on an incorrect
-    assumption, call replan with a clear reason.
-
-15. Do not replan for a single ordinary tool error
-    if it can reasonably be recovered locally.
-
-16. If recovery feedback says the current strategy
-    is stalled, choose a materially different action.
-
-17. Stop when the user's overall goal is complete.
-"""
+        return build_turn_context(
+            plan_text=plan_text,
+            current_step_text=current_step_text,
+            remaining_agent_steps=remaining_agent_steps,
+        )
 
     # =========================================================
     # Plan → Text
@@ -309,7 +279,7 @@ Rules:
                 f"{step.id}. "
                 f"[{step.status.value}] "
                 f"{step.description} "
-                f"(attempts={step.attempts})"
+                f"(failures={step.attempts})"
             )
             for step in plan.all_steps()
         )
@@ -332,5 +302,5 @@ Rules:
                 f"{step.id}. "
                 f"[{step.status.value}] "
                 f"{step.description} "
-                f"(attempts={step.attempts})"
+                f"(failures={step.attempts})"
             )

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from tools.base import BaseTool
+from minicodex.tools.base import BaseTool
+from minicodex.tools.paths import resolve_workspace_path
 
 
 class ListFilesTool(BaseTool):
@@ -30,16 +31,10 @@ class ListFilesTool(BaseTool):
 
     def execute(self, path: str = ".") -> str:
 
-        directory = (
-            self.workspace / path
-        ).resolve()
-
-        if self.workspace not in directory.parents \
-                and directory != self.workspace:
-
-            raise ValueError(
-                "Access outside the workspace is not allowed."
-            )
+        directory = resolve_workspace_path(
+            self.workspace,
+            path,
+        )
 
         if not directory.exists():
             raise FileNotFoundError(

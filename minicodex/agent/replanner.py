@@ -1,6 +1,6 @@
 import json
 
-from agent.state import AgentPlan, PlanStep, StepStatus
+from minicodex.agent.state import AgentPlan, PlanStep, StepStatus
 
 
 class Replanner:

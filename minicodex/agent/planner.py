@@ -1,6 +1,6 @@
 import json
 
-from agent.state import AgentPlan, PlanStep
+from minicodex.agent.state import AgentPlan, PlanStep
 
 
 class Planner:
@@ -10,8 +10,11 @@ class Planner:
 
     def create_plan(
         self,
-        user_request: str
+        user_request: str,
+        max_agent_steps: int = 20,
     ) -> AgentPlan:
+
+        max_plan_steps = max(3, min(6, max_agent_steps // 3 or 3))
 
         messages = [
             {
@@ -30,6 +33,10 @@ class Planner:
 Create an implementation plan for this request:
 
 {user_request}
+
+The executing agent has only {max_agent_steps} tool-using
+turns. Keep the plan short: at most {max_plan_steps}
+concrete steps. Prefer 4 steps or fewer.
 
 Return exactly this JSON format:
 
@@ -71,7 +78,7 @@ Return exactly this JSON format:
                 description=description
             )
             for index, description in enumerate(
-                data["steps"],
+                data["steps"][:max_plan_steps],
                 start=1
             )
         ]

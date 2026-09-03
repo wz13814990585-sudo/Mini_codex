@@ -15,11 +15,14 @@ class PlanStep:
     description: str
     status: StepStatus = StepStatus.PENDING
 
-    # 当前 Plan Step 已经尝试了多少轮
+    # 当前 Plan Step 遇到的工具调用失败次数
     attempts: int = 0
 
     def increment_attempt(self) -> None:
         self.attempts += 1
+
+    def reset_attempts(self) -> None:
+        self.attempts = 0
 
 
 @dataclass
@@ -56,9 +59,12 @@ class AgentPlan:
     def complete_current_step(self) -> PlanStep | None:
         step = self.get_current_step()
 
-        if step is not None:
-            step.status = StepStatus.COMPLETED
+        if step is None:
+            return None
 
+        step.status = StepStatus.COMPLETED
+        self.steps.remove(step)
+        self.completed_history.append(step)
         return step
 
     def fail_current_step(self) -> PlanStep | None:
@@ -70,7 +76,19 @@ class AgentPlan:
         return step
 
     def is_completed(self) -> bool:
-        return all(
+        if self.get_current_step() is not None:
+            return False
+
+        if any(
+            step.status == StepStatus.FAILED
+            for step in self.steps
+        ):
+            return False
+
+        if self.completed_history:
+            return True
+
+        return bool(self.steps) and all(
             step.status == StepStatus.COMPLETED
             for step in self.steps
         )

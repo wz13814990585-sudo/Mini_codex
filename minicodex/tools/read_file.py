@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from tools.base import BaseTool
+from minicodex.tools.base import BaseTool
+from minicodex.tools.paths import resolve_workspace_path
+
+
+DEFAULT_READ_LIMIT = 200
 
 
 class ReadFileTool(BaseTool):
@@ -8,7 +12,8 @@ class ReadFileTool(BaseTool):
     name = "read_file"
 
     description = (
-        "Read the contents of a text file from the current project."
+        "Read the contents of a text file from the current project. "
+        "Defaults to at most 200 lines; use offset/limit to continue."
     )
 
     parameters = {
@@ -19,6 +24,20 @@ class ReadFileTool(BaseTool):
                 "description": (
                     "Relative path of the file to read."
                 )
+            },
+            "offset": {
+                "type": "integer",
+                "description": (
+                    "1-based line number to start reading from. "
+                    "Defaults to 1."
+                )
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    "Maximum number of lines to return. "
+                    "Defaults to 200."
+                )
             }
         },
         "required": ["path"]
@@ -27,18 +46,16 @@ class ReadFileTool(BaseTool):
     def __init__(self, workspace: str = "."):
         self.workspace = Path(workspace).resolve()
 
-    def execute(self, path: str) -> str:
-        file_path = (
-            self.workspace / path
-        ).resolve()
-
-        if (
-            self.workspace not in file_path.parents
-            and file_path != self.workspace
-        ):
-            raise ValueError(
-                "Access outside the workspace is not allowed."
-            )
+    def execute(
+        self,
+        path: str,
+        offset: int = 1,
+        limit: int = DEFAULT_READ_LIMIT,
+    ) -> str:
+        file_path = resolve_workspace_path(
+            self.workspace,
+            path,
+        )
 
         if not file_path.exists():
             raise FileNotFoundError(
@@ -50,6 +67,30 @@ class ReadFileTool(BaseTool):
                 f"Path is not a file: {path}"
             )
 
-        return file_path.read_text(
+        content = file_path.read_text(
             encoding="utf-8"
         )
+        lines = content.splitlines()
+        total = len(lines)
+
+        start = max(int(offset), 1)
+        max_lines = max(int(limit), 1)
+        end = min(start + max_lines - 1, total)
+
+        if total == 0:
+            return f"# {path} lines 0-0 of 0\n"
+
+        if start > total:
+            return (
+                f"# {path} lines {start}-{start - 1} of {total}\n"
+                "# Offset is past the end of the file."
+            )
+
+        chunk = "\n".join(lines[start - 1:end])
+        header = f"# {path} lines {start}-{end} of {total}"
+        if end < total:
+            header += (
+                f"\n# Use offset={end + 1} to continue."
+            )
+
+        return f"{header}\n{chunk}"

@@ -1,4 +1,4 @@
-from tools.base import BaseTool
+from minicodex.tools.base import BaseTool
 
 
 class CompletePlanStepTool(BaseTool):

@@ -1,7 +1,8 @@
 """Patch application tools."""
 from pathlib import Path
 
-from tools.base import BaseTool
+from minicodex.tools.base import BaseTool
+from minicodex.tools.paths import resolve_workspace_path
 
 
 class PatchFileTool(BaseTool):
@@ -51,16 +52,10 @@ class PatchFileTool(BaseTool):
         new_text: str
     ) -> str:
 
-        file_path = (
-            self.workspace / path
-        ).resolve()
-
-        if self.workspace not in file_path.parents \
-                and file_path != self.workspace:
-
-            raise ValueError(
-                "Access outside the workspace is not allowed."
-            )
+        file_path = resolve_workspace_path(
+            self.workspace,
+            path,
+        )
 
         if not file_path.exists():
             raise FileNotFoundError(

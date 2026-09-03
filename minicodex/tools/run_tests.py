@@ -1,7 +1,12 @@
+import re
 import subprocess
+import sys
 from pathlib import Path
 
-from tools.base import BaseTool
+from minicodex.tools.base import BaseTool
+
+
+MAX_FAILURE_DETAIL_LINES = 40
 
 
 class RunTestsTool(BaseTool):
@@ -10,7 +15,7 @@ class RunTestsTool(BaseTool):
 
     description = (
         "Run the project's Python tests using pytest and return "
-        "the exit code, stdout, and stderr. "
+        "the exit code, a short summary, and failing details. "
         "Use this after modifying code when tests are available."
     )
 
@@ -40,9 +45,11 @@ class RunTestsTool(BaseTool):
     def execute(self, path: str = ".") -> str:
 
         command = [
-            "python",
+            sys.executable,
             "-m",
             "pytest",
+            "-p",
+            "no:debugging",
             path,
             "-q"
         ]
@@ -62,8 +69,88 @@ class RunTestsTool(BaseTool):
                 f"{self.timeout} seconds."
             )
 
-        return (
-            f"Exit code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+        return compact_pytest_output(
+            result.returncode,
+            result.stdout,
+            result.stderr,
         )
+
+
+def compact_pytest_output(
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    max_fail_lines: int = MAX_FAILURE_DETAIL_LINES,
+) -> str:
+    stdout_lines = stdout.splitlines()
+    parts = [f"Exit code: {exit_code}"]
+
+    summary_lines = [
+        line
+        for line in stdout_lines
+        if re.search(
+            r"\d+\s+(passed|failed|error|errors)",
+            line,
+            re.IGNORECASE,
+        )
+    ]
+    failed_names = [
+        line
+        for line in stdout_lines
+        if line.startswith("FAILED ")
+    ]
+
+    if summary_lines:
+        parts.append("SUMMARY:\n" + "\n".join(summary_lines[-3:]))
+
+    if failed_names:
+        parts.append(
+            "FAILED:\n" + "\n".join(failed_names[:20])
+        )
+
+    detail = _failure_detail_lines(
+        stdout_lines,
+        max_fail_lines,
+    )
+    if detail:
+        parts.append("DETAILS:\n" + "\n".join(detail))
+    elif not summary_lines:
+        parts.append(
+            "STDOUT:\n" + "\n".join(stdout_lines[:max_fail_lines])
+        )
+
+    stderr_lines = [
+        line for line in stderr.splitlines() if line.strip()
+    ]
+    if stderr_lines:
+        parts.append(
+            "STDERR:\n" + "\n".join(stderr_lines[:20])
+        )
+
+    return "\n".join(parts)
+
+
+def _failure_detail_lines(
+    stdout_lines: list[str],
+    max_fail_lines: int,
+) -> list[str]:
+    detail = []
+    capturing = False
+
+    for line in stdout_lines:
+        if (
+            "FAILURES" in line
+            or line.startswith("FAILED ")
+            or line.startswith("E ")
+            or line.startswith("E\t")
+        ):
+            capturing = True
+
+        if capturing:
+            if re.fullmatch(r"\.+", line.strip()):
+                continue
+            detail.append(line)
+            if len(detail) >= max_fail_lines:
+                break
+
+    return detail

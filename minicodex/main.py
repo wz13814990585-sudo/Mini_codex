@@ -1,31 +1,39 @@
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from agent.agent import MiniCodexAgent
-from agent.planner import Planner
+if __package__ in {None, ""}:
+    sys.path.insert(
+        0,
+        str(Path(__file__).resolve().parent.parent),
+    )
 
-from llm.client import LLMClient
+from minicodex.agent.agent import MiniCodexAgent
+from minicodex.agent.planner import Planner
+from minicodex.agent.replanner import Replanner
+from minicodex.llm.client import LLMClient
 
-from tools.registry import ToolRegistry
-from tools.read_file import ReadFileTool
-from tools.list_files import ListFilesTool
-from tools.write_file import WriteFileTool
-from tools.search_code import SearchCodeTool
-from tools.patch_file import PatchFileTool
-from tools.run_command import RunCommandTool
-from tools.run_tests import RunTestsTool
-from tools.complete_plan_step import CompletePlanStepTool
-from agent.replanner import Replanner
-from tools.replan import ReplanTool
+from minicodex.tools.registry import ToolRegistry
+from minicodex.tools.read_file import ReadFileTool
+from minicodex.tools.list_files import ListFilesTool
+from minicodex.tools.write_file import WriteFileTool
+from minicodex.tools.search_code import SearchCodeTool
+from minicodex.tools.patch_file import PatchFileTool
+from minicodex.tools.run_command import RunCommandTool
+from minicodex.tools.run_tests import RunTestsTool
+from minicodex.tools.complete_plan_step import CompletePlanStepTool
+from minicodex.tools.replan import ReplanTool
 
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 def main():
 
-    workspace = Path(".").resolve()
+    workspace = PROJECT_ROOT
 
     # =========================
     # LLM

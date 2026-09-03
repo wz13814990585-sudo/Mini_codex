@@ -1,0 +1,1 @@
+"""MiniCodex coding agent package."""
