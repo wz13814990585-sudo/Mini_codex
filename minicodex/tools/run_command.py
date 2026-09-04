@@ -1,7 +1,8 @@
 import subprocess
 from pathlib import Path
 
-from minicodex.tools.base import BaseTool
+from .base import BaseTool
+from .base import ToolResult
 
 
 class RunCommandTool(BaseTool):
@@ -22,23 +23,27 @@ class RunCommandTool(BaseTool):
                 "description": (
                     "Shell command to execute, "
                     "for example 'python calculator.py'."
-                )
+                ),
             }
         },
-        "required": ["command"]
+        "required": ["command"],
     }
 
     def __init__(
         self,
         workspace: str = ".",
-        timeout: int = 30
+        timeout: int = 30,
     ):
         self.workspace = Path(workspace).resolve()
         self.timeout = timeout
 
-    def execute(self, command: str) -> str:
+    def execute(
+        self,
+        command: str,
+    ) -> ToolResult:
+
         try:
-            result = subprocess.run(
+            process = subprocess.run(
                 [
                     "/bin/bash",
                     "-o",
@@ -49,19 +54,72 @@ class RunCommandTool(BaseTool):
                 cwd=self.workspace,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
             )
 
         except subprocess.TimeoutExpired:
-            return (
-                f"Command timed out after "
-                f"{self.timeout} seconds."
+            return ToolResult(
+                success=False,
+                summary=(
+                    f"Command timed out after "
+                    f"{self.timeout} seconds."
+                ),
+                data={
+                    "command": command,
+                    "timed_out": True,
+                    "timeout": self.timeout,
+                },
+                error="Command execution timed out.",
             )
 
-        output = (
-            f"Exit code: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+        stdout = process.stdout or ""
+        stderr = process.stderr or ""
+
+        command_succeeded = (
+            process.returncode == 0
         )
 
-        return output
+        if command_succeeded:
+            summary = (
+                f"Command completed successfully "
+                f"with exit code {process.returncode}."
+            )
+        else:
+            summary = (
+                f"Command completed with "
+                f"exit code {process.returncode}."
+            )
+
+        llm_parts = [
+            f"Exit code: {process.returncode}"
+        ]
+
+        if stdout.strip():
+            llm_parts.append(
+                "STDOUT:\n"
+                + stdout
+            )
+
+        if stderr.strip():
+            llm_parts.append(
+                "STDERR:\n"
+                + stderr
+            )
+
+        llm_content = "\n".join(
+            llm_parts
+        )
+
+        return ToolResult(
+            success=True,
+            summary=summary,
+            data={
+                "command": command,
+                "exit_code": process.returncode,
+                "command_succeeded": command_succeeded,
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": False,
+            },
+            llm_content=llm_content,
+        )

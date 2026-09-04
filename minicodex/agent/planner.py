@@ -1,6 +1,6 @@
 import json
 
-from minicodex.agent.state import AgentPlan, PlanStep
+from .state import AgentPlan, PlanStep
 
 
 class Planner:

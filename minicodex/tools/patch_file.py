@@ -1,8 +1,10 @@
 """Patch application tools."""
+
 from pathlib import Path
 
-from minicodex.tools.base import BaseTool
-from minicodex.tools.paths import resolve_workspace_path
+from .base import BaseTool
+from .paths import resolve_workspace_path
+from .results import ToolResult
 
 
 class PatchFileTool(BaseTool):
@@ -20,26 +22,26 @@ class PatchFileTool(BaseTool):
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Relative path of the file to modify."
+                "description": "Relative path of the file to modify.",
             },
             "old_text": {
                 "type": "string",
                 "description": (
                     "Exact existing text that should be replaced."
-                )
+                ),
             },
             "new_text": {
                 "type": "string",
                 "description": (
                     "New text that should replace old_text."
-                )
-            }
+                ),
+            },
         },
         "required": [
             "path",
             "old_text",
-            "new_text"
-        ]
+            "new_text",
+        ],
     }
 
     def __init__(self, workspace: str = "."):
@@ -49,8 +51,8 @@ class PatchFileTool(BaseTool):
         self,
         path: str,
         old_text: str,
-        new_text: str
-    ) -> str:
+        new_text: str,
+    ) -> ToolResult:
 
         file_path = resolve_workspace_path(
             self.workspace,
@@ -82,12 +84,21 @@ class PatchFileTool(BaseTool):
         updated_content = content.replace(
             old_text,
             new_text,
-            1
+            1,
         )
 
         file_path.write_text(
             updated_content,
-            encoding="utf-8"
+            encoding="utf-8",
         )
 
-        return f"Successfully patched file: {path}"
+        return ToolResult(
+            success=True,
+            summary=(
+                f"Successfully patched file: {path}"
+            ),
+            data={
+                "path": path,
+                "replacement_count": 1,
+            },
+        )

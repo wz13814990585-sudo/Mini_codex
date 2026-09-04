@@ -3,10 +3,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from minicodex.tools.base import BaseTool
+from .base import BaseTool
+from .base import ToolResult
 
 
 MAX_FAILURE_DETAIL_LINES = 40
+MAX_FAILED_TEST_NAMES = 20
 
 
 class RunTestsTool(BaseTool):
@@ -15,7 +17,7 @@ class RunTestsTool(BaseTool):
 
     description = (
         "Run the project's Python tests using pytest and return "
-        "the exit code, a short summary, and failing details. "
+        "structured test results, a short summary, and failing details. "
         "Use this after modifying code when tests are available."
     )
 
@@ -28,21 +30,24 @@ class RunTestsTool(BaseTool):
                     "Optional test path, such as 'tests/' "
                     "or 'tests/test_calculator.py'. "
                     "Use '.' to run the full test suite."
-                )
+                ),
             }
         },
-        "required": []
+        "required": [],
     }
 
     def __init__(
         self,
         workspace: str = ".",
-        timeout: int = 60
+        timeout: int = 60,
     ):
         self.workspace = Path(workspace).resolve()
         self.timeout = timeout
 
-    def execute(self, path: str = ".") -> str:
+    def execute(
+        self,
+        path: str = ".",
+    ) -> ToolResult:
 
         command = [
             sys.executable,
@@ -51,93 +56,255 @@ class RunTestsTool(BaseTool):
             "-p",
             "no:debugging",
             path,
-            "-q"
+            "-q",
         ]
 
         try:
-            result = subprocess.run(
+            process = subprocess.run(
                 command,
                 cwd=self.workspace,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
             )
 
         except subprocess.TimeoutExpired:
-            return (
-                f"Tests timed out after "
-                f"{self.timeout} seconds."
+            return ToolResult(
+                success=False,
+                summary=(
+                    f"Tests timed out after "
+                    f"{self.timeout} seconds."
+                ),
+                data={
+                    "path": path,
+                    "timeout": self.timeout,
+                    "timed_out": True,
+                },
+                error="pytest execution timed out",
             )
 
-        return compact_pytest_output(
-            result.returncode,
-            result.stdout,
-            result.stderr,
+        parsed = parse_pytest_output(
+            exit_code=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr,
+        )
+
+        llm_content = build_pytest_llm_content(
+            parsed
+        )
+
+        summary = build_pytest_summary(
+            parsed
+        )
+
+        return ToolResult(
+            success=True,
+            summary=summary,
+            data={
+                "path": path,
+                **parsed,
+            },
+            llm_content=llm_content,
         )
 
 
-def compact_pytest_output(
+def parse_pytest_output(
     exit_code: int,
     stdout: str,
     stderr: str,
-    max_fail_lines: int = MAX_FAILURE_DETAIL_LINES,
-) -> str:
-    stdout_lines = stdout.splitlines()
-    parts = [f"Exit code: {exit_code}"]
-
-    summary_lines = [
-        line
-        for line in stdout_lines
-        if re.search(
-            r"\d+\s+(passed|failed|error|errors)",
-            line,
-            re.IGNORECASE,
-        )
-    ]
-    failed_names = [
-        line
-        for line in stdout_lines
-        if line.startswith("FAILED ")
-    ]
-
-    if summary_lines:
-        parts.append("SUMMARY:\n" + "\n".join(summary_lines[-3:]))
-
-    if failed_names:
-        parts.append(
-            "FAILED:\n" + "\n".join(failed_names[:20])
-        )
-
-    detail = _failure_detail_lines(
-        stdout_lines,
-        max_fail_lines,
+) -> dict:
+    passed = _extract_count(
+        stdout,
+        "passed",
     )
-    if detail:
-        parts.append("DETAILS:\n" + "\n".join(detail))
-    elif not summary_lines:
-        parts.append(
-            "STDOUT:\n" + "\n".join(stdout_lines[:max_fail_lines])
-        )
+
+    failed = _extract_count(
+        stdout,
+        "failed",
+    )
+
+    errors = _extract_count(
+        stdout,
+        "error",
+    ) + _extract_count(
+        stdout,
+        "errors",
+    )
+
+    skipped = _extract_count(
+        stdout,
+        "skipped",
+    )
+
+    xfailed = _extract_count(
+        stdout,
+        "xfailed",
+    )
+
+    xpassed = _extract_count(
+        stdout,
+        "xpassed",
+    )
+
+    failed_tests = _extract_failed_test_names(
+        stdout
+    )
+
+    failure_details = _failure_detail_lines(
+        stdout.splitlines(),
+        MAX_FAILURE_DETAIL_LINES,
+    )
 
     stderr_lines = [
-        line for line in stderr.splitlines() if line.strip()
+        line
+        for line in stderr.splitlines()
+        if line.strip()
     ]
-    if stderr_lines:
+
+    return {
+        "exit_code": exit_code,
+        "passed": passed,
+        "failed": failed,
+        "errors": errors,
+        "skipped": skipped,
+        "xfailed": xfailed,
+        "xpassed": xpassed,
+        "failed_tests": failed_tests,
+        "failure_details": failure_details,
+        "stderr": stderr_lines[:20],
+        "tests_passed": exit_code == 0,
+        "timed_out": False,
+    }
+
+
+def build_pytest_summary(
+    parsed: dict,
+) -> str:
+
+    parts = []
+
+    if parsed["passed"]:
         parts.append(
-            "STDERR:\n" + "\n".join(stderr_lines[:20])
+            f"{parsed['passed']} passed"
         )
 
-    return "\n".join(parts)
+    if parsed["failed"]:
+        parts.append(
+            f"{parsed['failed']} failed"
+        )
+
+    if parsed["errors"]:
+        parts.append(
+            f"{parsed['errors']} errors"
+        )
+
+    if parsed["skipped"]:
+        parts.append(
+            f"{parsed['skipped']} skipped"
+        )
+
+    if not parts:
+        parts.append(
+            f"pytest exited with code "
+            f"{parsed['exit_code']}"
+        )
+
+    return ", ".join(parts) + "."
+
+
+def build_pytest_llm_content(
+    parsed: dict,
+) -> str:
+
+    sections = [
+        f"Exit code: {parsed['exit_code']}"
+    ]
+
+    if parsed["failed_tests"]:
+        sections.append(
+            "FAILED TESTS:\n"
+            + "\n".join(
+                parsed["failed_tests"]
+            )
+        )
+
+    if parsed["failure_details"]:
+        sections.append(
+            "DETAILS:\n"
+            + "\n".join(
+                parsed["failure_details"]
+            )
+        )
+
+    if parsed["stderr"]:
+        sections.append(
+            "STDERR:\n"
+            + "\n".join(
+                parsed["stderr"]
+            )
+        )
+
+    return "\n".join(sections)
+
+
+def _extract_count(
+    text: str,
+    label: str,
+) -> int:
+
+    pattern = (
+        rf"(\d+)\s+"
+        rf"{re.escape(label)}\b"
+    )
+
+    matches = re.findall(
+        pattern,
+        text,
+        re.IGNORECASE,
+    )
+
+    if not matches:
+        return 0
+
+    return int(
+        matches[-1]
+    )
+
+
+def _extract_failed_test_names(
+    stdout: str,
+) -> list[str]:
+
+    failed_names = []
+
+    for line in stdout.splitlines():
+
+        if not line.startswith("FAILED "):
+            continue
+
+        failed_names.append(
+            line.strip()
+        )
+
+        if (
+            len(failed_names)
+            >= MAX_FAILED_TEST_NAMES
+        ):
+            break
+
+    return failed_names
 
 
 def _failure_detail_lines(
     stdout_lines: list[str],
     max_fail_lines: int,
 ) -> list[str]:
+
     detail = []
     capturing = False
 
     for line in stdout_lines:
+
         if (
             "FAILURES" in line
             or line.startswith("FAILED ")
@@ -147,10 +314,19 @@ def _failure_detail_lines(
             capturing = True
 
         if capturing:
-            if re.fullmatch(r"\.+", line.strip()):
+
+            if re.fullmatch(
+                r"\.+",
+                line.strip(),
+            ):
                 continue
+
             detail.append(line)
-            if len(detail) >= max_fail_lines:
+
+            if (
+                len(detail)
+                >= max_fail_lines
+            ):
                 break
 
     return detail

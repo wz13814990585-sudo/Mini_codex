@@ -20,7 +20,8 @@ minicodex = "minicodex.main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["minicodex/tests"]
-addopts = "-p no:debugging -p no:asyncio"
+pythonpath = ["."]
+addopts = "-p no:debugging -p no:asyncio --import-mode=prepend"
 
 [tool.setuptools.packages.find]
 include = ["minicodex*"]

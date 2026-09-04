@@ -1,6 +1,6 @@
 """Tool registry."""
 
-from minicodex.tools.base import BaseTool
+from .base import BaseTool
 
 
 class ToolRegistry:

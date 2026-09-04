@@ -1,10 +1,10 @@
 import re
 
-from minicodex.agent.loop import run_agent_loop
-from minicodex.agent.state import AgentPlan
-from minicodex.agent.progress import ProgressController
-from minicodex.agent.recovery import RecoveryController
-from minicodex.prompts.system import (
+from .loop import run_agent_loop
+from .state import AgentPlan
+from .progress import ProgressController
+from .recovery import RecoveryController
+from ..prompts.system import (
     build_system_prompt,
     build_turn_context,
 )

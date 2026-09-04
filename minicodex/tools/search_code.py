@@ -1,8 +1,10 @@
 """Code search tools."""
+
 from pathlib import Path
 
-from minicodex.tools.base import BaseTool
-from minicodex.tools.paths import resolve_workspace_path
+from .base import BaseTool
+from .paths import resolve_workspace_path
+from .base import ToolResult
 
 
 MAX_SEARCH_FILE_BYTES = 1_000_000
@@ -26,24 +28,24 @@ class SearchCodeTool(BaseTool):
                 "description": (
                     "Text to search for, for example "
                     "'def calculate' or 'FastAPI('."
-                )
+                ),
             },
             "path": {
                 "type": "string",
                 "description": (
                     "Optional relative directory to search. "
                     "Defaults to the project root."
-                )
+                ),
             },
             "max_results": {
                 "type": "integer",
                 "description": (
                     "Maximum matches to return, from 1 to 200. "
                     "Defaults to 40."
-                )
+                ),
             },
         },
-        "required": ["query"]
+        "required": ["query"],
     }
 
     def __init__(self, workspace: str = "."):
@@ -54,10 +56,23 @@ class SearchCodeTool(BaseTool):
         query: str,
         path: str = ".",
         max_results: int = DEFAULT_MAX_RESULTS,
-    ) -> str:
+    ) -> ToolResult:
 
-        results = []
-        result_limit = min(max(int(max_results), 1), 200)
+        # Clamp the requested result limit to a safe range.
+        result_limit = min(
+            max(int(max_results), 1),
+            200,
+        )
+
+        # We intentionally collect one extra match.
+        #
+        # Example:
+        # max_results = 40
+        #
+        # If we find 41 matches, we know with certainty
+        # that the visible results are truncated.
+        collection_limit = result_limit + 1
+
         search_root = resolve_workspace_path(
             self.workspace,
             path,
@@ -83,6 +98,7 @@ class SearchCodeTool(BaseTool):
             "build",
             "dist",
         }
+
         ignored_suffixes = {
             ".pyc",
             ".png",
@@ -93,7 +109,10 @@ class SearchCodeTool(BaseTool):
             ".zip",
         }
 
-        truncated = False
+        # Machine-readable search results.
+        matches: list[dict] = []
+
+        stop_search = False
 
         for file_path in search_root.rglob("*"):
 
@@ -110,7 +129,10 @@ class SearchCodeTool(BaseTool):
                 continue
 
             try:
-                if file_path.stat().st_size > MAX_SEARCH_FILE_BYTES:
+                if (
+                    file_path.stat().st_size
+                    > MAX_SEARCH_FILE_BYTES
+                ):
                     continue
             except OSError:
                 continue
@@ -124,32 +146,109 @@ class SearchCodeTool(BaseTool):
 
             for line_number, line in enumerate(
                 content.splitlines(),
-                start=1
+                start=1,
             ):
-                if query.lower() in line.lower():
 
-                    relative_path = file_path.relative_to(
-                        self.workspace
-                    )
+                if query.lower() not in line.lower():
+                    continue
 
-                    results.append(
-                        f"{relative_path}:{line_number}: {line.strip()}"
-                    )
+                relative_path = file_path.relative_to(
+                    self.workspace
+                )
 
-                    if len(results) > result_limit:
-                        results.pop()
-                        truncated = True
-                        break
+                matches.append(
+                    {
+                        "path": str(relative_path),
+                        "line": line_number,
+                        "text": line.strip(),
+                    }
+                )
 
-            if truncated:
+                # Collect one extra result so that
+                # truncation is based on real evidence.
+                if len(matches) >= collection_limit:
+                    stop_search = True
+                    break
+
+            if stop_search:
                 break
 
-        if not results:
-            return f"No matches found for: {query}"
+        # If we collected more than the user-visible limit,
+        # the search result is definitely truncated.
+        truncated = len(matches) > result_limit
 
-        if truncated:
-            results.append(
-                f"[Results truncated at {result_limit} matches]"
+        visible_matches = matches[:result_limit]
+
+        returned_match_count = len(
+            visible_matches
+        )
+
+        # No matches is still a successful tool execution.
+        if returned_match_count == 0:
+            return ToolResult(
+                success=True,
+                summary=(
+                    f"No matches found for '{query}'."
+                ),
+                data={
+                    "query": query,
+                    "search_path": path,
+                    "returned_match_count": 0,
+                    "truncated": False,
+                    "max_results": result_limit,
+                    "matches": [],
+                },
+                llm_content="",
             )
 
-        return "\n".join(results)
+        # Build the text representation that the LLM sees.
+        llm_lines = [
+            (
+                f"{match['path']}:"
+                f"{match['line']}: "
+                f"{match['text']}"
+            )
+            for match in visible_matches
+        ]
+
+        if truncated:
+            llm_lines.append(
+                (
+                    "[Results truncated at "
+                    f"{result_limit} matches]"
+                )
+            )
+
+        llm_content = "\n".join(
+            llm_lines
+        )
+
+        if truncated:
+            summary = (
+                f"Found at least "
+                f"{returned_match_count} matches "
+                f"for '{query}'; "
+                "results were truncated."
+            )
+        else:
+            summary = (
+                f"Found "
+                f"{returned_match_count} matches "
+                f"for '{query}'."
+            )
+
+        return ToolResult(
+            success=True,
+            summary=summary,
+            data={
+                "query": query,
+                "search_path": path,
+                "returned_match_count": (
+                    returned_match_count
+                ),
+                "truncated": truncated,
+                "max_results": result_limit,
+                "matches": visible_matches,
+            },
+            llm_content=llm_content,
+        )

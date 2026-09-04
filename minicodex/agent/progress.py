@@ -1,5 +1,4 @@
 import json
-import re
 
 from dataclasses import dataclass
 from enum import Enum
@@ -22,7 +21,8 @@ class ValidationProgress:
 
     message: str | None = None
 
-    # 是否已经连续无进展，需要 Recovery
+    # Whether repeated validation without improvement
+    # has reached the recovery threshold.
     stalled: bool = False
 
     @property
@@ -85,7 +85,10 @@ class ProgressController:
     # Reset
     # =============================================
 
-    def reset(self, new_task: bool = False) -> None:
+    def reset(
+        self,
+        new_task: bool = False,
+    ) -> None:
 
         self.last_tool_signature = None
         self.same_tool_repeat_count = 0
@@ -240,14 +243,8 @@ class ProgressController:
 
     def track_validation(
         self,
-        result: str,
+        failed_count: int | None,
     ) -> ValidationProgress:
-
-        failed_count = (
-            self._extract_failed_test_count(
-                result
-            )
-        )
 
         # =========================================
         # Cannot understand validation result
@@ -394,50 +391,3 @@ class ProgressController:
             ),
             stalled=stalled,
         )
-
-    # =============================================
-    # Parse pytest output
-    # =============================================
-
-    def _extract_failed_test_count(
-        self,
-        result: str,
-    ) -> int | None:
-
-        matches = list(
-            re.finditer(
-                r"(\d+)\s+failed",
-                result,
-                re.IGNORECASE,
-            )
-        )
-
-        if matches:
-            return int(matches[-1].group(1))
-
-        match = re.search(
-            r"failed=(\d+)",
-            result,
-            re.IGNORECASE,
-        )
-
-        if match:
-            return int(match.group(1))
-
-        # Pipeline commands like `pytest | tail` can report
-        # exit code 0 even when tests failed. Do not treat
-        # those as passing if FAILED lines are still visible.
-        if re.search(r"\bFAILED\b", result):
-            return None
-
-        if re.search(
-            r"\d+\s+passed",
-            result,
-            re.IGNORECASE,
-        ):
-            return 0
-
-        if "Exit code: 0" in result:
-            return 0
-
-        return None

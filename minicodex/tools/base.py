@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any
+
+from .results import ToolResult
 
 
 class BaseTool(ABC):
@@ -9,7 +10,10 @@ class BaseTool(ABC):
     parameters: dict
 
     @abstractmethod
-    def execute(self, **kwargs) -> Any:
+    def execute(
+        self,
+        **kwargs,
+    ) -> ToolResult:
         pass
 
     def to_schema(self) -> dict:
@@ -19,5 +23,5 @@ class BaseTool(ABC):
                 "name": self.name,
                 "description": self.description,
                 "parameters": self.parameters,
-            }
+            },
         }
