@@ -1,10 +1,9 @@
 """Agent execution loop."""
 
-import json
-
 from .context import compact_messages
 from .progress import ValidationStatus
 from .state import StepStatus
+
 from ..tools.results import ToolResult
 
 
@@ -16,11 +15,30 @@ INCOMPLETE_PLAN_REMINDER = (
 )
 
 
+# =============================================================
+# Main Agent Loop
+# =============================================================
+
+
 def run_agent_loop(
     agent,
     user_input: str,
 ) -> str:
-    """Execute the LLM/tool loop for an initialized agent task."""
+
+    """
+    Main orchestration loop.
+
+    The loop owns Agent-level policy:
+    - planning progress
+    - duplicate policy
+    - validation
+    - recovery
+    - edit evidence
+    - plan transitions
+    - stopping decisions
+
+    Tool execution mechanics are delegated to ToolExecutor.
+    """
 
     messages = [
         {
@@ -29,23 +47,31 @@ def run_agent_loop(
         }
     ]
 
-    for agent_step in range(agent.max_steps):
+    # =========================================================
+    # Main step budget
+    # =========================================================
+
+    for agent_step in range(
+        agent.max_steps
+    ):
 
         print(
             f"\n[Agent Step "
-            f"{agent_step + 1}/{agent.max_steps}]"
+            f"{agent_step + 1}/"
+            f"{agent.max_steps}]"
         )
 
         current_plan_step = None
 
         # =====================================================
-        # Resolve current plan step
+        # Resolve Current Plan Step
         # =====================================================
 
         if agent.active_plan:
 
             current_plan_step = (
-                agent.active_plan.start_current_step()
+                agent.active_plan
+                .start_current_step()
             )
 
             if current_plan_step:
@@ -63,7 +89,7 @@ def run_agent_loop(
                 )
 
                 # =============================================
-                # Step attempt budget exceeded
+                # Step failure budget exceeded
                 # =============================================
 
                 if (
@@ -84,60 +110,86 @@ def run_agent_loop(
                         should_continue,
                     ) = agent.recovery.recover(
                         reason=reason,
-                        replan_callback=agent.replan,
+                        replan_callback=(
+                            agent.replan
+                        ),
                     )
 
-                    print("\n[Step Recovery]")
-                    print(recovery_message)
+                    print(
+                        "\n[Step Recovery]"
+                    )
+
+                    print(
+                        recovery_message
+                    )
 
                     if not should_continue:
 
                         return (
-                            "Agent stopped because the "
-                            "current plan step could not "
-                            "be recovered."
+                            "Agent stopped because "
+                            "the current plan step "
+                            "could not be recovered."
                         )
 
+                    # 新策略开始，不应该继续
+                    # 带着旧 failure attempt。
                     current_plan_step.reset_attempts()
 
                     messages.append(
                         {
                             "role": "user",
-                            "content": recovery_message,
+                            "content": (
+                                recovery_message
+                            ),
                         }
                     )
 
+                    # Recovery 可能已经触发 replan
                     if agent.active_plan:
+
                         current_plan_step = (
                             agent.active_plan
                             .start_current_step()
                         )
 
         # =====================================================
-        # Build LLM context
+        # Build LLM Context
         # =====================================================
 
         remaining_agent_steps = (
-            agent.max_steps - agent_step
+            agent.max_steps
+            - agent_step
         )
 
         compact_messages(
             messages
         )
 
-        system_prompt = agent._build_system_prompt(
-            user_input=user_input,
-            plan=agent.active_plan,
-            current_step=current_plan_step,
-            remaining_agent_steps=remaining_agent_steps,
+        system_prompt = (
+            agent._build_system_prompt(
+                user_input=user_input,
+                plan=agent.active_plan,
+                current_step=(
+                    current_plan_step
+                ),
+                remaining_agent_steps=(
+                    remaining_agent_steps
+                ),
+            )
         )
 
         llm_messages = [
             {
                 "role": "system",
-                "content": system_prompt,
+                "content": (
+                    system_prompt
+                ),
             }
         ] + messages
+
+        # =====================================================
+        # Dynamic Turn Context
+        # =====================================================
 
         build_turn = getattr(
             agent,
@@ -145,14 +197,20 @@ def run_agent_loop(
             None,
         )
 
-        if callable(build_turn):
+        if callable(
+            build_turn
+        ):
 
             llm_messages.append(
                 {
                     "role": "user",
                     "content": build_turn(
-                        plan=agent.active_plan,
-                        current_step=current_plan_step,
+                        plan=(
+                            agent.active_plan
+                        ),
+                        current_step=(
+                            current_plan_step
+                        ),
                         remaining_agent_steps=(
                             remaining_agent_steps
                         ),
@@ -161,46 +219,67 @@ def run_agent_loop(
             )
 
         # =====================================================
-        # LLM call
+        # LLM Call
         # =====================================================
 
         response = agent.llm.chat(
-            messages=llm_messages,
-            tools=agent.registry.get_schemas(),
+            messages=(
+                llm_messages
+            ),
+            tools=(
+                agent.registry
+                .get_schemas()
+            ),
         )
 
         # =====================================================
-        # LLM returned final text
+        # LLM Returned Final Text
         # =====================================================
 
         if not response.tool_calls:
 
-            content = response.content or ""
+            content = (
+                response.content
+                or ""
+            )
 
-            # Full suite already passed after an edit.
-            if tests_passed_after_edit(agent):
+            # =============================================
+            # Validated edit may finish task
+            # =============================================
+
+            if tests_passed_after_edit(
+                agent
+            ):
 
                 return (
                     content
                     or summarize_agent_stop(
                         agent,
                         (
-                            "Task validated: tests passed "
-                            "after a successful edit."
+                            "Task validated: "
+                            "tests passed after "
+                            "a successful edit."
                         ),
                     )
                 )
 
-            # Plan unfinished: do not allow premature finish.
+            # =============================================
+            # Prevent premature finish
+            # =============================================
+
             if (
                 agent.active_plan
-                and not agent.active_plan.is_completed()
+                and not (
+                    agent.active_plan
+                    .is_completed()
+                )
             ):
 
                 print(
                     "\n[Warning] "
-                    "LLM returned final answer before "
-                    "all plan steps were completed."
+                    "LLM returned final answer "
+                    "before all plan steps "
+                    "were completed."
                 )
 
                 remaining_budget = (
@@ -217,8 +296,9 @@ def run_agent_loop(
                             "content": (
                                 content
                                 or (
-                                    "Stopped before the "
-                                    "plan was complete."
+                                    "Stopped before "
+                                    "the plan was "
+                                    "complete."
                                 )
                             ),
                         }
@@ -238,8 +318,8 @@ def run_agent_loop(
                 return summarize_agent_stop(
                     agent,
                     (
-                        "Agent stopped with unfinished "
-                        "plan steps."
+                        "Agent stopped with "
+                        "unfinished plan steps."
                     ),
                     content,
                 )
@@ -247,7 +327,7 @@ def run_agent_loop(
             return content
 
         # =====================================================
-        # Save assistant tool calls into history
+        # Preserve Assistant Tool Calls
         # =====================================================
 
         messages.append(
@@ -260,10 +340,13 @@ def run_agent_loop(
         early_stop = None
 
         # =====================================================
-        # Execute tool calls
+        # Execute Tool Calls
         # =====================================================
 
-        for tool_index, tool_call in enumerate(
+        for (
+            tool_index,
+            tool_call,
+        ) in enumerate(
             response.tool_calls
         ):
 
@@ -272,39 +355,57 @@ def run_agent_loop(
             )
 
             # =================================================
-            # Parse tool arguments
+            # 1. Prepare Tool Call
+            #
+            # Parsing is execution mechanism,
+            # therefore ToolExecutor owns it.
             # =================================================
 
-            try:
-
-                arguments = json.loads(
-                    tool_call.function.arguments
+            prepared = (
+                agent.tool_executor
+                .prepare(
+                    tool_name=(
+                        tool_name
+                    ),
+                    raw_arguments=(
+                        tool_call
+                        .function
+                        .arguments
+                    ),
                 )
+            )
 
-            except Exception as e:
+            # =================================================
+            # Preparation Failure
+            # =================================================
+
+            if (
+                prepared.error
+                is not None
+            ):
+
+                result = (
+                    prepared.error
+                )
 
                 if current_plan_step:
-                    current_plan_step.increment_attempt()
 
-                result = ToolResult(
-                    success=False,
-                    summary=(
-                        f"Could not parse arguments "
-                        f"for tool '{tool_name}'."
-                    ),
-                    data={
-                        "tool_name": tool_name,
-                        "failure_type": (
-                            "argument_parsing"
-                        ),
-                    },
-                    error=(
-                        f"{type(e).__name__}: {e}"
-                    ),
-                )
+                    (
+                        current_plan_step
+                        .increment_attempt()
+                    )
 
                 observation_text = (
                     result.to_llm_text()
+                )
+
+                print(
+                    f"\n[Tool] "
+                    f"{tool_name}"
+                )
+
+                print(
+                    "\n[Tool Preparation Failed]"
                 )
 
                 print(
@@ -326,16 +427,28 @@ def run_agent_loop(
 
                 continue
 
-            print(
-                f"\n[Tool] {tool_name}"
+            arguments = (
+                prepared.arguments
             )
 
             print(
-                f"[Arguments] {arguments}"
+                f"\n[Tool] "
+                f"{tool_name}"
+            )
+
+            print(
+                f"[Arguments] "
+                f"{arguments}"
             )
 
             # =================================================
-            # Duplicate tool-call detection
+            # 2. Duplicate Policy
+            #
+            # This intentionally remains outside
+            # ToolExecutor.
+            #
+            # Executor = mechanism
+            # ProgressController = policy
             # =================================================
 
             (
@@ -351,23 +464,33 @@ def run_agent_loop(
 
             if not allowed:
 
-                if current_plan_step:
-                    current_plan_step.increment_attempt()
-
                 result = ToolResult(
                     success=False,
                     summary=(
-                        f"Tool call '{tool_name}' "
-                        "was blocked as a duplicate."
+                        f"Tool call "
+                        f"'{tool_name}' "
+                        "was blocked as "
+                        "a duplicate."
                     ),
                     data={
-                        "tool_name": tool_name,
+                        "tool_name": (
+                            tool_name
+                        ),
                         "failure_type": (
                             "duplicate_call"
                         ),
                     },
-                    error=duplicate_reason,
+                    error=(
+                        duplicate_reason
+                    ),
                 )
+
+                if current_plan_step:
+
+                    (
+                        current_plan_step
+                        .increment_attempt()
+                    )
 
                 print(
                     "\n[Duplicate Tool Blocked]"
@@ -376,79 +499,43 @@ def run_agent_loop(
             else:
 
                 # =============================================
-                # Execute the actual tool
+                # 3. Reliable Execution
+                #
+                # ToolExecutor now owns:
+                #
+                # registry.execute
+                # exception normalization
+                # ToolResult contract enforcement
                 # =============================================
 
-                try:
-
-                    result = (
-                        agent.registry.execute(
-                            tool_name,
-                            arguments,
-                        )
+                execution = (
+                    agent.tool_executor
+                    .execute_prepared(
+                        prepared
                     )
+                )
 
-                    # =========================================
-                    # Enforce ToolResult contract
-                    # =========================================
+                result = (
+                    execution.result
+                )
 
-                    if not isinstance(
-                        result,
-                        ToolResult,
-                    ):
+                # =============================================
+                # Tool mechanism failure
+                # consumes plan step attempt
+                # =============================================
 
-                        if current_plan_step:
-                            (
-                                current_plan_step
-                                .increment_attempt()
-                            )
+                if (
+                    not result.success
+                    and current_plan_step
+                ):
 
-                        result = ToolResult(
-                            success=False,
-                            summary=(
-                                f"Tool '{tool_name}' "
-                                "returned an invalid "
-                                "result type."
-                            ),
-                            data={
-                                "tool_name": tool_name,
-                                "failure_type": (
-                                    "invalid_result_type"
-                                ),
-                                "returned_type": (
-                                    type(result).__name__
-                                ),
-                            },
-                            error=(
-                                "Every tool must return "
-                                "ToolResult."
-                            ),
-                        )
-
-                except Exception as e:
-
-                    if current_plan_step:
-                        current_plan_step.increment_attempt()
-
-                    result = ToolResult(
-                        success=False,
-                        summary=(
-                            f"Tool '{tool_name}' "
-                            "failed during execution."
-                        ),
-                        data={
-                            "tool_name": tool_name,
-                            "failure_type": (
-                                "execution"
-                            ),
-                        },
-                        error=(
-                            f"{type(e).__name__}: {e}"
-                        ),
+                    (
+                        current_plan_step
+                        .increment_attempt()
                     )
 
             # =================================================
-            # Convert ToolResult to LLM observation
+            # 4. ToolResult → LLM Observation
             # =================================================
 
             observation_text = (
@@ -466,12 +553,14 @@ def run_agent_loop(
                     "tool_call_id": (
                         tool_call.id
                     ),
-                    "content": observation_text,
+                    "content": (
+                        observation_text
+                    ),
                 }
             )
 
             # =================================================
-            # Record tool action
+            # 5. Record Agent Action
             # =================================================
 
             agent.progress.record_action(
@@ -479,12 +568,16 @@ def run_agent_loop(
             )
 
             # =================================================
-            # Successful edit evidence
+            # Successful Edit Evidence
             # =================================================
 
-            if tool_name == "patch_file":
+            if tool_name in {
+                "patch_file",
+                "write_file",
+            }:
 
                 if result.success:
+
                     (
                         agent.progress
                         .record_successful_edit()
@@ -494,27 +587,14 @@ def run_agent_loop(
                         "\n[Edit Applied]"
                     )
 
-            elif tool_name == "write_file":
-
-                if result.success:
-                    (
-                        agent.progress
-                        .record_successful_edit()
-                    )
-
-                    print(
-                        "\n[Edit Applied]"
-                    )
-
             # =================================================
-            # complete_plan_step
-            #
-            # Important:
-            # changing plan state invalidates remaining tool
-            # calls generated from the old turn context.
+            # Complete Plan Step
             # =================================================
 
-            if tool_name == "complete_plan_step":
+            if (
+                tool_name
+                == "complete_plan_step"
+            ):
 
                 completed = bool(
                     result.data.get(
@@ -525,6 +605,9 @@ def run_agent_loop(
 
                 if completed:
 
+                    # Plan state changed.
+                    # Remaining calls were generated
+                    # from stale context.
                     append_skipped_tool_results(
                         messages,
                         response.tool_calls[
@@ -532,7 +615,7 @@ def run_agent_loop(
                         ],
                         (
                             "the active plan step "
-                            "was completed and the "
+                            "was completed and "
                             "remaining calls were "
                             "generated from stale "
                             "plan context"
@@ -545,10 +628,7 @@ def run_agent_loop(
                 continue
 
             # =================================================
-            # replan
-            #
-            # Successful replanning invalidates all remaining
-            # tool calls from the old plan.
+            # Replan
             # =================================================
 
             if tool_name == "replan":
@@ -562,16 +642,19 @@ def run_agent_loop(
 
                 if replanned:
 
+                    # Old tool calls are no longer
+                    # valid after the plan changes.
                     append_skipped_tool_results(
                         messages,
                         response.tool_calls[
                             tool_index + 1:
                         ],
                         (
-                            "the implementation plan "
-                            "was revised and remaining "
-                            "calls were generated from "
-                            "the previous plan"
+                            "the implementation "
+                            "plan was revised and "
+                            "remaining calls were "
+                            "generated from the "
+                            "previous plan"
                         ),
                     )
 
@@ -581,7 +664,7 @@ def run_agent_loop(
                 continue
 
             # =================================================
-            # Structured validation
+            # Structured Validation
             # =================================================
 
             if tool_name == "run_tests":
@@ -590,8 +673,10 @@ def run_agent_loop(
 
                 if result.success:
 
-                    tests_passed = result.data.get(
-                        "tests_passed"
+                    tests_passed = (
+                        result.data.get(
+                            "tests_passed"
+                        )
                     )
 
                     failed = int(
@@ -608,12 +693,34 @@ def run_agent_loop(
                         )
                     )
 
-                    if tests_passed is True:
+                    # =========================================
+                    # Only explicit pytest success
+                    # becomes failed_count=0.
+                    #
+                    # This prevents:
+                    # collection errors
+                    # no-tests-collected
+                    # pytest internal failures
+                    #
+                    # from being misclassified as PASS.
+                    # =========================================
+
+                    if (
+                        tests_passed
+                        is True
+                    ):
+
                         failed_count = 0
 
-                    elif failed + errors > 0:
+                    elif (
+                        failed
+                        + errors
+                        > 0
+                    ):
+
                         failed_count = (
-                            failed + errors
+                            failed
+                            + errors
                         )
 
                 (
@@ -623,14 +730,34 @@ def run_agent_loop(
                     agent,
                     failed_count,
                     messages,
-                    full_suite=is_full_test_run(
-                        tool_name,
-                        arguments,
+                    full_suite=(
+                        is_full_test_run(
+                            tool_name,
+                            arguments,
+                        )
                     ),
                 )
 
+                if (
+                    early_stop
+                    or restart_agent_loop
+                ):
+
+                    append_skipped_tool_results(
+                        messages,
+                        response.tool_calls[
+                            tool_index + 1:
+                        ],
+                        (
+                            "validation changed "
+                            "agent loop control flow"
+                        ),
+                    )
+
+                    break
+
             # =================================================
-            # General action-stall detection
+            # General Action Stall Detection
             # =================================================
 
             if (
@@ -652,9 +779,13 @@ def run_agent_loop(
                 (
                     recovery_message,
                     should_continue,
-                ) = agent.recovery.recover(
-                    reason=reason,
-                    replan_callback=agent.replan,
+                ) = (
+                    agent.recovery.recover(
+                        reason=reason,
+                        replan_callback=(
+                            agent.replan
+                        ),
+                    )
                 )
 
                 print(
@@ -680,8 +811,8 @@ def run_agent_loop(
 
                     return (
                         "Agent stopped because "
-                        "meaningful progress could "
-                        "not be made."
+                        "meaningful progress "
+                        "could not be made."
                     )
 
                 messages.append(
@@ -709,43 +840,49 @@ def run_agent_loop(
                 break
 
         # =====================================================
-        # After tool-call batch
+        # After Tool Call Batch
         # =====================================================
 
         if early_stop:
-
             return early_stop
 
         if restart_agent_loop:
-
             continue
 
-        if tests_passed_after_edit(agent):
+        # =====================================================
+        # Stop When Full Validation Passed After Edit
+        # =====================================================
+
+        if tests_passed_after_edit(
+            agent
+        ):
 
             return summarize_agent_stop(
                 agent,
                 (
-                    "Task validated: the full test "
-                    "suite passed after the latest "
+                    "Task validated: "
+                    "the full test suite "
+                    "passed after the latest "
                     "successful edit."
                 ),
             )
 
     # =========================================================
-    # Agent budget exhausted
+    # Agent Budget Exhausted
     # =========================================================
 
     return summarize_agent_stop(
         agent,
         (
-            "Agent stopped because the maximum "
-            "number of agent steps was reached."
+            "Agent stopped because "
+            "the maximum number of "
+            "agent steps was reached."
         ),
     )
 
 
 # =============================================================
-# Validation helpers
+# Validation Helpers
 # =============================================================
 
 
@@ -771,6 +908,11 @@ def tests_passed_after_edit(
     )
 
 
+# =============================================================
+# Full Test Suite Detection
+# =============================================================
+
+
 def is_full_test_run(
     tool_name: str,
     arguments: dict,
@@ -793,18 +935,31 @@ def is_full_test_run(
     }
 
 
+# =============================================================
+# Validation Policy
+# =============================================================
+
+
 def apply_validation(
     agent,
     failed_count: int | None,
     messages: list,
     full_suite: bool = False,
-) -> tuple[str | None, bool]:
+) -> tuple[
+    str | None,
+    bool,
+]:
 
     validation = (
-        agent.progress.track_validation(
+        agent.progress
+        .track_validation(
             failed_count
         )
     )
+
+    # =========================================================
+    # Log Validation State
+    # =========================================================
 
     if validation.message:
 
@@ -816,6 +971,10 @@ def apply_validation(
             validation.message
         )
 
+    # =========================================================
+    # Objective Validation Progress
+    # =========================================================
+
     if validation.meaningful_progress:
 
         agent.recovery.mark_progress()
@@ -823,6 +982,10 @@ def apply_validation(
         print(
             "\n[Meaningful Progress Detected]"
         )
+
+    # =========================================================
+    # Successful Full Suite
+    # =========================================================
 
     if (
         validation.status
@@ -832,9 +995,20 @@ def apply_validation(
 
         agent.progress.mark_edit_validated()
 
+    # =========================================================
+    # Not Stalled
+    # =========================================================
+
     if not validation.stalled:
 
-        return None, False
+        return (
+            None,
+            False,
+        )
+
+    # =========================================================
+    # Validation Recovery
+    # =========================================================
 
     reason = (
         "Validation is repeatedly failing "
@@ -847,7 +1021,9 @@ def apply_validation(
         should_continue,
     ) = agent.recovery.recover(
         reason=reason,
-        replan_callback=agent.replan,
+        replan_callback=(
+            agent.replan
+        ),
     )
 
     print(
@@ -877,11 +1053,14 @@ def apply_validation(
         }
     )
 
-    return None, True
+    return (
+        None,
+        True,
+    )
 
 
 # =============================================================
-# Tool-call history integrity
+# Tool Call History Integrity
 # =============================================================
 
 
@@ -890,6 +1069,14 @@ def append_skipped_tool_results(
     tool_calls,
     reason: str,
 ) -> None:
+
+    """
+    Tool-call protocols expect every assistant tool call
+    to receive a corresponding tool response.
+
+    When plan/recovery state changes midway through a batch,
+    remaining calls are deliberately skipped instead of executed.
+    """
 
     for tool_call in tool_calls:
 
@@ -908,7 +1095,7 @@ def append_skipped_tool_results(
 
 
 # =============================================================
-# Stop summary
+# Agent Stop Summary
 # =============================================================
 
 
@@ -928,11 +1115,16 @@ def summarize_agent_stop(
         None,
     )
 
+    # =========================================================
+    # Plan Status
+    # =========================================================
+
     if plan:
 
         completed = [
             step
-            for step in plan.all_steps()
+            for step
+            in plan.all_steps()
             if (
                 step.status
                 == StepStatus.COMPLETED
@@ -941,9 +1133,9 @@ def summarize_agent_stop(
 
         remaining = [
             step
-            for step in plan.all_steps()
-            if step.status
-            in {
+            for step
+            in plan.all_steps()
+            if step.status in {
                 StepStatus.PENDING,
                 StepStatus.IN_PROGRESS,
             }
@@ -970,8 +1162,13 @@ def summarize_agent_stop(
         if plan.is_completed():
 
             lines.append(
-                "All plan steps are marked complete."
+                "All plan steps are "
+                "marked complete."
             )
+
+    # =========================================================
+    # Last Validation State
+    # =========================================================
 
     failed = getattr(
         agent.progress,
@@ -982,15 +1179,22 @@ def summarize_agent_stop(
     if failed == 0:
 
         lines.append(
-            "Last validation: tests passed."
+            "Last validation: "
+            "tests passed."
         )
 
     elif failed is not None:
 
         lines.append(
-            f"Last validation: "
-            f"{failed} failed."
+            (
+                "Last validation: "
+                f"{failed} failures."
+            )
         )
+
+    # =========================================================
+    # Last LLM Text
+    # =========================================================
 
     if last_text:
 
