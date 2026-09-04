@@ -5,7 +5,7 @@ import json
 from .context import compact_messages
 from .progress import ValidationStatus
 from .state import StepStatus
-from ..tools.base import ToolResult
+from ..tools.results import ToolResult
 
 
 INCOMPLETE_PLAN_REMINDER = (
@@ -590,11 +590,31 @@ def run_agent_loop(
 
                 if result.success:
 
-                    failed_count = (
+                    tests_passed = result.data.get(
+                        "tests_passed"
+                    )
+
+                    failed = int(
                         result.data.get(
-                            "failed"
+                            "failed",
+                            0,
                         )
                     )
+
+                    errors = int(
+                        result.data.get(
+                            "errors",
+                            0,
+                        )
+                    )
+
+                    if tests_passed is True:
+                        failed_count = 0
+
+                    elif failed + errors > 0:
+                        failed_count = (
+                            failed + errors
+                        )
 
                 (
                     early_stop,
@@ -603,31 +623,11 @@ def run_agent_loop(
                     agent,
                     failed_count,
                     messages,
-                    full_suite=(
-                        is_full_test_run(
-                            tool_name,
-                            arguments,
-                        )
+                    full_suite=is_full_test_run(
+                        tool_name,
+                        arguments,
                     ),
                 )
-
-                if (
-                    early_stop
-                    or restart_agent_loop
-                ):
-
-                    append_skipped_tool_results(
-                        messages,
-                        response.tool_calls[
-                            tool_index + 1:
-                        ],
-                        (
-                            "validation changed "
-                            "loop control flow"
-                        ),
-                    )
-
-                    break
 
             # =================================================
             # General action-stall detection

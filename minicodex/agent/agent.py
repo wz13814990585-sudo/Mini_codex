@@ -93,32 +93,46 @@ class MiniCodexAgent:
     # Complete Plan Step
     # =========================================================
 
-    def complete_plan_step(self) -> str:
+    def complete_plan_step(self) -> dict:
 
         if self.active_plan is None:
-            return "No active plan."
+            return {
+                "completed": False,
+                "step_id": None,
+                "step_description": None,
+                "message": "No active plan.",
+            }
 
         step = (
             self.active_plan.complete_current_step()
         )
 
         if step is None:
-            return "No active plan step."
+            return {
+                "completed": False,
+                "step_id": None,
+                "step_description": None,
+                "message": "No active plan step.",
+            }
 
         self.recovery.mark_progress()
-        # Stall / duplicate history belongs to the finished
-        # step and must not poison the next one.
+
         self.progress.reset()
 
         self._print_plan(
             self.active_plan
         )
 
-        return (
-            f"Completed plan step "
-            f"{step.id}: "
-            f"{step.description}"
-        )
+        return {
+            "completed": True,
+            "step_id": step.id,
+            "step_description": step.description,
+            "message": (
+                f"Completed plan step "
+                f"{step.id}: "
+                f"{step.description}"
+            ),
+        }
 
     # =========================================================
     # Replan
@@ -127,16 +141,43 @@ class MiniCodexAgent:
     def replan(
         self,
         reason: str,
-    ) -> str:
+    ) -> dict:
 
         if self.active_plan is None:
-            return "No active plan to revise."
+            return {
+                "replanned": False,
+                "reason": reason,
+                "failure_reason": (
+                    "No active plan to revise."
+                ),
+                "message": (
+                    "No active plan to revise."
+                ),
+            }
 
         if self.replanner is None:
-            return "No replanner configured."
+            return {
+                "replanned": False,
+                "reason": reason,
+                "failure_reason": (
+                    "No replanner configured."
+                ),
+                "message": (
+                    "No replanner configured."
+                ),
+            }
 
         if self.active_user_request is None:
-            return "Original request unavailable."
+            return {
+                "replanned": False,
+                "reason": reason,
+                "failure_reason": (
+                    "Original request unavailable."
+                ),
+                "message": (
+                    "Original request unavailable."
+                ),
+            }
 
         try:
             new_plan = self.replanner.replan(
@@ -150,31 +191,38 @@ class MiniCodexAgent:
             )
 
         except Exception as e:
-            return (
+            error_message = (
                 "Replanning failed: "
                 f"{type(e).__name__}: {e}"
             )
 
+            return {
+                "replanned": False,
+                "reason": reason,
+                "failure_reason": error_message,
+                "message": error_message,
+            }
+
         self.active_plan = new_plan
 
-        # 新 Plan 不应该继承旧的 progress history
         self.progress.reset()
 
-        print(
-            "\n[Replanned]"
-        )
-        print(
-            f"Reason: {reason}"
-        )
+        print("\n[Replanned]")
+        print(f"Reason: {reason}")
 
         self._print_plan(
             self.active_plan
         )
 
-        return (
-            "Plan successfully revised. "
-            "Continue execution using the new plan."
-        )
+        return {
+            "replanned": True,
+            "reason": reason,
+            "failure_reason": None,
+            "message": (
+                "Plan successfully revised. "
+                "Continue execution using the new plan."
+            ),
+        }
 
     # =========================================================
     # Step Type Detection

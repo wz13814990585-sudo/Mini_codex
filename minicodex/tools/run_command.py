@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 from .base import BaseTool
-from .base import ToolResult
+from .results import ToolResult
 
 
 class RunCommandTool(BaseTool):

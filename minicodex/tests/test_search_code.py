@@ -1,5 +1,5 @@
 from ..tools.search_code import SearchCodeTool
-from ..tools.base import ToolResult
+from ..tools.results import ToolResult
 
 
 def test_search_code_returns_structured_matches(

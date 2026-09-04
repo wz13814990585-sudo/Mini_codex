@@ -1,5 +1,5 @@
 from .base import BaseTool
-from .base import ToolResult
+from .results import ToolResult
 
 
 class CompletePlanStepTool(BaseTool):

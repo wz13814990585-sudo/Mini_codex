@@ -1,5 +1,5 @@
 from ..tools.write_file import WriteFileTool
-from ..tools.base import ToolResult
+from ..tools.results import ToolResult
 
 def test_write_file_reports_created(
     tmp_path,

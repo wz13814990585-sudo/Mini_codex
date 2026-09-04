@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .base import BaseTool
 from .paths import resolve_workspace_path
-from .base import ToolResult
+from .results import ToolResult
 
 
 MAX_SEARCH_FILE_BYTES = 1_000_000

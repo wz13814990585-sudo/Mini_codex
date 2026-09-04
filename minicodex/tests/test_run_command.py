@@ -1,5 +1,5 @@
 from ..tools.run_command import RunCommandTool
-from ..tools.base import ToolResult
+from ..tools.results import ToolResult
 
 def test_run_command_success(
     tmp_path,

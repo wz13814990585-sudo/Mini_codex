@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from .base import BaseTool
-from .base import ToolResult
+from .results import ToolResult
 
 
 MAX_FAILURE_DETAIL_LINES = 40
