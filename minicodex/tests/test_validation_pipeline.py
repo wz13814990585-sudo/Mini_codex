@@ -2,6 +2,7 @@ from ..agent.validation import (
     ValidationNextAction,
     ValidationOutcome,
     ValidationPipeline,
+    ValidationPurpose,
     ValidationScope,
 )
 from ..tools.results import (
@@ -34,9 +35,9 @@ def passed_result(
 
 
 def failed_result(
-    failed: int = 1,
     *,
     passed: int = 0,
+    failed: int = 1,
     errors: int = 0,
 ) -> ToolResult:
 
@@ -57,12 +58,29 @@ def failed_result(
     )
 
 
+def inconclusive_result() -> ToolResult:
+
+    return ToolResult(
+        success=True,
+        summary=(
+            "pytest exited unexpectedly."
+        ),
+        data={
+            "tests_passed": False,
+            "passed": 0,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+        },
+    )
+
+
 # =============================================================
-# Full Validation
+# Acceptance Evidence
 # =============================================================
 
 
-def test_full_suite_passed():
+def test_acceptance_pass_is_recorded():
 
     pipeline = (
         ValidationPipeline()
@@ -74,17 +92,26 @@ def test_full_suite_passed():
         pipeline.observe(
             tool_name="run_tests",
             arguments={
-                "path": "."
+                "path": (
+                    "minicodex/tests/"
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
             },
             result=(
                 passed_result(
-                    10
+                    3
                 )
             ),
         )
     )
 
-    assert evidence is not None
+    assert (
+        evidence
+        is not None
+    )
 
     assert (
         evidence.execution_succeeded
@@ -98,7 +125,12 @@ def test_full_suite_passed():
 
     assert (
         evidence.scope
-        == ValidationScope.FULL
+        == ValidationScope.TARGETED
+    )
+
+    assert (
+        evidence.purpose
+        == ValidationPurpose.ACCEPTANCE
     )
 
     assert (
@@ -107,26 +139,36 @@ def test_full_suite_passed():
     )
 
     assert (
-        pipeline
-        .current_edit_validated()
+        pipeline.state
+        .acceptance_passed
         is True
     )
 
     assert (
-        pipeline.next_action()
-        == (
-            ValidationNextAction
-            .TASK_VALIDATED
-        )
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+    assert (
+        pipeline
+        .current_acceptance_passed()
+        is True
+    )
+
+    assert (
+        pipeline
+        .current_edit_validated()
+        is False
     )
 
 
 # =============================================================
-# Targeted Validation Escalation
+# Acceptance Pass Requires Full Regression
 # =============================================================
 
 
-def test_targeted_pass_requires_full_validation():
+def test_acceptance_pass_requires_full_regression():
 
     pipeline = (
         ValidationPipeline()
@@ -140,69 +182,11 @@ def test_targeted_pass_requires_full_validation():
             arguments={
                 "path": (
                     "minicodex/tests/"
-                    "test_replace_symbol.py"
-                )
-            },
-            result=(
-                passed_result(
-                    3
-                )
-            ),
-        )
-    )
-
-    assert (
-        evidence.scope
-        == ValidationScope.TARGETED
-    )
-
-    assert (
-        evidence.outcome
-        == ValidationOutcome.PASSED
-    )
-
-    assert (
-        pipeline
-        .requires_full_validation()
-        is True
-    )
-
-    assert (
-        pipeline
-        .current_edit_validated()
-        is False
-    )
-
-    assert (
-        pipeline.next_action()
-        == (
-            ValidationNextAction
-            .RUN_FULL_VALIDATION
-        )
-    )
-
-
-# =============================================================
-# Targeted → Full
-# =============================================================
-
-
-def test_targeted_then_full_pass_validates_edit():
-
-    pipeline = (
-        ValidationPipeline()
-    )
-
-    pipeline.record_edit()
-
-    targeted = (
-        pipeline.observe(
-            tool_name="run_tests",
-            arguments={
-                "path": (
-                    "minicodex/tests/"
-                    "test_demo.py"
-                )
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
             },
             result=(
                 passed_result(
@@ -214,7 +198,7 @@ def test_targeted_then_full_pass_validates_edit():
 
     assert (
         pipeline.next_action(
-            targeted
+            evidence
         )
         == (
             ValidationNextAction
@@ -222,123 +206,25 @@ def test_targeted_then_full_pass_validates_edit():
         )
     )
 
-    full = (
-        pipeline.observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=(
-                passed_result(
-                    20
-                )
-            ),
-        )
-    )
-
-    assert (
-        full.scope
-        == ValidationScope.FULL
-    )
-
     assert (
         pipeline
         .requires_full_validation()
-        is False
-    )
-
-    assert (
-        pipeline
-        .current_edit_validated()
         is True
     )
 
     assert (
-        pipeline.next_action(
-            full
-        )
-        == (
-            ValidationNextAction
-            .TASK_VALIDATED
-        )
-    )
-
-
-# =============================================================
-# New Edit Invalidates Old Evidence
-# =============================================================
-
-
-def test_new_edit_invalidates_previous_full_validation():
-
-    pipeline = (
-        ValidationPipeline()
-    )
-
-    pipeline.record_edit()
-
-    pipeline.observe(
-        tool_name="run_tests",
-        arguments={
-            "path": "."
-        },
-        result=(
-            passed_result(
-                10
-            )
-        ),
-    )
-
-    assert (
         pipeline
-        .current_edit_validated()
-        is True
-    )
-
-    assert (
-        pipeline.state.edit_revision
-        == 1
-    )
-
-    # =========================================================
-    # New code change
-    # =========================================================
-
-    pipeline.record_edit()
-
-    assert (
-        pipeline.state.edit_revision
-        == 2
-    )
-
-    assert (
-        pipeline.state.targeted_passed
-        is False
-    )
-
-    assert (
-        pipeline.state.full_passed
-        is False
-    )
-
-    assert (
-        pipeline.state.latest_evidence
-        is None
-    )
-
-    assert (
-        pipeline
-        .current_edit_validated()
+        .requires_acceptance_validation()
         is False
     )
 
 
 # =============================================================
-# Failure
+# Full Regression Alone Is Not Completion
 # =============================================================
 
 
-def test_failed_validation_requests_fix():
+def test_full_regression_without_acceptance_requests_acceptance():
 
     pipeline = (
         ValidationPipeline()
@@ -350,7 +236,487 @@ def test_failed_validation_requests_fix():
         pipeline.observe(
             tool_name="run_tests",
             arguments={
-                "path": "."
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
+            },
+            result=(
+                passed_result(
+                    100
+                )
+            ),
+        )
+    )
+
+    assert (
+        evidence.scope
+        == ValidationScope.FULL
+    )
+
+    assert (
+        evidence.purpose
+        == ValidationPurpose.REGRESSION
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is True
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is False
+    )
+
+    # Regression-level code validation is true.
+    assert (
+        pipeline
+        .current_edit_validated()
+        is True
+    )
+
+    # But task completion evidence is incomplete.
+    assert (
+        pipeline
+        .current_acceptance_passed()
+        is False
+    )
+
+    assert (
+        pipeline.next_action(
+            evidence
+        )
+        == (
+            ValidationNextAction
+            .RUN_ACCEPTANCE_VALIDATION
+        )
+    )
+
+
+# =============================================================
+# Targeted Regression Alone Is Also Not Acceptance
+# =============================================================
+
+
+def test_targeted_regression_does_not_count_as_acceptance():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    evidence = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "minicodex/tests/"
+                    "test_existing_behavior.py"
+                ),
+                "purpose": (
+                    "regression"
+                ),
+            },
+            result=(
+                passed_result(
+                    4
+                )
+            ),
+        )
+    )
+
+    assert (
+        evidence.scope
+        == ValidationScope.TARGETED
+    )
+
+    assert (
+        evidence.purpose
+        == ValidationPurpose.REGRESSION
+    )
+
+    assert (
+        pipeline.state
+        .targeted_passed
+        is True
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is False
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+    assert (
+        pipeline.next_action(
+            evidence
+        )
+        == (
+            ValidationNextAction
+            .RUN_ACCEPTANCE_VALIDATION
+        )
+    )
+
+
+# =============================================================
+# Acceptance → Full Regression
+# =============================================================
+
+
+def test_acceptance_then_full_regression_validates_task_evidence():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    acceptance = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "minicodex/tests/"
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
+            },
+            result=(
+                passed_result(
+                    2
+                )
+            ),
+        )
+    )
+
+    assert (
+        pipeline.next_action(
+            acceptance
+        )
+        == (
+            ValidationNextAction
+            .RUN_FULL_VALIDATION
+        )
+    )
+
+    regression = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
+            },
+            result=(
+                passed_result(
+                    100
+                )
+            ),
+        )
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is True
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is True
+    )
+
+    assert (
+        pipeline.next_action(
+            regression
+        )
+        == (
+            ValidationNextAction
+            .TASK_VALIDATED
+        )
+    )
+
+
+# =============================================================
+# Full Regression → Acceptance
+# =============================================================
+
+
+def test_full_regression_then_acceptance_also_validates_task():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    regression = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
+            },
+            result=(
+                passed_result(
+                    50
+                )
+            ),
+        )
+    )
+
+    assert (
+        pipeline.next_action(
+            regression
+        )
+        == (
+            ValidationNextAction
+            .RUN_ACCEPTANCE_VALIDATION
+        )
+    )
+
+    acceptance = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "minicodex/tests/"
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
+            },
+            result=(
+                passed_result(
+                    1
+                )
+            ),
+        )
+    )
+
+    assert (
+        pipeline.next_action(
+            acceptance
+        )
+        == (
+            ValidationNextAction
+            .TASK_VALIDATED
+        )
+    )
+
+
+# =============================================================
+# New Edit Invalidates Evidence
+# =============================================================
+
+
+def test_new_edit_invalidates_acceptance_and_regression():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": (
+                "minicodex/tests/"
+                "test_feature.py"
+            ),
+            "purpose": (
+                "acceptance"
+            ),
+        },
+        result=(
+            passed_result(
+                1
+            )
+        ),
+    )
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": (
+                "regression"
+            ),
+        },
+        result=(
+            passed_result(
+                20
+            )
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is True
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is True
+    )
+
+    assert (
+        pipeline.state
+        .edit_revision
+        == 1
+    )
+
+    # =========================================================
+    # New code revision.
+    # =========================================================
+
+    revision = (
+        pipeline.record_edit()
+    )
+
+    assert (
+        revision
+        == 2
+    )
+
+    assert (
+        pipeline.state
+        .targeted_passed
+        is False
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is False
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+    assert (
+        pipeline.state
+        .latest_evidence
+        is None
+    )
+
+    assert (
+        pipeline
+        .current_edit_validated()
+        is False
+    )
+
+    assert (
+        pipeline
+        .current_acceptance_passed()
+        is False
+    )
+
+
+# =============================================================
+# Acceptance Failure
+# =============================================================
+
+
+def test_acceptance_failure_requests_fix():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    evidence = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "minicodex/tests/"
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
+            },
+            result=(
+                failed_result(
+                    failed=2
+                )
+            ),
+        )
+    )
+
+    assert (
+        evidence.outcome
+        == ValidationOutcome.FAILED
+    )
+
+    assert (
+        evidence.failed_count
+        == 2
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is False
+    )
+
+    assert (
+        pipeline.next_action(
+            evidence
+        )
+        == (
+            ValidationNextAction
+            .FIX_FAILURE
+        )
+    )
+
+
+# =============================================================
+# Regression Failure
+# =============================================================
+
+
+def test_regression_failure_requests_fix():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    evidence = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
             },
             result=(
                 failed_result(
@@ -372,26 +738,28 @@ def test_failed_validation_requests_fix():
     )
 
     assert (
-        pipeline.next_action()
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+    assert (
+        pipeline.next_action(
+            evidence
+        )
         == (
             ValidationNextAction
             .FIX_FAILURE
         )
     )
 
-    assert (
-        pipeline
-        .current_edit_validated()
-        is False
-    )
-
 
 # =============================================================
-# Errors Count As Validation Failures
+# Errors Count As Failures
 # =============================================================
 
 
-def test_errors_count_as_failures():
+def test_validation_errors_count_as_failures():
 
     pipeline = (
         ValidationPipeline()
@@ -403,7 +771,10 @@ def test_errors_count_as_failures():
         pipeline.observe(
             tool_name="run_tests",
             arguments={
-                "path": "."
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
             },
             result=(
                 failed_result(
@@ -427,7 +798,7 @@ def test_errors_count_as_failures():
 
 
 # =============================================================
-# Tool Failure Is Inconclusive
+# Tool Execution Failure
 # =============================================================
 
 
@@ -456,7 +827,13 @@ def test_tool_execution_failure_is_inconclusive():
         pipeline.observe(
             tool_name="run_tests",
             arguments={
-                "path": "."
+                "path": (
+                    "minicodex/tests/"
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
             },
             result=result,
         )
@@ -481,7 +858,15 @@ def test_tool_execution_failure_is_inconclusive():
     )
 
     assert (
-        pipeline.next_action()
+        pipeline.state
+        .acceptance_passed
+        is False
+    )
+
+    assert (
+        pipeline.next_action(
+            evidence
+        )
         == (
             ValidationNextAction
             .INVESTIGATE_INCONCLUSIVE
@@ -490,11 +875,11 @@ def test_tool_execution_failure_is_inconclusive():
 
 
 # =============================================================
-# Parser Cannot Reach Conclusion
+# Parsed Result Still Inconclusive
 # =============================================================
 
 
-def test_unrecognized_result_is_inconclusive():
+def test_unrecognized_test_result_is_inconclusive():
 
     pipeline = (
         ValidationPipeline()
@@ -502,26 +887,18 @@ def test_unrecognized_result_is_inconclusive():
 
     pipeline.record_edit()
 
-    result = ToolResult(
-        success=True,
-        summary=(
-            "pytest exited unexpectedly."
-        ),
-        data={
-            "tests_passed": False,
-            "passed": 0,
-            "failed": 0,
-            "errors": 0,
-        },
-    )
-
     evidence = (
         pipeline.observe(
             tool_name="run_tests",
             arguments={
-                "path": "."
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
             },
-            result=result,
+            result=(
+                inconclusive_result()
+            ),
         )
     )
 
@@ -531,6 +908,149 @@ def test_unrecognized_result_is_inconclusive():
             ValidationOutcome
             .INCONCLUSIVE
         )
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+
+# =============================================================
+# Default Purpose
+# =============================================================
+
+
+def test_default_validation_purpose_is_regression():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    evidence = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": "."
+            },
+            result=(
+                passed_result()
+            ),
+        )
+    )
+
+    assert (
+        evidence.purpose
+        == ValidationPurpose.REGRESSION
+    )
+
+
+# =============================================================
+# Revision Attached To Evidence
+# =============================================================
+
+
+def test_evidence_is_bound_to_current_revision():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    first = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "minicodex/tests/"
+                    "test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
+            },
+            result=(
+                passed_result()
+            ),
+        )
+    )
+
+    assert (
+        first.edit_revision
+        == 1
+    )
+
+    pipeline.record_edit()
+
+    second = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
+            },
+            result=(
+                passed_result()
+            ),
+        )
+    )
+
+    assert (
+        second.edit_revision
+        == 2
+    )
+
+
+# =============================================================
+# No Edit
+# =============================================================
+
+
+def test_validation_without_edit_does_not_validate_task():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    evidence = (
+        pipeline.observe(
+            tool_name="run_tests",
+            arguments={
+                "path": ".",
+                "purpose": (
+                    "regression"
+                ),
+            },
+            result=(
+                passed_result(
+                    20
+                )
+            ),
+        )
+    )
+
+    assert (
+        evidence.outcome
+        == ValidationOutcome.PASSED
+    )
+
+    assert (
+        pipeline.state
+        .has_edit
+        is False
+    )
+
+    assert (
+        pipeline.next_action(
+            evidence
+        )
+        == ValidationNextAction.NONE
     )
 
 
@@ -568,59 +1088,6 @@ def test_non_validation_tool_returns_none():
 
 
 # =============================================================
-# Revision Attached To Evidence
-# =============================================================
-
-
-def test_evidence_is_bound_to_current_edit_revision():
-
-    pipeline = (
-        ValidationPipeline()
-    )
-
-    pipeline.record_edit()
-
-    first = (
-        pipeline.observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=(
-                passed_result()
-            ),
-        )
-    )
-
-    assert (
-        first.edit_revision
-        == 1
-    )
-
-    pipeline.record_edit()
-
-    second = (
-        pipeline.observe(
-            tool_name="run_tests",
-            arguments={
-                "path": (
-                    "minicodex/tests/"
-                    "test_demo.py"
-                )
-            },
-            result=(
-                passed_result()
-            ),
-        )
-    )
-
-    assert (
-        second.edit_revision
-        == 2
-    )
-
-
-# =============================================================
 # Reset
 # =============================================================
 
@@ -636,7 +1103,26 @@ def test_validation_pipeline_reset():
     pipeline.observe(
         tool_name="run_tests",
         arguments={
-            "path": "."
+            "path": (
+                "minicodex/tests/"
+                "test_feature.py"
+            ),
+            "purpose": (
+                "acceptance"
+            ),
+        },
+        result=(
+            passed_result()
+        ),
+    )
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": (
+                "regression"
+            ),
         },
         result=(
             passed_result()
@@ -646,545 +1132,37 @@ def test_validation_pipeline_reset():
     pipeline.reset()
 
     assert (
-        pipeline.state.edit_revision
+        pipeline.state
+        .edit_revision
         == 0
     )
 
     assert (
-        pipeline.state.has_edit
+        pipeline.state
+        .has_edit
         is False
     )
 
     assert (
-        pipeline.state.targeted_passed
+        pipeline.state
+        .targeted_passed
         is False
     )
 
     assert (
-        pipeline.state.full_passed
+        pipeline.state
+        .acceptance_passed
         is False
     )
 
     assert (
-        pipeline.state.latest_evidence
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+    assert (
+        pipeline.state
+        .latest_evidence
         is None
-    )
-
-from types import SimpleNamespace
-
-from ..agent.loop import (
-    EDIT_TOOL_NAMES,
-    apply_validation_evidence,
-    has_validated_edit,
-)
-from ..agent.progress import (
-    ProgressController,
-)
-from ..agent.validation import (
-    ValidationNextAction,
-    ValidationPipeline,
-)
-from ..tools.results import (
-    ToolResult,
-)
-
-
-class FakeRecovery:
-
-    def __init__(
-        self,
-    ):
-        self.progress_marks = 0
-
-    def mark_progress(
-        self,
-    ) -> None:
-
-        self.progress_marks += 1
-
-    def recover(
-        self,
-        reason: str,
-        replan_callback,
-    ):
-
-        return (
-            "Recovery requested.",
-            True,
-        )
-
-
-def make_agent():
-
-    return SimpleNamespace(
-        validation_pipeline=(
-            ValidationPipeline()
-        ),
-        progress=(
-            ProgressController(
-                max_same_tool_repeats=2,
-                progress_window=6,
-                max_validation_no_progress=2,
-            )
-        ),
-        recovery=(
-            FakeRecovery()
-        ),
-        replan=lambda reason: {
-            "replanned": False,
-        },
-    )
-
-
-# =============================================================
-# Edit Tool Classification
-# =============================================================
-
-
-def test_all_stage8_edit_tools_are_classified():
-
-    assert (
-        EDIT_TOOL_NAMES
-        == {
-            "patch_file",
-            "replace_lines",
-            "replace_symbol",
-            "write_file",
-        }
-    )
-
-
-# =============================================================
-# Full Validation Required
-# =============================================================
-
-
-def test_targeted_pass_forces_full_validation():
-
-    agent = (
-        make_agent()
-    )
-
-    agent.validation_pipeline.record_edit()
-
-    evidence = (
-        agent.validation_pipeline
-        .observe(
-            tool_name="run_tests",
-            arguments={
-                "path": (
-                    "minicodex/tests/"
-                    "test_replace_symbol.py"
-                )
-            },
-            result=(
-                passed_result(
-                    5
-                )
-            ),
-        )
-    )
-
-    messages = []
-
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
-    )
-
-    assert (
-        early_stop
-        is None
-    )
-
-    assert (
-        restart
-        is True
-    )
-
-    assert (
-        agent.validation_pipeline
-        .next_action(
-            evidence
-        )
-        == (
-            ValidationNextAction
-            .RUN_FULL_VALIDATION
-        )
-    )
-
-    assert (
-        has_validated_edit(
-            agent
-        )
-        is False
-    )
-
-    assert (
-        len(messages)
-        == 1
-    )
-
-    assert (
-        "full validation"
-        in (
-            messages[0][
-                "content"
-            ].lower()
-        )
-    )
-
-
-# =============================================================
-# Full PASS Validates Current Revision
-# =============================================================
-
-
-def test_full_pass_validates_current_edit():
-
-    agent = (
-        make_agent()
-    )
-
-    revision = (
-        agent.validation_pipeline
-        .record_edit()
-    )
-
-    assert (
-        revision
-        == 1
-    )
-
-    evidence = (
-        agent.validation_pipeline
-        .observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=(
-                passed_result(
-                    100
-                )
-            ),
-        )
-    )
-
-    messages = []
-
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
-    )
-
-    assert (
-        early_stop
-        is None
-    )
-
-    assert (
-        restart
-        is False
-    )
-
-    assert (
-        has_validated_edit(
-            agent
-        )
-        is True
-    )
-
-
-# =============================================================
-# New Edit Invalidates Full PASS
-# =============================================================
-
-
-def test_new_edit_invalidates_completion_evidence():
-
-    agent = (
-        make_agent()
-    )
-
-    agent.validation_pipeline.record_edit()
-
-    agent.validation_pipeline.observe(
-        tool_name="run_tests",
-        arguments={
-            "path": "."
-        },
-        result=(
-            passed_result(
-                20
-            )
-        ),
-    )
-
-    assert (
-        has_validated_edit(
-            agent
-        )
-        is True
-    )
-
-    agent.validation_pipeline.record_edit()
-
-    assert (
-        has_validated_edit(
-            agent
-        )
-        is False
-    )
-
-    assert (
-        agent.validation_pipeline
-        .state
-        .edit_revision
-        == 2
-    )
-
-
-# =============================================================
-# Failure Uses Progress Trend
-# =============================================================
-
-
-def test_failed_validation_tracks_progress():
-
-    agent = (
-        make_agent()
-    )
-
-    agent.validation_pipeline.record_edit()
-
-    first = (
-        agent.validation_pipeline
-        .observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=(
-                failed_result(
-                    5
-                )
-            ),
-        )
-    )
-
-    messages = []
-
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=first,
-            messages=messages,
-        )
-    )
-
-    assert (
-        early_stop
-        is None
-    )
-
-    assert (
-        restart
-        is False
-    )
-
-    assert (
-        agent.progress
-        .last_validation_failed_count
-        == 5
-    )
-
-    # =========================================================
-    # Repair edit
-    # =========================================================
-
-    agent.validation_pipeline.record_edit()
-
-    second = (
-        agent.validation_pipeline
-        .observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=(
-                failed_result(
-                    3
-                )
-            ),
-        )
-    )
-
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=messages,
-        )
-    )
-
-    assert (
-        early_stop
-        is None
-    )
-
-    assert (
-        restart
-        is False
-    )
-
-    assert (
-        agent.progress
-        .last_validation_failed_count
-        == 3
-    )
-
-    assert (
-        agent.recovery
-        .progress_marks
-        == 1
-    )
-
-
-# =============================================================
-# Inconclusive Validation
-# =============================================================
-
-
-def test_inconclusive_validation_forces_investigation():
-
-    agent = (
-        make_agent()
-    )
-
-    agent.validation_pipeline.record_edit()
-
-    result = ToolResult(
-        success=False,
-        summary=(
-            "Tests timed out."
-        ),
-        data={
-            "timed_out": True,
-        },
-        error=(
-            "pytest execution timed out"
-        ),
-    )
-
-    evidence = (
-        agent.validation_pipeline
-        .observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=result,
-        )
-    )
-
-    messages = []
-
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
-    )
-
-    assert (
-        early_stop
-        is None
-    )
-
-    assert (
-        restart
-        is True
-    )
-
-    assert (
-        has_validated_edit(
-            agent
-        )
-        is False
-    )
-
-    assert (
-        "inconclusive"
-        in (
-            messages[0][
-                "content"
-            ].lower()
-        )
-    )
-
-
-# =============================================================
-# Full Pass Without Edit Is Not Task Completion
-# =============================================================
-
-
-def test_full_pass_without_edit_does_not_validate_task():
-
-    agent = (
-        make_agent()
-    )
-
-    evidence = (
-        agent.validation_pipeline
-        .observe(
-            tool_name="run_tests",
-            arguments={
-                "path": "."
-            },
-            result=(
-                passed_result(
-                    50
-                )
-            ),
-        )
-    )
-
-    assert (
-        agent.validation_pipeline
-        .next_action(
-            evidence
-        )
-        == (
-            ValidationNextAction.NONE
-        )
-    )
-
-    assert (
-        has_validated_edit(
-            agent
-        )
-        is False
     )
