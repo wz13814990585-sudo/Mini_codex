@@ -1,5 +1,3 @@
-"""Patch application tools."""
-
 from pathlib import Path
 
 from .base import BaseTool
@@ -8,16 +6,16 @@ from .paths import resolve_workspace_path
 from .results import ToolResult
 
 
-class PatchFileTool(
+class ReplaceLinesTool(
     BaseTool
 ):
 
-    name = "patch_file"
+    name = "replace_lines"
 
     description = (
-        "Replace an exact unique block of text inside an "
-        "existing project file. Use this for small targeted "
-        "changes when the current exact source is known."
+        "Replace an exact line range in an existing text file. "
+        "Use this after read_file has verified the current range. "
+        "The edit is checked before and after writing."
     )
 
     parameters = {
@@ -29,23 +27,38 @@ class PatchFileTool(
                     "Relative path of the file to modify."
                 ),
             },
-            "old_text": {
-                "type": "string",
+            "start_line": {
+                "type": "integer",
                 "description": (
-                    "Exact existing text that should "
-                    "be replaced."
+                    "1-based first line to replace."
+                ),
+            },
+            "end_line": {
+                "type": "integer",
+                "description": (
+                    "1-based last line to replace, inclusive."
                 ),
             },
             "new_text": {
                 "type": "string",
                 "description": (
-                    "New text that should replace old_text."
+                    "Replacement text for the requested "
+                    "line range."
+                ),
+            },
+            "expected_text": {
+                "type": "string",
+                "description": (
+                    "Optional exact text expected in the "
+                    "current line range. If it no longer "
+                    "matches, the edit is rejected."
                 ),
             },
         },
         "required": [
             "path",
-            "old_text",
+            "start_line",
+            "end_line",
             "new_text",
         ],
     }
@@ -65,8 +78,10 @@ class PatchFileTool(
     def execute(
         self,
         path: str,
-        old_text: str,
+        start_line: int,
+        end_line: int,
         new_text: str,
+        expected_text: str | None = None,
     ) -> ToolResult:
 
         file_path = (
@@ -94,45 +109,123 @@ class PatchFileTool(
             )
         )
 
+        lines = (
+            before_content
+            .splitlines()
+        )
+
+        total_lines = (
+            len(lines)
+        )
+
+        start = int(
+            start_line
+        )
+
+        end = int(
+            end_line
+        )
+
         # =====================================================
-        # Exact Target Validation
+        # Range Validation
         # =====================================================
 
-        count = (
-            before_content.count(
-                old_text
+        if start < 1:
+
+            raise ValueError(
+                "start_line must be >= 1."
+            )
+
+        if end < start:
+
+            raise ValueError(
+                (
+                    "end_line must be "
+                    ">= start_line."
+                )
+            )
+
+        if end > total_lines:
+
+            raise ValueError(
+                (
+                    f"Requested line range "
+                    f"{start}-{end} exceeds "
+                    f"file length {total_lines}."
+                )
+            )
+
+        # =====================================================
+        # Current Range
+        # =====================================================
+
+        current_lines = (
+            lines[
+                start - 1:end
+            ]
+        )
+
+        current_text = (
+            "\n".join(
+                current_lines
             )
         )
 
-        if count == 0:
+        # =====================================================
+        # Stale Source Guard
+        # =====================================================
 
-            raise ValueError(
-                (
-                    "old_text was not found "
-                    "in the file."
-                )
+        if (
+            expected_text
+            is not None
+        ):
+
+            normalized_expected = (
+                expected_text
+                .rstrip("\n")
             )
 
-        if count > 1:
+            if (
+                current_text
+                != normalized_expected
+            ):
 
-            raise ValueError(
-                (
-                    "old_text appears multiple times. "
-                    "Provide a more specific code block."
+                raise ValueError(
+                    (
+                        "The current file content no longer "
+                        "matches expected_text for the requested "
+                        f"range {start}-{end}. "
+                        "Re-read the file before editing."
+                    )
                 )
-            )
 
         # =====================================================
-        # Candidate
+        # Replacement
         # =====================================================
+
+        replacement_lines = (
+            new_text
+            .rstrip("\n")
+            .splitlines()
+        )
+
+        updated_lines = (
+            lines[:start - 1]
+            + replacement_lines
+            + lines[end:]
+        )
 
         updated_content = (
-            before_content.replace(
-                old_text,
-                new_text,
-                1,
+            "\n".join(
+                updated_lines
             )
         )
+
+        if before_content.endswith(
+            "\n"
+        ):
+
+            updated_content += "\n"
 
         # =====================================================
         # Reject No-Op
@@ -178,15 +271,42 @@ class PatchFileTool(
             )
         )
 
+        new_end_line = (
+            start
+            + len(
+                replacement_lines
+            )
+            - 1
+        )
+
         return ToolResult(
             success=True,
             summary=(
-                f"Successfully patched "
-                f"and verified file: {path}"
+                f"Successfully replaced and verified "
+                f"{path} lines {start}-{end}."
             ),
             data={
                 "path": path,
-                "replacement_count": 1,
+                "old_start_line": start,
+                "old_end_line": end,
+                "new_start_line": start,
+                "new_end_line": (
+                    new_end_line
+                ),
+                "old_line_count": (
+                    end
+                    - start
+                    + 1
+                ),
+                "new_line_count": (
+                    len(
+                        replacement_lines
+                    )
+                ),
+                "expected_text_checked": (
+                    expected_text
+                    is not None
+                ),
                 "changed": (
                     verification.changed
                 ),

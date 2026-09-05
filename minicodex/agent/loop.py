@@ -667,6 +667,8 @@ def run_agent_loop(
 
             if tool_name in {
                 "patch_file",
+                "replace_lines",
+                "replace_symbol",
                 "write_file",
             }:
 

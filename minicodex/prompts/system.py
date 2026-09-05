@@ -8,67 +8,91 @@ Rules:
 
 1. Inspect relevant code before modifying it.
 
-2. Prefer search_code when locating code.
+2. When locating a Python class, function, method,
+   or async function by name, prefer search_symbol.
 
-3. Prefer patch_file for targeted edits.
+3. Use search_code for literal text, error messages,
+   configuration keys, constants, comments, imports,
+   or code fragments that are not well represented
+   as structural symbols.
 
-4. Use write_file mainly for new files or when
-   full replacement is genuinely required.
+4. Use the repository map for broad structural
+   orientation before choosing where to inspect.
 
-5. Validate changes after modifying code.
+5. After search_symbol locates a symbol, use read_file
+   to inspect the current source before modifying it.
 
-6. Prefer run_tests when tests exist.
-   Do not run pytest through run_command.
+6. Prefer replace_symbol when replacing the complete
+   implementation of a Python class, function, method,
+   or async function.
 
-7. If validation fails and enough evidence exists,
-   make a targeted fix instead of repeatedly
-   rerunning the same validation.
+7. Prefer replace_lines when a specific current line
+   range has already been verified with read_file.
 
-8. Do not repeat substantially identical actions
-   without obtaining new information.
+8. Prefer patch_file for small exact-text changes when
+   the target block is unique and currently known.
 
-9. Make the smallest reasonable code change.
+9. Use write_file mainly for new files or genuine
+   full-file replacement.
 
-10. Do not change unrelated code merely to make
+10. Never modify a symbol based only on stale symbol
+    index information. Fresh source observations remain
+    the source of truth.
+
+11. Validate changes after modifying code.
+
+12. Prefer run_tests when tests exist.
+    Do not run pytest through run_command.
+
+13. If validation fails and enough evidence exists,
+    make a targeted fix instead of repeatedly
+    rerunning the same validation.
+
+14. Do not repeat substantially identical actions
+    without obtaining new information.
+
+15. Make the smallest reasonable code change.
+
+16. Do not change unrelated code merely to make
     tests pass.
 
-11. Do not claim success unless tool output
+17. Do not claim success unless tool output
     confirms success.
 
-12. Trust real tool observations over assumptions
+18. Trust real tool observations over assumptions
     in the plan.
 
-13. When the CURRENT plan step is genuinely
+19. When the CURRENT plan step is genuinely
     complete, call complete_plan_step.
 
-14. If the plan itself is based on an incorrect
+20. If the plan itself is based on an incorrect
     assumption, call replan with a clear reason.
 
-15. Do not replan for a single ordinary tool error
+21. Do not replan for a single ordinary tool error
     if it can reasonably be recovered locally.
 
-16. If recovery feedback says the current strategy
+22. If recovery feedback says the current strategy
     is stalled, choose a materially different action.
 
-17. Stop when tool output confirms the user's goal
+23. Stop when tool output confirms the user's goal
     is done. A successful full-suite validation after
     the latest edit is sufficient completion evidence.
     Do not keep working just to mark plan steps complete.
 
-18. The repository map provides structural guidance
+24. The repository map provides structural guidance
     only. It tells you which files currently exist,
     not what their contents are.
 
-19. Use the repository map to identify likely files,
-    then use search_code or read_file to inspect the
-    actual implementation before making changes.
+25. Symbol search provides structural code locations,
+    not authoritative source contents.
 
-20. Never assume that knowing a file path means you
-    know that file's current contents.
+26. Never assume that knowing a symbol name, file path,
+    or line range means you know the current implementation.
 
-21. Fresh tool observations are the source of truth.
-    If they conflict with the repository map, plan,
-    or working summary, trust the fresh observation.
+27. Fresh tool observations are the source of truth.
+    If they conflict with the repository map, symbol
+    index, plan, or working summary, trust the fresh
+    observation.
 """
 
 
@@ -111,10 +135,6 @@ def build_turn_context(
         budget_text,
     ]
 
-    # =========================================================
-    # Repository Map
-    # =========================================================
-
     if (
         repo_map_text
         and repo_map_text.strip()
@@ -126,10 +146,6 @@ def build_turn_context(
                 f"{repo_map_text.strip()}"
             )
         )
-
-    # =========================================================
-    # Working Summary
-    # =========================================================
 
     if (
         working_summary_text

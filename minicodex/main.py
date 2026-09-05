@@ -6,6 +6,7 @@ from .agent.agent import MiniCodexAgent
 from .agent.planner import Planner
 from .agent.replanner import Replanner
 from .agent.repo_map import RepoMap
+from .agent.symbol_index import SymbolIndex
 
 from .llm.client import LLMClient
 
@@ -14,7 +15,10 @@ from .tools.read_file import ReadFileTool
 from .tools.list_files import ListFilesTool
 from .tools.write_file import WriteFileTool
 from .tools.search_code import SearchCodeTool
+from .tools.search_symbol import SearchSymbolTool
 from .tools.patch_file import PatchFileTool
+from .tools.replace_lines import ReplaceLinesTool
+from .tools.replace_symbol import ReplaceSymbolTool
 from .tools.run_command import RunCommandTool
 from .tools.run_tests import RunTestsTool
 from .tools.complete_plan_step import CompletePlanStepTool
@@ -60,6 +64,10 @@ def main():
         ToolRegistry()
     )
 
+    # =========================================================
+    # Read / Navigation Tools
+    # =========================================================
+
     registry.register(
         ListFilesTool(
             workspace
@@ -78,17 +86,59 @@ def main():
         )
     )
 
-    registry.register(
-        WriteFileTool(
-            workspace
+    # =========================================================
+    # Symbol Index
+    # =========================================================
+
+    symbol_index = (
+        SymbolIndex(
+            workspace=workspace,
+            max_files=500,
         )
     )
+
+    registry.register(
+        SearchSymbolTool(
+            symbol_index=(
+                symbol_index
+            )
+        )
+    )
+
+    # =========================================================
+    # Edit Tools
+    # =========================================================
 
     registry.register(
         PatchFileTool(
             workspace
         )
     )
+
+    registry.register(
+        ReplaceLinesTool(
+            workspace
+        )
+    )
+
+    registry.register(
+        ReplaceSymbolTool(
+            workspace=workspace,
+            symbol_index=(
+                symbol_index
+            ),
+        )
+    )
+
+    registry.register(
+        WriteFileTool(
+            workspace
+        )
+    )
+
+    # =========================================================
+    # Execution / Validation
+    # =========================================================
 
     registry.register(
         RunCommandTool(
