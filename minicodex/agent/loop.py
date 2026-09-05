@@ -1,5 +1,9 @@
 """Agent execution loop."""
 
+from .completion import (
+    CompletionGate,
+    CompletionStatus,
+)
 from .context import (
     compact_messages_for_pressure,
 )
@@ -29,6 +33,11 @@ EDIT_TOOL_NAMES = {
 }
 
 
+COMPLETION_GATE = (
+    CompletionGate()
+)
+
+
 # =============================================================
 # Main Agent Loop
 # =============================================================
@@ -43,12 +52,14 @@ def run_agent_loop(
     Main orchestration loop.
 
     The loop owns Agent-level orchestration:
+
     - planning progress
     - context budget policy
     - token accounting
     - working summary updates
     - duplicate policy
     - validation orchestration
+    - completion gating
     - recovery
     - plan transitions
     - stopping decisions
@@ -57,6 +68,9 @@ def run_agent_loop(
 
     Validation meaning and edit-revision truth are delegated
     to ValidationPipeline.
+
+    Final editing-task completion is delegated to
+    CompletionGate.
     """
 
     messages = [
@@ -163,6 +177,7 @@ def run_agent_loop(
                         }
                     )
 
+                    # Recovery may have changed the plan.
                     if agent.active_plan:
 
                         current_plan_step = (
@@ -351,11 +366,35 @@ def run_agent_loop(
             )
 
             # =============================================
-            # Validated Edit May Finish Task
+            # Completion Gate
             # =============================================
 
-            if has_validated_edit(
-                agent
+            completion = (
+                evaluate_completion(
+                    agent
+                )
+            )
+
+            print(
+                "\n[Completion Gate]"
+            )
+
+            print(
+                "Status: "
+                f"{completion.status.value}"
+            )
+
+            print(
+                "Reason: "
+                f"{completion.reason}"
+            )
+
+            # =============================================
+            # Editing Task Fully Completed
+            # =============================================
+
+            if (
+                completion.can_complete
             ):
 
                 return (
@@ -363,15 +402,128 @@ def run_agent_loop(
                     or summarize_agent_stop(
                         agent,
                         (
-                            "Task validated: "
-                            "the current edit revision "
-                            "passed full validation."
+                            "Task completed with "
+                            "acceptance evidence and "
+                            "full regression evidence."
                         ),
                     )
                 )
 
             # =============================================
-            # Prevent Premature Finish
+            # An Edit Exists But Completion Evidence
+            # Is Missing
+            #
+            # Plan completion does not override this.
+            # =============================================
+
+            if (
+                completion.has_edit
+                and not (
+                    completion.can_complete
+                )
+            ):
+
+                remaining_budget = (
+                    agent.max_steps
+                    - agent_step
+                    - 1
+                )
+
+                if (
+                    remaining_budget
+                    > 0
+                ):
+
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": (
+                                content
+                                or (
+                                    "The implementation "
+                                    "appears complete."
+                                )
+                            ),
+                        }
+                    )
+
+                    # =====================================
+                    # Missing Acceptance
+                    # =====================================
+
+                    if (
+                        completion.status
+                        == (
+                            CompletionStatus
+                            .NEEDS_ACCEPTANCE
+                        )
+                    ):
+
+                        reminder = (
+                            "The current edit revision "
+                            "cannot complete yet because "
+                            "acceptance evidence is missing. "
+                            "Run a specific relevant test "
+                            "that demonstrates the user's "
+                            "requested behavior using "
+                            "run_tests("
+                            "path=<specific_test>, "
+                            "purpose='acceptance')."
+                        )
+
+                    # =====================================
+                    # Missing Full Regression
+                    # =====================================
+
+                    elif (
+                        completion.status
+                        == (
+                            CompletionStatus
+                            .NEEDS_FULL_VALIDATION
+                        )
+                    ):
+
+                        reminder = (
+                            "Acceptance evidence exists, "
+                            "but full regression validation "
+                            "is still missing. "
+                            "Run "
+                            "run_tests("
+                            "path='.', "
+                            "purpose='regression')."
+                        )
+
+                    else:
+
+                        reminder = (
+                            "The task does not yet have "
+                            "sufficient completion evidence."
+                        )
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                reminder
+                            ),
+                        }
+                    )
+
+                    continue
+
+                return summarize_agent_stop(
+                    agent,
+                    (
+                        "Agent stopped before "
+                        "completion evidence was "
+                        "fully established. "
+                        f"{completion.reason}"
+                    ),
+                    content,
+                )
+
+            # =============================================
+            # Prevent Premature Finish With Incomplete Plan
             # =============================================
 
             if (
@@ -395,7 +547,10 @@ def run_agent_loop(
                     - 1
                 )
 
-                if remaining_budget > 0:
+                if (
+                    remaining_budget
+                    > 0
+                ):
 
                     messages.append(
                         {
@@ -430,6 +585,12 @@ def run_agent_loop(
                     content,
                 )
 
+            # =============================================
+            # Non-Editing / Read-Only Task
+            #
+            # No edit means CompletionGate is not required.
+            # =============================================
+
             return content
 
         # =====================================================
@@ -443,6 +604,7 @@ def run_agent_loop(
         )
 
         restart_agent_loop = False
+
         early_stop = None
 
         # =====================================================
@@ -490,6 +652,10 @@ def run_agent_loop(
                 result = (
                     prepared.error
                 )
+
+                # ---------------------------------------------
+                # Working Summary
+                # ---------------------------------------------
 
                 agent.working_summary.record_tool_result(
                     tool_name=tool_name,
@@ -672,8 +838,9 @@ def run_agent_loop(
             # =================================================
             # Successful Edit
             #
-            # Every successful edit creates a NEW revision.
-            # All previous validation evidence becomes stale.
+            # Every successful edit creates a new revision.
+            # Acceptance/regression evidence from older
+            # revisions immediately becomes stale.
             # =================================================
 
             if (
@@ -729,6 +896,7 @@ def run_agent_loop(
                     )
 
                     restart_agent_loop = True
+
                     break
 
                 continue
@@ -766,6 +934,7 @@ def run_agent_loop(
                     )
 
                     restart_agent_loop = True
+
                     break
 
                 continue
@@ -805,6 +974,11 @@ def run_agent_loop(
                     print(
                         "Scope: "
                         f"{evidence.scope.value}"
+                    )
+
+                    print(
+                        "Purpose: "
+                        f"{evidence.purpose.value}"
                     )
 
                     print(
@@ -937,20 +1111,26 @@ def run_agent_loop(
             continue
 
         # =====================================================
-        # Stop When Current Edit Revision Is Fully Validated
+        # Completion Gate After Tool Batch
         # =====================================================
 
-        if has_validated_edit(
-            agent
+        completion = (
+            evaluate_completion(
+                agent
+            )
+        )
+
+        if (
+            completion.can_complete
         ):
 
             return summarize_agent_stop(
                 agent,
                 (
-                    "Task validated: "
-                    "the full test suite "
-                    "passed for the current "
-                    "edit revision."
+                    "Task completed: "
+                    "the current edit revision "
+                    "has acceptance evidence "
+                    "and full regression evidence."
                 ),
             )
 
@@ -969,13 +1149,13 @@ def run_agent_loop(
 
 
 # =============================================================
-# Current Edit Validation
+# Completion Gate
 # =============================================================
 
 
-def has_validated_edit(
+def evaluate_completion(
     agent,
-) -> bool:
+):
 
     pipeline = getattr(
         agent,
@@ -988,11 +1168,48 @@ def has_validated_edit(
         is None
     ):
 
-        return False
+        return (
+            COMPLETION_GATE
+            .evaluate(
+                edit_revision=0,
+                has_edit=False,
+                acceptance_passed=False,
+                full_validation_passed=False,
+            )
+        )
+
+    state = (
+        pipeline.state
+    )
 
     return (
-        pipeline
-        .current_edit_validated()
+        COMPLETION_GATE
+        .evaluate(
+            edit_revision=(
+                state.edit_revision
+            ),
+            has_edit=(
+                state.has_edit
+            ),
+            acceptance_passed=(
+                state.acceptance_passed
+            ),
+            full_validation_passed=(
+                state.full_passed
+            ),
+        )
+    )
+
+
+def can_complete_edit_task(
+    agent,
+) -> bool:
+
+    return (
+        evaluate_completion(
+            agent
+        )
+        .can_complete
     )
 
 
@@ -1014,13 +1231,16 @@ def apply_validation_evidence(
     Convert normalized ValidationEvidence into AgentLoop
     orchestration.
 
-    Responsibilities intentionally remain separated:
+    Responsibilities:
 
     ValidationPipeline:
-        What does the evidence mean?
+        What does this validation result mean?
 
     ProgressController:
-        Is repeated failure improving or stalled?
+        Are repeated failures improving or stalled?
+
+    CompletionGate:
+        Is there enough independent evidence to finish?
 
     AgentLoop:
         What should execution do next?
@@ -1081,7 +1301,7 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # ValidationPipeline Policy Decision
+    # Validation Pipeline Decision
     # =========================================================
 
     next_action = (
@@ -1101,7 +1321,7 @@ def apply_validation_evidence(
     )
 
     # =========================================================
-    # Current Revision Fully Validated
+    # Both Acceptance + Regression Exist
     # =========================================================
 
     if (
@@ -1112,13 +1332,64 @@ def apply_validation_evidence(
         )
     ):
 
+        completion = (
+            evaluate_completion(
+                agent
+            )
+        )
+
+        print(
+            "\n[Completion Gate]"
+        )
+
+        print(
+            "Status: "
+            f"{completion.status.value}"
+        )
+
         return (
             None,
             False,
         )
 
     # =========================================================
-    # Targeted PASS → Escalate To Full Suite
+    # Regression Exists But Acceptance Is Missing
+    # =========================================================
+
+    if (
+        next_action
+        == (
+            ValidationNextAction
+            .RUN_ACCEPTANCE_VALIDATION
+        )
+    ):
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Regression validation is not enough "
+                    "to prove that the user's requested "
+                    "behavior works. Obtain acceptance "
+                    "evidence for the CURRENT edit revision "
+                    "by running a specific relevant test "
+                    "with "
+                    "run_tests("
+                    "path=<specific_test>, "
+                    "purpose='acceptance'). "
+                    "Do not use the full suite itself "
+                    "as acceptance evidence."
+                ),
+            }
+        )
+
+        return (
+            None,
+            True,
+        )
+
+    # =========================================================
+    # Acceptance Passed → Need Full Regression
     # =========================================================
 
     if (
@@ -1133,12 +1404,14 @@ def apply_validation_evidence(
             {
                 "role": "user",
                 "content": (
-                    "Targeted validation passed for "
-                    "the current edit revision, but "
-                    "full validation is still required. "
-                    "Run the full test suite with "
-                    "run_tests(path='.') before "
-                    "claiming task completion."
+                    "Acceptance validation passed for "
+                    "the current edit revision. "
+                    "Now run the full regression suite "
+                    "with "
+                    "run_tests("
+                    "path='.', "
+                    "purpose='regression') "
+                    "before claiming task completion."
                 ),
             }
         )
@@ -1168,8 +1441,8 @@ def apply_validation_evidence(
                     "Do not treat it as either a code "
                     "failure or successful validation. "
                     "Inspect why validation could not "
-                    "produce reliable evidence and obtain "
-                    "new evidence."
+                    "produce reliable evidence and "
+                    "obtain new evidence."
                 ),
             }
         )
@@ -1201,7 +1474,7 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # No Stall
+    # No Validation Stall
     # =========================================================
 
     if not (
@@ -1388,7 +1661,8 @@ def summarize_agent_stop(
     )
 
     if (
-        pipeline is not None
+        pipeline
+        is not None
     ):
 
         state = (
@@ -1406,27 +1680,51 @@ def summarize_agent_stop(
             )
         )
 
-        if evidence is not None:
+        lines.append(
+            (
+                "Acceptance evidence: "
+                f"{state.acceptance_passed}."
+            )
+        )
+
+        lines.append(
+            (
+                "Full regression evidence: "
+                f"{state.full_passed}."
+            )
+        )
+
+        if (
+            evidence
+            is not None
+        ):
 
             lines.append(
                 (
                     "Last validation: "
-                    f"scope={evidence.scope.value}, "
-                    f"outcome={evidence.outcome.value}, "
+                    f"purpose="
+                    f"{evidence.purpose.value}, "
+                    f"scope="
+                    f"{evidence.scope.value}, "
+                    f"outcome="
+                    f"{evidence.outcome.value}, "
                     f"revision="
                     f"{evidence.edit_revision}."
                 )
             )
 
-        if (
-            pipeline
-            .current_edit_validated()
-        ):
-
-            lines.append(
-                "Current edit revision has "
-                "full validation evidence."
+        completion = (
+            evaluate_completion(
+                agent
             )
+        )
+
+        lines.append(
+            (
+                "Completion gate: "
+                f"{completion.status.value}."
+            )
+        )
 
     # =========================================================
     # Validation Failure Trend
@@ -1438,17 +1736,27 @@ def summarize_agent_stop(
         None,
     )
 
-    if failed == 0:
-
-        lines.append(
-            "Latest validation failure count: 0."
-        )
-
-    elif failed is not None:
+    if (
+        failed
+        == 0
+    ):
 
         lines.append(
             (
-                "Latest validation failure count: "
+                "Latest validation "
+                "failure count: 0."
+            )
+        )
+
+    elif (
+        failed
+        is not None
+    ):
+
+        lines.append(
+            (
+                "Latest validation "
+                "failure count: "
                 f"{failed}."
             )
         )
@@ -1519,7 +1827,8 @@ def summarize_agent_stop(
     )
 
     if (
-        working_summary is not None
+        working_summary
+        is not None
         and working_summary.items
     ):
 

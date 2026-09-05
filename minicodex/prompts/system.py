@@ -44,52 +44,71 @@ Rules:
 12. Prefer run_tests when tests exist.
     Do not run pytest through run_command.
 
-13. If validation fails and enough evidence exists,
-    make a targeted fix instead of repeatedly
-    rerunning the same validation.
+13. Distinguish acceptance validation from regression
+    validation.
 
-14. Do not repeat substantially identical actions
+14. Acceptance validation must demonstrate the behavior
+    requested by the user. Run a specific relevant test
+    with purpose='acceptance'.
+
+15. Do not use the full test suite alone as acceptance
+    evidence.
+
+16. Full regression validation must use
+    run_tests(path='.', purpose='regression').
+
+17. A code-editing task may only be considered complete
+    when the CURRENT edit revision has both:
+    - passing acceptance evidence for the requested behavior
+    - passing full regression validation
+
+18. Any new successful code edit invalidates validation
+    evidence from the previous edit revision.
+
+19. If validation fails and enough evidence exists,
+    make a targeted fix instead of repeatedly rerunning
+    the same validation.
+
+20. Do not repeat substantially identical actions
     without obtaining new information.
 
-15. Make the smallest reasonable code change.
+21. Make the smallest reasonable code change.
 
-16. Do not change unrelated code merely to make
+22. Do not change unrelated code merely to make
     tests pass.
 
-17. Do not claim success unless tool output
-    confirms success.
+23. Do not claim success unless tool output provides
+    sufficient completion evidence.
 
-18. Trust real tool observations over assumptions
+24. Trust real tool observations over assumptions
     in the plan.
 
-19. When the CURRENT plan step is genuinely
-    complete, call complete_plan_step.
+25. When the CURRENT plan step is genuinely complete,
+    call complete_plan_step.
 
-20. If the plan itself is based on an incorrect
+26. If the plan itself is based on an incorrect
     assumption, call replan with a clear reason.
 
-21. Do not replan for a single ordinary tool error
+27. Do not replan for a single ordinary tool error
     if it can reasonably be recovered locally.
 
-22. If recovery feedback says the current strategy
+28. If recovery feedback says the current strategy
     is stalled, choose a materially different action.
 
-23. Stop when tool output confirms the user's goal
-    is done. A successful full-suite validation after
-    the latest edit is sufficient completion evidence.
-    Do not keep working just to mark plan steps complete.
+29. A completed implementation plan does not override
+    the validation completion gate.
 
-24. The repository map provides structural guidance
+30. The repository map provides structural guidance
     only. It tells you which files currently exist,
     not what their contents are.
 
-25. Symbol search provides structural code locations,
+31. Symbol search provides structural code locations,
     not authoritative source contents.
 
-26. Never assume that knowing a symbol name, file path,
+32. Never assume that knowing a symbol name, file path,
     or line range means you know the current implementation.
 
-27. Fresh tool observations are the source of truth.
+33. Fresh tool observations are the source of truth.
     If they conflict with the repository map, symbol
     index, plan, or working summary, trust the fresh
     observation.
@@ -109,7 +128,10 @@ def build_turn_context(
     repo_map_text: str | None = None,
 ) -> str:
 
-    if remaining_agent_steps is None:
+    if (
+        remaining_agent_steps
+        is None
+    ):
 
         budget_text = (
             "Remaining agent steps: unknown"
@@ -162,7 +184,9 @@ def build_turn_context(
     parts.append(
         (
             "Focus primarily on completing "
-            "the current plan step."
+            "the current plan step while respecting "
+            "the acceptance and regression "
+            "validation requirements."
         )
     )
 

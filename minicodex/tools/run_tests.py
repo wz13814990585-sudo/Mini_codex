@@ -11,14 +11,24 @@ MAX_FAILURE_DETAIL_LINES = 40
 MAX_FAILED_TEST_NAMES = 20
 
 
-class RunTestsTool(BaseTool):
+VALID_PURPOSES = {
+    "acceptance",
+    "regression",
+}
+
+
+class RunTestsTool(
+    BaseTool
+):
 
     name = "run_tests"
 
     description = (
-        "Run the project's Python tests using pytest and return "
-        "structured test results, a short summary, and failing details. "
-        "Use this after modifying code when tests are available."
+        "Run Python tests using pytest and return structured "
+        "validation evidence. Use purpose='acceptance' for "
+        "specific tests that demonstrate the user's requested "
+        "behavior. Use purpose='regression' for existing or "
+        "full-suite regression validation."
     )
 
     parameters = {
@@ -27,11 +37,25 @@ class RunTestsTool(BaseTool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Optional test path, such as 'tests/' "
-                    "or 'tests/test_calculator.py'. "
-                    "Use '.' to run the full test suite."
+                    "Test path such as "
+                    "'minicodex/tests/test_example.py'. "
+                    "Use '.' for the full regression suite."
                 ),
-            }
+            },
+            "purpose": {
+                "type": "string",
+                "enum": [
+                    "acceptance",
+                    "regression",
+                ],
+                "description": (
+                    "Validation purpose. "
+                    "'acceptance' demonstrates that the "
+                    "specific behavior requested by the user "
+                    "works. 'regression' checks that existing "
+                    "behavior remains correct."
+                ),
+            },
         },
         "required": [],
     }
@@ -41,13 +65,73 @@ class RunTestsTool(BaseTool):
         workspace: str = ".",
         timeout: int = 60,
     ):
-        self.workspace = Path(workspace).resolve()
+        self.workspace = Path(
+            workspace
+        ).resolve()
+
         self.timeout = timeout
 
     def execute(
         self,
         path: str = ".",
+        purpose: str = "regression",
     ) -> ToolResult:
+
+        normalized_path = str(
+            path
+        ).strip()
+
+        normalized_purpose = (
+            str(
+                purpose
+            )
+            .strip()
+            .lower()
+        )
+
+        # =====================================================
+        # Purpose Validation
+        # =====================================================
+
+        if (
+            normalized_purpose
+            not in VALID_PURPOSES
+        ):
+
+            raise ValueError(
+                (
+                    "purpose must be either "
+                    "'acceptance' or 'regression'."
+                )
+            )
+
+        # =====================================================
+        # Acceptance Must Be Targeted
+        # =====================================================
+
+        if (
+            normalized_purpose
+            == "acceptance"
+            and normalized_path
+            in {
+                "",
+                ".",
+                "./",
+            }
+        ):
+
+            raise ValueError(
+                (
+                    "Acceptance validation must target "
+                    "a specific test path. "
+                    "The full suite cannot by itself serve "
+                    "as acceptance evidence."
+                )
+            )
+
+        if not normalized_path:
+
+            normalized_path = "."
 
         command = [
             sys.executable,
@@ -55,11 +139,12 @@ class RunTestsTool(BaseTool):
             "pytest",
             "-p",
             "no:debugging",
-            path,
+            normalized_path,
             "-q",
         ]
 
         try:
+
             process = subprocess.run(
                 command,
                 cwd=self.workspace,
@@ -69,6 +154,7 @@ class RunTestsTool(BaseTool):
             )
 
         except subprocess.TimeoutExpired:
+
             return ToolResult(
                 success=False,
                 summary=(
@@ -76,35 +162,57 @@ class RunTestsTool(BaseTool):
                     f"{self.timeout} seconds."
                 ),
                 data={
-                    "path": path,
+                    "path": normalized_path,
+                    "purpose": (
+                        normalized_purpose
+                    ),
                     "timeout": self.timeout,
                     "timed_out": True,
                 },
-                error="pytest execution timed out",
+                error=(
+                    "pytest execution timed out"
+                ),
             )
 
-        parsed = parse_pytest_output(
-            exit_code=process.returncode,
-            stdout=process.stdout,
-            stderr=process.stderr,
+        parsed = (
+            parse_pytest_output(
+                exit_code=(
+                    process.returncode
+                ),
+                stdout=(
+                    process.stdout
+                ),
+                stderr=(
+                    process.stderr
+                ),
+            )
         )
 
-        llm_content = build_pytest_llm_content(
-            parsed
+        llm_content = (
+            build_pytest_llm_content(
+                parsed
+            )
         )
 
-        summary = build_pytest_summary(
-            parsed
+        summary = (
+            build_pytest_summary(
+                parsed
+            )
         )
 
         return ToolResult(
             success=True,
             summary=summary,
             data={
-                "path": path,
+                "path": normalized_path,
+                "purpose": (
+                    normalized_purpose
+                ),
                 **parsed,
             },
-            llm_content=llm_content,
+            llm_content=(
+                llm_content
+            ),
         )
 
 
@@ -113,51 +221,70 @@ def parse_pytest_output(
     stdout: str,
     stderr: str,
 ) -> dict:
-    passed = _extract_count(
-        stdout,
-        "passed",
+
+    passed = (
+        _extract_count(
+            stdout,
+            "passed",
+        )
     )
 
-    failed = _extract_count(
-        stdout,
-        "failed",
+    failed = (
+        _extract_count(
+            stdout,
+            "failed",
+        )
     )
 
-    errors = _extract_count(
-        stdout,
-        "error",
-    ) + _extract_count(
-        stdout,
-        "errors",
+    errors = (
+        _extract_count(
+            stdout,
+            "error",
+        )
+        + _extract_count(
+            stdout,
+            "errors",
+        )
     )
 
-    skipped = _extract_count(
-        stdout,
-        "skipped",
+    skipped = (
+        _extract_count(
+            stdout,
+            "skipped",
+        )
     )
 
-    xfailed = _extract_count(
-        stdout,
-        "xfailed",
+    xfailed = (
+        _extract_count(
+            stdout,
+            "xfailed",
+        )
     )
 
-    xpassed = _extract_count(
-        stdout,
-        "xpassed",
+    xpassed = (
+        _extract_count(
+            stdout,
+            "xpassed",
+        )
     )
 
-    failed_tests = _extract_failed_test_names(
-        stdout
+    failed_tests = (
+        _extract_failed_test_names(
+            stdout
+        )
     )
 
-    failure_details = _failure_detail_lines(
-        stdout.splitlines(),
-        MAX_FAILURE_DETAIL_LINES,
+    failure_details = (
+        _failure_detail_lines(
+            stdout.splitlines(),
+            MAX_FAILURE_DETAIL_LINES,
+        )
     )
 
     stderr_lines = [
         line
-        for line in stderr.splitlines()
+        for line
+        in stderr.splitlines()
         if line.strip()
     ]
 
@@ -170,9 +297,15 @@ def parse_pytest_output(
         "xfailed": xfailed,
         "xpassed": xpassed,
         "failed_tests": failed_tests,
-        "failure_details": failure_details,
-        "stderr": stderr_lines[:20],
-        "tests_passed": exit_code == 0,
+        "failure_details": (
+            failure_details
+        ),
+        "stderr": (
+            stderr_lines[:20]
+        ),
+        "tests_passed": (
+            exit_code == 0
+        ),
         "timed_out": False,
     }
 
@@ -183,33 +316,53 @@ def build_pytest_summary(
 
     parts = []
 
-    if parsed["passed"]:
+    if parsed[
+        "passed"
+    ]:
+
         parts.append(
             f"{parsed['passed']} passed"
         )
 
-    if parsed["failed"]:
+    if parsed[
+        "failed"
+    ]:
+
         parts.append(
             f"{parsed['failed']} failed"
         )
 
-    if parsed["errors"]:
+    if parsed[
+        "errors"
+    ]:
+
         parts.append(
             f"{parsed['errors']} errors"
         )
 
-    if parsed["skipped"]:
+    if parsed[
+        "skipped"
+    ]:
+
         parts.append(
             f"{parsed['skipped']} skipped"
         )
 
     if not parts:
+
         parts.append(
-            f"pytest exited with code "
-            f"{parsed['exit_code']}"
+            (
+                "pytest exited with code "
+                f"{parsed['exit_code']}"
+            )
         )
 
-    return ", ".join(parts) + "."
+    return (
+        ", ".join(
+            parts
+        )
+        + "."
+    )
 
 
 def build_pytest_llm_content(
@@ -217,34 +370,60 @@ def build_pytest_llm_content(
 ) -> str:
 
     sections = [
-        f"Exit code: {parsed['exit_code']}"
+        (
+            "Exit code: "
+            f"{parsed['exit_code']}"
+        )
     ]
 
-    if parsed["failed_tests"]:
+    if parsed[
+        "failed_tests"
+    ]:
+
         sections.append(
-            "FAILED TESTS:\n"
-            + "\n".join(
-                parsed["failed_tests"]
+            (
+                "FAILED TESTS:\n"
+                + "\n".join(
+                    parsed[
+                        "failed_tests"
+                    ]
+                )
             )
         )
 
-    if parsed["failure_details"]:
+    if parsed[
+        "failure_details"
+    ]:
+
         sections.append(
-            "DETAILS:\n"
-            + "\n".join(
-                parsed["failure_details"]
+            (
+                "DETAILS:\n"
+                + "\n".join(
+                    parsed[
+                        "failure_details"
+                    ]
+                )
             )
         )
 
-    if parsed["stderr"]:
+    if parsed[
+        "stderr"
+    ]:
+
         sections.append(
-            "STDERR:\n"
-            + "\n".join(
-                parsed["stderr"]
+            (
+                "STDERR:\n"
+                + "\n".join(
+                    parsed[
+                        "stderr"
+                    ]
+                )
             )
         )
 
-    return "\n".join(sections)
+    return "\n".join(
+        sections
+    )
 
 
 def _extract_count(
@@ -264,6 +443,7 @@ def _extract_count(
     )
 
     if not matches:
+
         return 0
 
     return int(
@@ -277,9 +457,16 @@ def _extract_failed_test_names(
 
     failed_names = []
 
-    for line in stdout.splitlines():
+    for line in (
+        stdout.splitlines()
+    ):
 
-        if not line.startswith("FAILED "):
+        if not (
+            line.startswith(
+                "FAILED "
+            )
+        ):
+
             continue
 
         failed_names.append(
@@ -287,9 +474,12 @@ def _extract_failed_test_names(
         )
 
         if (
-            len(failed_names)
+            len(
+                failed_names
+            )
             >= MAX_FAILED_TEST_NAMES
         ):
+
             break
 
     return failed_names
@@ -301,16 +491,25 @@ def _failure_detail_lines(
 ) -> list[str]:
 
     detail = []
+
     capturing = False
 
     for line in stdout_lines:
 
         if (
-            "FAILURES" in line
-            or line.startswith("FAILED ")
-            or line.startswith("E ")
-            or line.startswith("E\t")
+            "FAILURES"
+            in line
+            or line.startswith(
+                "FAILED "
+            )
+            or line.startswith(
+                "E "
+            )
+            or line.startswith(
+                "E\t"
+            )
         ):
+
             capturing = True
 
         if capturing:
@@ -319,14 +518,20 @@ def _failure_detail_lines(
                 r"\.+",
                 line.strip(),
             ):
+
                 continue
 
-            detail.append(line)
+            detail.append(
+                line
+            )
 
             if (
-                len(detail)
+                len(
+                    detail
+                )
                 >= max_fail_lines
             ):
+
                 break
 
     return detail

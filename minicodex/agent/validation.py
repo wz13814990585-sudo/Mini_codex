@@ -35,6 +35,30 @@ class ValidationScope(
 
 
 # =============================================================
+# Validation Purpose
+# =============================================================
+
+
+class ValidationPurpose(
+    str,
+    Enum,
+):
+
+    """
+    Why a validation run exists.
+
+    ACCEPTANCE:
+        Does the behavior requested by the user actually work?
+
+    REGRESSION:
+        Did the change break existing project behavior?
+    """
+
+    ACCEPTANCE = "acceptance"
+    REGRESSION = "regression"
+
+
+# =============================================================
 # Validation Next Action
 # =============================================================
 
@@ -44,17 +68,13 @@ class ValidationNextAction(
     Enum,
 ):
 
-    """
-    Deterministic recommendation produced by the
-    validation pipeline.
-
-    The LLM still decides HOW to act, but Harness decides
-    what level of validation evidence is still required.
-    """
-
     NONE = "none"
 
     FIX_FAILURE = "fix_failure"
+
+    RUN_ACCEPTANCE_VALIDATION = (
+        "run_acceptance_validation"
+    )
 
     RUN_FULL_VALIDATION = (
         "run_full_validation"
@@ -79,19 +99,21 @@ class ValidationEvidence:
     """
     Normalized behavioral validation evidence.
 
-    Important concepts are intentionally separated:
-
     execution_succeeded:
-        Did the validation tool itself execute correctly?
+        Did the validation tool execute correctly?
 
     outcome:
-        What did the validation say about the code?
+        Did the validation itself pass or fail?
 
     scope:
-        How broad was the validation?
+        Was validation targeted or full-suite?
+
+    purpose:
+        Was this acceptance evidence or regression evidence?
 
     edit_revision:
-        Which code revision did this evidence validate?
+        Which exact workspace edit revision did this
+        evidence validate?
     """
 
     tool_name: str
@@ -101,6 +123,8 @@ class ValidationEvidence:
     outcome: ValidationOutcome
 
     scope: ValidationScope
+
+    purpose: ValidationPurpose
 
     edit_revision: int
 
@@ -117,10 +141,6 @@ class ValidationEvidence:
     path: str | None = None
 
     summary: str = ""
-
-    # =========================================================
-    # Convenience
-    # =========================================================
 
     @property
     def validation_passed(
@@ -162,6 +182,26 @@ class ValidationEvidence:
             == ValidationScope.FULL
         )
 
+    @property
+    def is_acceptance(
+        self,
+    ) -> bool:
+
+        return (
+            self.purpose
+            == ValidationPurpose.ACCEPTANCE
+        )
+
+    @property
+    def is_regression(
+        self,
+    ) -> bool:
+
+        return (
+            self.purpose
+            == ValidationPurpose.REGRESSION
+        )
+
 
 # =============================================================
 # Validation State
@@ -171,10 +211,9 @@ class ValidationEvidence:
 @dataclass
 class ValidationState:
     """
-    Validation state for the current workspace edit revision.
+    Validation evidence for the CURRENT edit revision.
 
-    Every successful edit invalidates validation evidence
-    from older revisions.
+    Any successful edit invalidates all previous evidence.
     """
 
     edit_revision: int = 0
@@ -183,16 +222,14 @@ class ValidationState:
 
     targeted_passed: bool = False
 
+    acceptance_passed: bool = False
+
     full_passed: bool = False
 
     latest_evidence: (
         ValidationEvidence
         | None
     ) = None
-
-    # =========================================================
-    # Reset
-    # =========================================================
 
     def reset(
         self,
@@ -203,6 +240,8 @@ class ValidationState:
         self.has_edit = False
 
         self.targeted_passed = False
+
+        self.acceptance_passed = False
 
         self.full_passed = False
 
@@ -217,21 +256,15 @@ class ValidationState:
 class ValidationPipeline:
     """
     Normalize validation results and manage validation
-    escalation for the current edit revision.
+    evidence for the current edit revision.
 
-    Core policy:
+    Completion evidence requires:
 
-    Edit
-        ↓
-    validation evidence becomes stale
+        acceptance PASS
+        +
+        full regression PASS
 
-    Targeted PASS
-        ↓
-    still requires full validation
-
-    Full PASS
-        ↓
-    current edit revision becomes fully validated
+    for the same current edit revision.
     """
 
     def __init__(
@@ -260,10 +293,9 @@ class ValidationPipeline:
         self,
     ) -> int:
         """
-        Record one successful meaningful edit.
+        A successful edit creates a new code revision.
 
-        Every edit creates a new revision and invalidates
-        all validation evidence for the previous code state.
+        Validation evidence from older revisions becomes stale.
         """
 
         self.state.edit_revision += 1
@@ -271,6 +303,8 @@ class ValidationPipeline:
         self.state.has_edit = True
 
         self.state.targeted_passed = False
+
+        self.state.acceptance_passed = False
 
         self.state.full_passed = False
 
@@ -324,10 +358,6 @@ class ValidationPipeline:
             evidence
         )
 
-        # =====================================================
-        # Only PASS evidence can move validation forward.
-        # =====================================================
-
         if (
             evidence.outcome
             != ValidationOutcome.PASSED
@@ -336,7 +366,22 @@ class ValidationPipeline:
             return
 
         # =====================================================
-        # Targeted PASS
+        # Acceptance Evidence
+        # =====================================================
+
+        if (
+            evidence.purpose
+            == ValidationPurpose.ACCEPTANCE
+        ):
+
+            self.state.acceptance_passed = (
+                True
+            )
+
+            return
+
+        # =====================================================
+        # Regression Evidence
         # =====================================================
 
         if (
@@ -350,10 +395,6 @@ class ValidationPipeline:
 
             return
 
-        # =====================================================
-        # Full PASS
-        # =====================================================
-
         if (
             evidence.scope
             == ValidationScope.FULL
@@ -364,7 +405,7 @@ class ValidationPipeline:
             )
 
     # =========================================================
-    # Next Action
+    # Next Validation Action
     # =========================================================
 
     def next_action(
@@ -374,14 +415,6 @@ class ValidationPipeline:
             | None
         ) = None,
     ) -> ValidationNextAction:
-        """
-        Return the deterministic validation action implied
-        by current evidence.
-
-        This does not tell the LLM HOW to fix code.
-        It only tells orchestration what validation state
-        currently permits.
-        """
 
         current = (
             evidence
@@ -395,7 +428,7 @@ class ValidationPipeline:
             )
 
         # =====================================================
-        # Validation Tool Could Not Produce Reliable Evidence
+        # No Reliable Conclusion
         # =====================================================
 
         if (
@@ -423,51 +456,46 @@ class ValidationPipeline:
             )
 
         # =====================================================
-        # Targeted Validation Passed
-        #
-        # Useful evidence, but insufficient for final task
-        # completion after an edit.
+        # Validation Passed
         # =====================================================
 
-        if (
-            current.scope
-            == ValidationScope.TARGETED
-        ):
-
-            if (
-                self.state.has_edit
-            ):
-
-                return (
-                    ValidationNextAction
-                    .RUN_FULL_VALIDATION
-                )
+        if not self.state.has_edit:
 
             return (
                 ValidationNextAction.NONE
             )
 
-        # =====================================================
-        # Full Validation Passed
-        # =====================================================
-
+        # Both independent requirements already exist.
         if (
-            current.scope
-            == ValidationScope.FULL
+            self.state.acceptance_passed
+            and self.state.full_passed
         ):
 
-            if (
-                self.state.has_edit
-                and self.state.full_passed
-            ):
+            return (
+                ValidationNextAction
+                .TASK_VALIDATED
+            )
 
-                return (
-                    ValidationNextAction
-                    .TASK_VALIDATED
-                )
+        # Acceptance passed, but regression safety is missing.
+        if (
+            self.state.acceptance_passed
+            and not self.state.full_passed
+        ):
 
             return (
-                ValidationNextAction.NONE
+                ValidationNextAction
+                .RUN_FULL_VALIDATION
+            )
+
+        # Regression evidence exists, but user-requested
+        # behavior has not been demonstrated.
+        if (
+            not self.state.acceptance_passed
+        ):
+
+            return (
+                ValidationNextAction
+                .RUN_ACCEPTANCE_VALIDATION
             )
 
         return (
@@ -475,17 +503,18 @@ class ValidationPipeline:
         )
 
     # =========================================================
-    # Current Revision Fully Validated
+    # Current Full Regression Evidence
     # =========================================================
 
     def current_edit_validated(
         self,
     ) -> bool:
         """
-        True only when the current code revision has:
+        Regression-level validation only.
 
-        - at least one recorded edit
-        - a successful full validation after that edit
+        This intentionally does NOT mean the whole user task
+        is complete. CompletionGate additionally requires
+        acceptance evidence.
         """
 
         return bool(
@@ -494,26 +523,47 @@ class ValidationPipeline:
         )
 
     # =========================================================
-    # Requires Full Validation
+    # Acceptance Evidence
+    # =========================================================
+
+    def current_acceptance_passed(
+        self,
+    ) -> bool:
+
+        return bool(
+            self.state.has_edit
+            and self.state.acceptance_passed
+        )
+
+    # =========================================================
+    # Requires Full Regression
     # =========================================================
 
     def requires_full_validation(
         self,
     ) -> bool:
-        """
-        True when useful targeted evidence exists but the
-        current edit revision still lacks a successful
-        full validation.
-        """
 
         return bool(
             self.state.has_edit
-            and self.state.targeted_passed
+            and self.state.acceptance_passed
             and not self.state.full_passed
         )
 
     # =========================================================
-    # Pytest Result Normalization
+    # Requires Acceptance
+    # =========================================================
+
+    def requires_acceptance_validation(
+        self,
+    ) -> bool:
+
+        return bool(
+            self.state.has_edit
+            and not self.state.acceptance_passed
+        )
+
+    # =========================================================
+    # RunTests Result Normalization
     # =========================================================
 
     def _from_run_tests(
@@ -529,6 +579,15 @@ class ValidationPipeline:
                 ".",
             )
         ).strip()
+
+        purpose = (
+            self._validation_purpose(
+                arguments.get(
+                    "purpose",
+                    "regression",
+                )
+            )
+        )
 
         scope = (
             self._test_scope(
@@ -550,6 +609,7 @@ class ValidationPipeline:
                     .INCONCLUSIVE
                 ),
                 scope=scope,
+                purpose=purpose,
                 edit_revision=(
                     self.state
                     .edit_revision
@@ -560,10 +620,6 @@ class ValidationPipeline:
                     result.summary
                 ),
             )
-
-        # =====================================================
-        # Structured Pytest Data
-        # =====================================================
 
         tests_passed = (
             result.data.get(
@@ -608,7 +664,7 @@ class ValidationPipeline:
         )
 
         # =====================================================
-        # Validation Passed
+        # Passed
         # =====================================================
 
         if (
@@ -624,6 +680,7 @@ class ValidationPipeline:
                     .PASSED
                 ),
                 scope=scope,
+                purpose=purpose,
                 edit_revision=(
                     self.state
                     .edit_revision
@@ -640,7 +697,7 @@ class ValidationPipeline:
             )
 
         # =====================================================
-        # Validation Failed
+        # Failed
         # =====================================================
 
         failure_total = (
@@ -661,6 +718,7 @@ class ValidationPipeline:
                     .FAILED
                 ),
                 scope=scope,
+                purpose=purpose,
                 edit_revision=(
                     self.state
                     .edit_revision
@@ -690,6 +748,7 @@ class ValidationPipeline:
                 .INCONCLUSIVE
             ),
             scope=scope,
+            purpose=purpose,
             edit_revision=(
                 self.state
                 .edit_revision
@@ -706,7 +765,7 @@ class ValidationPipeline:
         )
 
     # =========================================================
-    # Scope Detection
+    # Scope
     # =========================================================
 
     @staticmethod
@@ -737,6 +796,34 @@ class ValidationPipeline:
 
         return (
             ValidationScope.UNKNOWN
+        )
+
+    # =========================================================
+    # Purpose
+    # =========================================================
+
+    @staticmethod
+    def _validation_purpose(
+        value,
+    ) -> ValidationPurpose:
+
+        normalized = (
+            str(value)
+            .strip()
+            .lower()
+        )
+
+        if (
+            normalized
+            == ValidationPurpose.ACCEPTANCE.value
+        ):
+
+            return (
+                ValidationPurpose.ACCEPTANCE
+            )
+
+        return (
+            ValidationPurpose.REGRESSION
         )
 
     # =========================================================
