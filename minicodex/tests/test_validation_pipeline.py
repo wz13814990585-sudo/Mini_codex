@@ -34,9 +34,9 @@ def passed_result(
 
 
 def failed_result(
+    failed: int = 1,
     *,
     passed: int = 0,
-    failed: int = 1,
     errors: int = 0,
 ) -> ToolResult:
 
@@ -668,4 +668,523 @@ def test_validation_pipeline_reset():
     assert (
         pipeline.state.latest_evidence
         is None
+    )
+
+from types import SimpleNamespace
+
+from ..agent.loop import (
+    EDIT_TOOL_NAMES,
+    apply_validation_evidence,
+    has_validated_edit,
+)
+from ..agent.progress import (
+    ProgressController,
+)
+from ..agent.validation import (
+    ValidationNextAction,
+    ValidationPipeline,
+)
+from ..tools.results import (
+    ToolResult,
+)
+
+
+class FakeRecovery:
+
+    def __init__(
+        self,
+    ):
+        self.progress_marks = 0
+
+    def mark_progress(
+        self,
+    ) -> None:
+
+        self.progress_marks += 1
+
+    def recover(
+        self,
+        reason: str,
+        replan_callback,
+    ):
+
+        return (
+            "Recovery requested.",
+            True,
+        )
+
+
+def make_agent():
+
+    return SimpleNamespace(
+        validation_pipeline=(
+            ValidationPipeline()
+        ),
+        progress=(
+            ProgressController(
+                max_same_tool_repeats=2,
+                progress_window=6,
+                max_validation_no_progress=2,
+            )
+        ),
+        recovery=(
+            FakeRecovery()
+        ),
+        replan=lambda reason: {
+            "replanned": False,
+        },
+    )
+
+
+# =============================================================
+# Edit Tool Classification
+# =============================================================
+
+
+def test_all_stage8_edit_tools_are_classified():
+
+    assert (
+        EDIT_TOOL_NAMES
+        == {
+            "patch_file",
+            "replace_lines",
+            "replace_symbol",
+            "write_file",
+        }
+    )
+
+
+# =============================================================
+# Full Validation Required
+# =============================================================
+
+
+def test_targeted_pass_forces_full_validation():
+
+    agent = (
+        make_agent()
+    )
+
+    agent.validation_pipeline.record_edit()
+
+    evidence = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "minicodex/tests/"
+                    "test_replace_symbol.py"
+                )
+            },
+            result=(
+                passed_result(
+                    5
+                )
+            ),
+        )
+    )
+
+    messages = []
+
+    (
+        early_stop,
+        restart,
+    ) = (
+        apply_validation_evidence(
+            agent=agent,
+            evidence=evidence,
+            messages=messages,
+        )
+    )
+
+    assert (
+        early_stop
+        is None
+    )
+
+    assert (
+        restart
+        is True
+    )
+
+    assert (
+        agent.validation_pipeline
+        .next_action(
+            evidence
+        )
+        == (
+            ValidationNextAction
+            .RUN_FULL_VALIDATION
+        )
+    )
+
+    assert (
+        has_validated_edit(
+            agent
+        )
+        is False
+    )
+
+    assert (
+        len(messages)
+        == 1
+    )
+
+    assert (
+        "full validation"
+        in (
+            messages[0][
+                "content"
+            ].lower()
+        )
+    )
+
+
+# =============================================================
+# Full PASS Validates Current Revision
+# =============================================================
+
+
+def test_full_pass_validates_current_edit():
+
+    agent = (
+        make_agent()
+    )
+
+    revision = (
+        agent.validation_pipeline
+        .record_edit()
+    )
+
+    assert (
+        revision
+        == 1
+    )
+
+    evidence = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": "."
+            },
+            result=(
+                passed_result(
+                    100
+                )
+            ),
+        )
+    )
+
+    messages = []
+
+    (
+        early_stop,
+        restart,
+    ) = (
+        apply_validation_evidence(
+            agent=agent,
+            evidence=evidence,
+            messages=messages,
+        )
+    )
+
+    assert (
+        early_stop
+        is None
+    )
+
+    assert (
+        restart
+        is False
+    )
+
+    assert (
+        has_validated_edit(
+            agent
+        )
+        is True
+    )
+
+
+# =============================================================
+# New Edit Invalidates Full PASS
+# =============================================================
+
+
+def test_new_edit_invalidates_completion_evidence():
+
+    agent = (
+        make_agent()
+    )
+
+    agent.validation_pipeline.record_edit()
+
+    agent.validation_pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": "."
+        },
+        result=(
+            passed_result(
+                20
+            )
+        ),
+    )
+
+    assert (
+        has_validated_edit(
+            agent
+        )
+        is True
+    )
+
+    agent.validation_pipeline.record_edit()
+
+    assert (
+        has_validated_edit(
+            agent
+        )
+        is False
+    )
+
+    assert (
+        agent.validation_pipeline
+        .state
+        .edit_revision
+        == 2
+    )
+
+
+# =============================================================
+# Failure Uses Progress Trend
+# =============================================================
+
+
+def test_failed_validation_tracks_progress():
+
+    agent = (
+        make_agent()
+    )
+
+    agent.validation_pipeline.record_edit()
+
+    first = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": "."
+            },
+            result=(
+                failed_result(
+                    5
+                )
+            ),
+        )
+    )
+
+    messages = []
+
+    (
+        early_stop,
+        restart,
+    ) = (
+        apply_validation_evidence(
+            agent=agent,
+            evidence=first,
+            messages=messages,
+        )
+    )
+
+    assert (
+        early_stop
+        is None
+    )
+
+    assert (
+        restart
+        is False
+    )
+
+    assert (
+        agent.progress
+        .last_validation_failed_count
+        == 5
+    )
+
+    # =========================================================
+    # Repair edit
+    # =========================================================
+
+    agent.validation_pipeline.record_edit()
+
+    second = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": "."
+            },
+            result=(
+                failed_result(
+                    3
+                )
+            ),
+        )
+    )
+
+    (
+        early_stop,
+        restart,
+    ) = (
+        apply_validation_evidence(
+            agent=agent,
+            evidence=second,
+            messages=messages,
+        )
+    )
+
+    assert (
+        early_stop
+        is None
+    )
+
+    assert (
+        restart
+        is False
+    )
+
+    assert (
+        agent.progress
+        .last_validation_failed_count
+        == 3
+    )
+
+    assert (
+        agent.recovery
+        .progress_marks
+        == 1
+    )
+
+
+# =============================================================
+# Inconclusive Validation
+# =============================================================
+
+
+def test_inconclusive_validation_forces_investigation():
+
+    agent = (
+        make_agent()
+    )
+
+    agent.validation_pipeline.record_edit()
+
+    result = ToolResult(
+        success=False,
+        summary=(
+            "Tests timed out."
+        ),
+        data={
+            "timed_out": True,
+        },
+        error=(
+            "pytest execution timed out"
+        ),
+    )
+
+    evidence = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": "."
+            },
+            result=result,
+        )
+    )
+
+    messages = []
+
+    (
+        early_stop,
+        restart,
+    ) = (
+        apply_validation_evidence(
+            agent=agent,
+            evidence=evidence,
+            messages=messages,
+        )
+    )
+
+    assert (
+        early_stop
+        is None
+    )
+
+    assert (
+        restart
+        is True
+    )
+
+    assert (
+        has_validated_edit(
+            agent
+        )
+        is False
+    )
+
+    assert (
+        "inconclusive"
+        in (
+            messages[0][
+                "content"
+            ].lower()
+        )
+    )
+
+
+# =============================================================
+# Full Pass Without Edit Is Not Task Completion
+# =============================================================
+
+
+def test_full_pass_without_edit_does_not_validate_task():
+
+    agent = (
+        make_agent()
+    )
+
+    evidence = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": "."
+            },
+            result=(
+                passed_result(
+                    50
+                )
+            ),
+        )
+    )
+
+    assert (
+        agent.validation_pipeline
+        .next_action(
+            evidence
+        )
+        == (
+            ValidationNextAction.NONE
+        )
+    )
+
+    assert (
+        has_validated_edit(
+            agent
+        )
+        is False
     )

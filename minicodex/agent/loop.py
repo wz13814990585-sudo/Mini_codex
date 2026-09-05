@@ -3,8 +3,12 @@
 from .context import (
     compact_messages_for_pressure,
 )
-from .progress import ValidationStatus
 from .state import StepStatus
+from .validation import (
+    ValidationEvidence,
+    ValidationNextAction,
+    ValidationOutcome,
+)
 
 from ..tools.results import ToolResult
 
@@ -15,6 +19,14 @@ INCOMPLETE_PLAN_REMINDER = (
     "Call complete_plan_step only after that step "
     "is actually done. Do not give a final answer yet."
 )
+
+
+EDIT_TOOL_NAMES = {
+    "patch_file",
+    "replace_lines",
+    "replace_symbol",
+    "write_file",
+}
 
 
 # =============================================================
@@ -30,19 +42,21 @@ def run_agent_loop(
     """
     Main orchestration loop.
 
-    The loop owns Agent-level policy:
+    The loop owns Agent-level orchestration:
     - planning progress
     - context budget policy
     - token accounting
     - working summary updates
     - duplicate policy
-    - validation
+    - validation orchestration
     - recovery
-    - edit evidence
     - plan transitions
     - stopping decisions
 
     Tool execution mechanics are delegated to ToolExecutor.
+
+    Validation meaning and edit-revision truth are delegated
+    to ValidationPipeline.
     """
 
     messages = [
@@ -149,7 +163,6 @@ def run_agent_loop(
                         }
                     )
 
-                    # Recovery may have triggered replan.
                     if agent.active_plan:
 
                         current_plan_step = (
@@ -341,7 +354,7 @@ def run_agent_loop(
             # Validated Edit May Finish Task
             # =============================================
 
-            if tests_passed_after_edit(
+            if has_validated_edit(
                 agent
             ):
 
@@ -351,8 +364,8 @@ def run_agent_loop(
                         agent,
                         (
                             "Task validated: "
-                            "tests passed after "
-                            "a successful edit."
+                            "the current edit revision "
+                            "passed full validation."
                         ),
                     )
                 )
@@ -477,11 +490,6 @@ def run_agent_loop(
                 result = (
                     prepared.error
                 )
-
-                # ---------------------------------------------
-                # Working Summary:
-                # preparation failure is still a real fact.
-                # ---------------------------------------------
 
                 agent.working_summary.record_tool_result(
                     tool_name=tool_name,
@@ -662,26 +670,31 @@ def run_agent_loop(
             )
 
             # =================================================
-            # Successful Edit Evidence
+            # Successful Edit
+            #
+            # Every successful edit creates a NEW revision.
+            # All previous validation evidence becomes stale.
             # =================================================
 
-            if tool_name in {
-                "patch_file",
-                "replace_lines",
-                "replace_symbol",
-                "write_file",
-            }:
+            if (
+                tool_name
+                in EDIT_TOOL_NAMES
+                and result.success
+            ):
 
-                if result.success:
+                revision = (
+                    agent.validation_pipeline
+                    .record_edit()
+                )
 
-                    (
-                        agent.progress
-                        .record_successful_edit()
-                    )
+                print(
+                    "\n[Edit Applied]"
+                )
 
-                    print(
-                        "\n[Edit Applied]"
-                    )
+                print(
+                    "[Validation Revision] "
+                    f"{revision}"
+                )
 
             # =================================================
             # Complete Plan Step
@@ -724,7 +737,10 @@ def run_agent_loop(
             # Replan
             # =================================================
 
-            if tool_name == "replan":
+            if (
+                tool_name
+                == "replan"
+            ):
 
                 replanned = bool(
                     result.data.get(
@@ -755,85 +771,75 @@ def run_agent_loop(
                 continue
 
             # =================================================
-            # Structured Validation
+            # Structured Validation Pipeline
             # =================================================
 
-            if tool_name == "run_tests":
+            if (
+                tool_name
+                == "run_tests"
+            ):
 
-                failed_count = None
+                evidence = (
+                    agent.validation_pipeline
+                    .observe(
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        result=result,
+                    )
+                )
 
-                if result.success:
+                if (
+                    evidence
+                    is not None
+                ):
 
-                    tests_passed = (
-                        result.data.get(
-                            "tests_passed"
-                        )
+                    print(
+                        "\n[Validation Evidence]"
                     )
 
-                    failed = int(
-                        result.data.get(
-                            "failed",
-                            0,
-                        )
+                    print(
+                        "Revision: "
+                        f"{evidence.edit_revision}"
                     )
 
-                    errors = int(
-                        result.data.get(
-                            "errors",
-                            0,
+                    print(
+                        "Scope: "
+                        f"{evidence.scope.value}"
+                    )
+
+                    print(
+                        "Outcome: "
+                        f"{evidence.outcome.value}"
+                    )
+
+                    (
+                        early_stop,
+                        restart_agent_loop,
+                    ) = (
+                        apply_validation_evidence(
+                            agent=agent,
+                            evidence=evidence,
+                            messages=messages,
                         )
                     )
 
                     if (
-                        tests_passed
-                        is True
+                        early_stop
+                        or restart_agent_loop
                     ):
 
-                        failed_count = 0
-
-                    elif (
-                        failed
-                        + errors
-                        > 0
-                    ):
-
-                        failed_count = (
-                            failed
-                            + errors
+                        append_skipped_tool_results(
+                            messages,
+                            response.tool_calls[
+                                tool_index + 1:
+                            ],
+                            (
+                                "validation changed "
+                                "agent loop control flow"
+                            ),
                         )
 
-                (
-                    early_stop,
-                    restart_agent_loop,
-                ) = apply_validation(
-                    agent,
-                    failed_count,
-                    messages,
-                    full_suite=(
-                        is_full_test_run(
-                            tool_name,
-                            arguments,
-                        )
-                    ),
-                )
-
-                if (
-                    early_stop
-                    or restart_agent_loop
-                ):
-
-                    append_skipped_tool_results(
-                        messages,
-                        response.tool_calls[
-                            tool_index + 1:
-                        ],
-                        (
-                            "validation changed "
-                            "agent loop control flow"
-                        ),
-                    )
-
-                    break
+                        break
 
             # =================================================
             # General Action Stall Detection
@@ -923,16 +929,18 @@ def run_agent_loop(
         # =====================================================
 
         if early_stop:
+
             return early_stop
 
         if restart_agent_loop:
+
             continue
 
         # =====================================================
-        # Stop When Full Validation Passed After Edit
+        # Stop When Current Edit Revision Is Fully Validated
         # =====================================================
 
-        if tests_passed_after_edit(
+        if has_validated_edit(
             agent
         ):
 
@@ -941,8 +949,8 @@ def run_agent_loop(
                 (
                     "Task validated: "
                     "the full test suite "
-                    "passed after the latest "
-                    "successful edit."
+                    "passed for the current "
+                    "edit revision."
                 ),
             )
 
@@ -961,92 +969,110 @@ def run_agent_loop(
 
 
 # =============================================================
-# Validation Helpers
+# Current Edit Validation
 # =============================================================
 
 
-def tests_passed_after_edit(
+def has_validated_edit(
     agent,
 ) -> bool:
 
-    progress = getattr(
+    pipeline = getattr(
         agent,
-        "progress",
+        "validation_pipeline",
         None,
     )
 
-    if progress is None:
+    if (
+        pipeline
+        is None
+    ):
+
         return False
 
-    return bool(
-        getattr(
-            progress,
-            "has_validated_edit",
-            False,
-        )
+    return (
+        pipeline
+        .current_edit_validated()
     )
 
 
 # =============================================================
-# Full Test Suite Detection
+# Validation Policy Orchestration
 # =============================================================
 
 
-def is_full_test_run(
-    tool_name: str,
-    arguments: dict,
-) -> bool:
-
-    if tool_name != "run_tests":
-        return False
-
-    path = str(
-        arguments.get(
-            "path",
-            ".",
-        )
-    ).strip()
-
-    return path in {
-        "",
-        ".",
-        "./",
-    }
-
-
-# =============================================================
-# Validation Policy
-# =============================================================
-
-
-def apply_validation(
+def apply_validation_evidence(
     agent,
-    failed_count: int | None,
+    evidence: ValidationEvidence,
     messages: list,
-    full_suite: bool = False,
 ) -> tuple[
     str | None,
     bool,
 ]:
 
-    validation = (
+    """
+    Convert normalized ValidationEvidence into AgentLoop
+    orchestration.
+
+    Responsibilities intentionally remain separated:
+
+    ValidationPipeline:
+        What does the evidence mean?
+
+    ProgressController:
+        Is repeated failure improving or stalled?
+
+    AgentLoop:
+        What should execution do next?
+    """
+
+    # =========================================================
+    # Evidence → Failure Count For Progress Trend
+    # =========================================================
+
+    if (
+        evidence.outcome
+        == ValidationOutcome.PASSED
+    ):
+
+        failed_count = 0
+
+    elif (
+        evidence.outcome
+        == ValidationOutcome.FAILED
+    ):
+
+        failed_count = (
+            evidence.failed_count
+        )
+
+    else:
+
+        failed_count = None
+
+    validation_progress = (
         agent.progress
         .track_validation(
             failed_count
         )
     )
 
-    if validation.message:
+    if (
+        validation_progress.message
+    ):
 
         print(
             "\n[Validation Progress]"
         )
 
         print(
-            validation.message
+            validation_progress.message
         )
 
-    if validation.meaningful_progress:
+    if (
+        validation_progress
+        .meaningful_progress
+    ):
 
         agent.recovery.mark_progress()
 
@@ -1054,15 +1080,134 @@ def apply_validation(
             "\n[Meaningful Progress Detected]"
         )
 
+    # =========================================================
+    # ValidationPipeline Policy Decision
+    # =========================================================
+
+    next_action = (
+        agent.validation_pipeline
+        .next_action(
+            evidence
+        )
+    )
+
+    print(
+        "\n[Validation Policy]"
+    )
+
+    print(
+        "Next action: "
+        f"{next_action.value}"
+    )
+
+    # =========================================================
+    # Current Revision Fully Validated
+    # =========================================================
+
     if (
-        validation.status
-        == ValidationStatus.PASSED
-        and full_suite
+        next_action
+        == (
+            ValidationNextAction
+            .TASK_VALIDATED
+        )
     ):
 
-        agent.progress.mark_edit_validated()
+        return (
+            None,
+            False,
+        )
 
-    if not validation.stalled:
+    # =========================================================
+    # Targeted PASS → Escalate To Full Suite
+    # =========================================================
+
+    if (
+        next_action
+        == (
+            ValidationNextAction
+            .RUN_FULL_VALIDATION
+        )
+    ):
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Targeted validation passed for "
+                    "the current edit revision, but "
+                    "full validation is still required. "
+                    "Run the full test suite with "
+                    "run_tests(path='.') before "
+                    "claiming task completion."
+                ),
+            }
+        )
+
+        return (
+            None,
+            True,
+        )
+
+    # =========================================================
+    # Inconclusive Validation
+    # =========================================================
+
+    if (
+        next_action
+        == (
+            ValidationNextAction
+            .INVESTIGATE_INCONCLUSIVE
+        )
+    ):
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Validation was inconclusive. "
+                    "Do not treat it as either a code "
+                    "failure or successful validation. "
+                    "Inspect why validation could not "
+                    "produce reliable evidence and obtain "
+                    "new evidence."
+                ),
+            }
+        )
+
+        return (
+            None,
+            True,
+        )
+
+    # =========================================================
+    # Failed But Not Yet Stalled
+    # =========================================================
+
+    if (
+        next_action
+        == (
+            ValidationNextAction
+            .FIX_FAILURE
+        )
+        and not (
+            validation_progress
+            .stalled
+        )
+    ):
+
+        return (
+            None,
+            False,
+        )
+
+    # =========================================================
+    # No Stall
+    # =========================================================
+
+    if not (
+        validation_progress
+        .stalled
+    ):
 
         return (
             None,
@@ -1076,7 +1221,7 @@ def apply_validation(
     reason = (
         "Validation is repeatedly failing "
         "without meaningful improvement. "
-        f"{validation.message}"
+        f"{validation_progress.message}"
     )
 
     (
@@ -1139,8 +1284,9 @@ def append_skipped_tool_results(
     Tool-call protocols expect every assistant tool call
     to receive a corresponding tool response.
 
-    When plan/recovery state changes midway through a batch,
-    remaining calls are deliberately skipped instead of executed.
+    When plan/recovery/validation state changes midway
+    through a batch, remaining calls are deliberately
+    skipped instead of executed.
     """
 
     for tool_call in tool_calls:
@@ -1232,7 +1378,58 @@ def summarize_agent_stop(
             )
 
     # =========================================================
-    # Last Validation State
+    # Validation State
+    # =========================================================
+
+    pipeline = getattr(
+        agent,
+        "validation_pipeline",
+        None,
+    )
+
+    if (
+        pipeline is not None
+    ):
+
+        state = (
+            pipeline.state
+        )
+
+        evidence = (
+            state.latest_evidence
+        )
+
+        lines.append(
+            (
+                "Validation revision: "
+                f"{state.edit_revision}."
+            )
+        )
+
+        if evidence is not None:
+
+            lines.append(
+                (
+                    "Last validation: "
+                    f"scope={evidence.scope.value}, "
+                    f"outcome={evidence.outcome.value}, "
+                    f"revision="
+                    f"{evidence.edit_revision}."
+                )
+            )
+
+        if (
+            pipeline
+            .current_edit_validated()
+        ):
+
+            lines.append(
+                "Current edit revision has "
+                "full validation evidence."
+            )
+
+    # =========================================================
+    # Validation Failure Trend
     # =========================================================
 
     failed = getattr(
@@ -1244,16 +1441,15 @@ def summarize_agent_stop(
     if failed == 0:
 
         lines.append(
-            "Last validation: "
-            "tests passed."
+            "Latest validation failure count: 0."
         )
 
     elif failed is not None:
 
         lines.append(
             (
-                "Last validation: "
-                f"{failed} failures."
+                "Latest validation failure count: "
+                f"{failed}."
             )
         )
 
@@ -1267,7 +1463,10 @@ def summarize_agent_stop(
         None,
     )
 
-    if token_metrics is not None:
+    if (
+        token_metrics
+        is not None
+    ):
 
         lines.append(
             (
@@ -1292,7 +1491,10 @@ def summarize_agent_stop(
         None,
     )
 
-    if context_budget is not None:
+    if (
+        context_budget
+        is not None
+    ):
 
         lines.append(
             (

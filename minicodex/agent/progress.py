@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-class ValidationStatus(str, Enum):
+class ValidationStatus(
+    str,
+    Enum,
+):
     UNKNOWN = "unknown"
     PASSED = "passed"
     IMPROVED = "improved"
@@ -14,6 +17,16 @@ class ValidationStatus(str, Enum):
 
 @dataclass
 class ValidationProgress:
+    """
+    Tracks whether repeated validation attempts are
+    improving, unchanged, or regressing.
+
+    This is NOT the source of truth for whether the
+    current edit revision is fully validated.
+
+    That responsibility belongs to ValidationPipeline.
+    """
+
     status: ValidationStatus
 
     previous_failed: int | None = None
@@ -21,12 +34,13 @@ class ValidationProgress:
 
     message: str | None = None
 
-    # Whether repeated validation without improvement
-    # has reached the recovery threshold.
     stalled: bool = False
 
     @property
-    def meaningful_progress(self) -> bool:
+    def meaningful_progress(
+        self,
+    ) -> bool:
+
         return self.status in {
             ValidationStatus.PASSED,
             ValidationStatus.IMPROVED,
@@ -67,7 +81,18 @@ class ProgressController:
         self.recent_actions: list[str] = []
 
         # =========================================
-        # Validation State
+        # Validation Trend State
+        #
+        # This state may intentionally survive
+        # multiple edit revisions inside a task.
+        #
+        # Example:
+        #
+        # 5 failing
+        # → edit
+        # → 3 failing
+        #
+        # That is meaningful repair progress.
         # =========================================
 
         self.last_validation_failed_count: (
@@ -75,11 +100,6 @@ class ProgressController:
         ) = None
 
         self.validation_no_progress_count = 0
-
-        # Survives ordinary reset() so completing a plan
-        # step does not forget that this task already edited.
-        self._had_successful_edit = False
-        self._has_validated_edit = False
 
     # =============================================
     # Reset
@@ -95,30 +115,14 @@ class ProgressController:
 
         self.recent_actions.clear()
 
+        # A normal reset occurs when a plan step completes
+        # or replanning happens.
+        #
+        # Validation trend is intentionally reset here
+        # because the local strategy context changed.
         self.last_validation_failed_count = None
+
         self.validation_no_progress_count = 0
-
-        if new_task:
-            self._had_successful_edit = False
-            self._has_validated_edit = False
-
-    @property
-    def had_successful_edit(self) -> bool:
-        return self._had_successful_edit
-
-    @property
-    def has_validated_edit(self) -> bool:
-        return self._has_validated_edit
-
-    def record_successful_edit(self) -> None:
-        """Record edit evidence without resetting recovery state."""
-        self._had_successful_edit = True
-        self._has_validated_edit = False
-
-    def mark_edit_validated(self) -> None:
-        """Record that the full test suite passed after an edit."""
-        if self._had_successful_edit:
-            self._has_validated_edit = True
 
     # =============================================
     # Duplicate Tool Detection
@@ -128,7 +132,10 @@ class ProgressController:
         self,
         tool_name: str,
         arguments: dict,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[
+        bool,
+        str | None,
+    ]:
 
         signature = (
             tool_name,
@@ -139,19 +146,26 @@ class ProgressController:
             ),
         )
 
-        if signature == self.last_tool_signature:
+        if (
+            signature
+            == self.last_tool_signature
+        ):
 
             self.same_tool_repeat_count += 1
 
         else:
 
-            self.last_tool_signature = signature
+            self.last_tool_signature = (
+                signature
+            )
+
             self.same_tool_repeat_count = 0
 
         if (
             self.same_tool_repeat_count
             >= self.max_same_tool_repeats
         ):
+
             return (
                 False,
                 (
@@ -161,7 +175,10 @@ class ProgressController:
                 ),
             )
 
-        return True, None
+        return (
+            True,
+            None,
+        )
 
     # =============================================
     # Action History
@@ -191,17 +208,24 @@ class ProgressController:
     ) -> bool:
 
         if (
-            len(self.recent_actions)
+            len(
+                self.recent_actions
+            )
             < self.progress_window
         ):
+
             return False
 
-        recent = self.recent_actions[
-            -self.progress_window:
-        ]
+        recent = (
+            self.recent_actions[
+                -self.progress_window:
+            ]
+        )
 
         edit_tools = {
             "patch_file",
+            "replace_lines",
+            "replace_symbol",
             "write_file",
         }
 
@@ -213,22 +237,26 @@ class ProgressController:
         inspection_tools = {
             "read_file",
             "search_code",
+            "search_symbol",
             "list_files",
         }
 
         has_edit = any(
             action in edit_tools
-            for action in recent
+            for action
+            in recent
         )
 
         validation_count = sum(
             action in validation_tools
-            for action in recent
+            for action
+            in recent
         )
 
         inspection_count = sum(
             action in inspection_tools
-            for action in recent
+            for action
+            in recent
         )
 
         return (
@@ -247,13 +275,15 @@ class ProgressController:
     ) -> ValidationProgress:
 
         # =========================================
-        # Cannot understand validation result
+        # Cannot Understand Validation Result
         # =========================================
 
         if failed_count is None:
 
             return ValidationProgress(
-                status=ValidationStatus.UNKNOWN,
+                status=(
+                    ValidationStatus.UNKNOWN
+                ),
                 message=None,
             )
 
@@ -262,7 +292,7 @@ class ProgressController:
         )
 
         # =========================================
-        # First validation
+        # First Validation
         # =========================================
 
         if previous is None:
@@ -276,14 +306,20 @@ class ProgressController:
                 self.validation_no_progress_count = 0
 
                 return ValidationProgress(
-                    status=ValidationStatus.PASSED,
+                    status=(
+                        ValidationStatus.PASSED
+                    ),
                     previous_failed=None,
                     current_failed=0,
-                    message="Validation succeeded.",
+                    message=(
+                        "Validation succeeded."
+                    ),
                 )
 
             return ValidationProgress(
-                status=ValidationStatus.UNKNOWN,
+                status=(
+                    ValidationStatus.UNKNOWN
+                ),
                 previous_failed=None,
                 current_failed=failed_count,
                 message=(
@@ -299,13 +335,18 @@ class ProgressController:
         if failed_count == 0:
 
             self.last_validation_failed_count = 0
+
             self.validation_no_progress_count = 0
 
             return ValidationProgress(
-                status=ValidationStatus.PASSED,
+                status=(
+                    ValidationStatus.PASSED
+                ),
                 previous_failed=previous,
                 current_failed=0,
-                message="Validation succeeded.",
+                message=(
+                    "Validation succeeded."
+                ),
             )
 
         # =========================================
@@ -314,7 +355,10 @@ class ProgressController:
         # 5 failed -> 3 failed
         # =========================================
 
-        if failed_count < previous:
+        if (
+            failed_count
+            < previous
+        ):
 
             self.last_validation_failed_count = (
                 failed_count
@@ -323,7 +367,9 @@ class ProgressController:
             self.validation_no_progress_count = 0
 
             return ValidationProgress(
-                status=ValidationStatus.IMPROVED,
+                status=(
+                    ValidationStatus.IMPROVED
+                ),
                 previous_failed=previous,
                 current_failed=failed_count,
                 message=(
@@ -339,7 +385,10 @@ class ProgressController:
         # 3 failed -> 3 failed
         # =========================================
 
-        if failed_count == previous:
+        if (
+            failed_count
+            == previous
+        ):
 
             self.validation_no_progress_count += 1
 
@@ -353,12 +402,15 @@ class ProgressController:
             )
 
             return ValidationProgress(
-                status=ValidationStatus.UNCHANGED,
+                status=(
+                    ValidationStatus.UNCHANGED
+                ),
                 previous_failed=previous,
                 current_failed=failed_count,
                 message=(
                     "Validation unchanged: "
-                    f"{failed_count} tests still failing."
+                    f"{failed_count} tests "
+                    "still failing."
                 ),
                 stalled=stalled,
             )
@@ -381,7 +433,9 @@ class ProgressController:
         )
 
         return ValidationProgress(
-            status=ValidationStatus.REGRESSED,
+            status=(
+                ValidationStatus.REGRESSED
+            ),
             previous_failed=previous,
             current_failed=failed_count,
             message=(

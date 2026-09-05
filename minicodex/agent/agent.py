@@ -8,6 +8,7 @@ from .tool_executor import ToolExecutor
 from .metrics import TokenMetrics
 from .context_budget import ContextBudget
 from .working_summary import WorkingSummary
+from .validation import ValidationPipeline
 
 from ..prompts.system import (
     build_system_prompt,
@@ -110,6 +111,13 @@ class MiniCodexAgent:
 
         # =====================================================
         # Progress Controller
+        #
+        # Owns:
+        # - duplicate detection
+        # - action stall detection
+        # - validation failure trend
+        #
+        # Does NOT own final validation truth.
         # =====================================================
 
         self.progress = (
@@ -118,6 +126,22 @@ class MiniCodexAgent:
                 progress_window=6,
                 max_validation_no_progress=2,
             )
+        )
+
+        # =====================================================
+        # Behavioral Validation Pipeline
+        #
+        # Owns:
+        # - validation evidence
+        # - edit revision
+        # - evidence invalidation
+        # - targeted/full scope
+        # - validation escalation
+        # - current edit validation state
+        # =====================================================
+
+        self.validation_pipeline = (
+            ValidationPipeline()
         )
 
         # =====================================================
@@ -153,6 +177,8 @@ class MiniCodexAgent:
         self.progress.reset(
             new_task=True
         )
+
+        self.validation_pipeline.reset()
 
         self.recovery.reset()
 
@@ -517,9 +543,6 @@ class MiniCodexAgent:
 
         # =====================================================
         # Refresh Repository Structure
-        #
-        # This makes newly-created files visible on the
-        # next LLM turn without changing AgentLoop.
         # =====================================================
 
         self._refresh_repo_map()
