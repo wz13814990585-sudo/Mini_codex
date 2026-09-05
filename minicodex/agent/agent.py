@@ -23,6 +23,7 @@ class MiniCodexAgent:
         registry,
         planner=None,
         replanner=None,
+        repo_map=None,
         max_steps: int = 20,
         max_step_attempts: int = 5,
         max_context_tokens: int = 64000,
@@ -68,6 +69,18 @@ class MiniCodexAgent:
             WorkingSummary(
                 max_items=30
             )
+        )
+
+        # =====================================================
+        # Repository Map
+        # =====================================================
+
+        self.repo_map = (
+            repo_map
+        )
+
+        self.repo_map_text = (
+            "Repository map unavailable."
         )
 
         # =====================================================
@@ -150,6 +163,12 @@ class MiniCodexAgent:
         self.working_summary.reset()
 
         # =====================================================
+        # Initial Repository Map
+        # =====================================================
+
+        self._refresh_repo_map()
+
+        # =====================================================
         # Initial Planning
         # =====================================================
 
@@ -193,6 +212,42 @@ class MiniCodexAgent:
             self,
             user_input,
         )
+
+    # =========================================================
+    # Repository Map Refresh
+    # =========================================================
+
+    def _refresh_repo_map(
+        self,
+    ) -> None:
+        """
+        Refresh repository structural context.
+
+        RepoMap only scans paths. It never reads full source
+        contents, and traversal is bounded by RepoMap limits.
+        """
+
+        if self.repo_map is None:
+
+            self.repo_map_text = (
+                "Repository map unavailable."
+            )
+
+            return
+
+        try:
+
+            self.repo_map_text = (
+                self.repo_map.build()
+            )
+
+        except Exception as e:
+
+            self.repo_map_text = (
+                "Repository map unavailable: "
+                f"{type(e).__name__}: "
+                f"{e}"
+            )
 
     # =========================================================
     # Complete Plan Step
@@ -460,6 +515,15 @@ class MiniCodexAgent:
         **kwargs,
     ) -> str:
 
+        # =====================================================
+        # Refresh Repository Structure
+        #
+        # This makes newly-created files visible on the
+        # next LLM turn without changing AgentLoop.
+        # =====================================================
+
+        self._refresh_repo_map()
+
         plan_text = (
             self._plan_to_text(
                 plan
@@ -496,6 +560,9 @@ class MiniCodexAgent:
             working_summary_text=(
                 self.working_summary
                 .render()
+            ),
+            repo_map_text=(
+                self.repo_map_text
             ),
         )
 

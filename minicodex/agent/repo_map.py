@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,24 +25,31 @@ class RepoMap:
     """
     Build a compact structural map of the workspace.
 
-    RepoMap intentionally contains only repository
-    structure in Stage 6.
+    Stage 6 only provides repository structure.
 
-    It does not inspect symbols or full file contents.
+    RepoMap does not read file contents and does not
+    extract classes, functions, or other code symbols.
+    Symbol awareness belongs to Stage 7.
     """
 
-    workspace: str = "."
+    workspace: str | Path = "."
     max_depth: int = 4
     max_files: int = 200
+
+    # =========================================================
+    # Build
+    # =========================================================
 
     def build(
         self,
     ) -> str:
+        """
+        Build and return the current repository structure.
+        """
 
-        root = (
-            Path(self.workspace)
-            .resolve()
-        )
+        root = Path(
+            self.workspace
+        ).resolve()
 
         if not root.exists():
 
@@ -71,38 +79,39 @@ class RepoMap:
             "Repository structure:"
         ]
 
-        previous_parts = []
+        emitted_directories = set()
 
         for relative_path in files:
 
-            parts = list(
+            parts = (
                 relative_path.parts
             )
 
-            # =============================================
-            # Directory Lines
-            # =============================================
-
-            common_prefix = 0
-
-            while (
-                common_prefix
-                < len(previous_parts)
-                and common_prefix
-                < len(parts) - 1
-                and previous_parts[
-                    common_prefix
-                ]
-                == parts[
-                    common_prefix
-                ]
-            ):
-                common_prefix += 1
+            # =================================================
+            # Parent Directories
+            # =================================================
 
             for depth in range(
-                common_prefix,
-                len(parts) - 1,
+                len(parts) - 1
             ):
+
+                directory_parts = (
+                    parts[:depth + 1]
+                )
+
+                directory_key = tuple(
+                    directory_parts
+                )
+
+                if (
+                    directory_key
+                    in emitted_directories
+                ):
+                    continue
+
+                emitted_directories.add(
+                    directory_key
+                )
 
                 indent = (
                     "    " * depth
@@ -113,13 +122,12 @@ class RepoMap:
                     f"{parts[depth]}/"
                 )
 
-            # =============================================
-            # File Line
-            # =============================================
+            # =================================================
+            # File
+            # =================================================
 
             file_depth = (
-                len(parts)
-                - 1
+                len(parts) - 1
             )
 
             indent = (
@@ -131,9 +139,9 @@ class RepoMap:
                 f"{parts[-1]}"
             )
 
-            previous_parts = (
-                parts[:-1]
-            )
+        # =====================================================
+        # Truncation Notice
+        # =====================================================
 
         if (
             len(files)
@@ -160,65 +168,134 @@ class RepoMap:
         self,
         root: Path,
     ) -> list[Path]:
+        """
+        Walk the workspace while pruning irrelevant
+        directories before descending into them.
+        """
 
         results = []
 
-        for path in root.rglob(
-            "*"
+        for (
+            current_root,
+            dir_names,
+            file_names,
+        ) in os.walk(
+            root
         ):
 
-            if not path.is_file():
-                continue
+            current_path = Path(
+                current_root
+            )
 
-            relative = (
-                path.relative_to(
+            relative_root = (
+                current_path.relative_to(
                     root
                 )
             )
 
-            if self._should_ignore(
-                relative
+            if (
+                relative_root
+                == Path(".")
             ):
-                continue
+
+                current_depth = 0
+
+            else:
+
+                current_depth = len(
+                    relative_root.parts
+                )
+
+            # =================================================
+            # Directory Pruning
+            # =================================================
 
             if (
-                len(relative.parts)
-                > self.max_depth
+                current_depth
+                >= self.max_depth
             ):
-                continue
 
-            results.append(
-                relative
-            )
+                # Important:
+                # modifying dir_names in-place tells
+                # os.walk not to descend any further.
+                dir_names[:] = []
 
-            if (
-                len(results)
-                >= self.max_files
+            else:
+
+                # Remove ignored directories BEFORE
+                # os.walk enters them.
+                dir_names[:] = sorted(
+                    [
+                        directory
+                        for directory
+                        in dir_names
+                        if (
+                            directory
+                            not in DEFAULT_IGNORED_DIRS
+                        )
+                    ],
+                    key=str.lower,
+                )
+
+            # =================================================
+            # Files
+            # =================================================
+
+            for file_name in sorted(
+                file_names,
+                key=str.lower,
             ):
-                break
+
+                path = (
+                    current_path
+                    / file_name
+                )
+
+                relative = (
+                    path.relative_to(
+                        root
+                    )
+                )
+
+                # max_depth counts directory depth from the
+                # workspace root. A file's parent depth is
+                # len(parts) - 1, so a/b/two.py is depth 2.
+                if (
+                    len(relative.parts) - 1
+                    > self.max_depth
+                ):
+                    continue
+
+                results.append(
+                    relative
+                )
+
+                if (
+                    len(results)
+                    >= self.max_files
+                ):
+
+                    return sorted(
+                        results,
+                        key=self._sort_key,
+                    )
 
         return sorted(
             results,
-            key=lambda item: (
-                tuple(
-                    part.lower()
-                    for part
-                    in item.parts
-                )
-            ),
+            key=self._sort_key,
         )
 
     # =========================================================
-    # Ignore Policy
+    # Sort
     # =========================================================
 
-    def _should_ignore(
-        self,
-        relative_path: Path,
-    ) -> bool:
+    @staticmethod
+    def _sort_key(
+        path: Path,
+    ) -> tuple:
 
-        return any(
-            part in DEFAULT_IGNORED_DIRS
+        return tuple(
+            part.lower()
             for part
-            in relative_path.parts
+            in path.parts
         )

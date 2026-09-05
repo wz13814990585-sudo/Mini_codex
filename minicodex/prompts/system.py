@@ -54,10 +54,26 @@ Rules:
     is done. A successful full-suite validation after
     the latest edit is sufficient completion evidence.
     Do not keep working just to mark plan steps complete.
+
+18. The repository map provides structural guidance
+    only. It tells you which files currently exist,
+    not what their contents are.
+
+19. Use the repository map to identify likely files,
+    then use search_code or read_file to inspect the
+    actual implementation before making changes.
+
+20. Never assume that knowing a file path means you
+    know that file's current contents.
+
+21. Fresh tool observations are the source of truth.
+    If they conflict with the repository map, plan,
+    or working summary, trust the fresh observation.
 """
 
 
 def build_system_prompt() -> str:
+
     return SYSTEM_PROMPT
 
 
@@ -66,28 +82,77 @@ def build_turn_context(
     current_step_text: str,
     remaining_agent_steps: int | None,
     working_summary_text: str | None = None,
+    repo_map_text: str | None = None,
 ) -> str:
+
     if remaining_agent_steps is None:
-        budget_text = "Remaining agent steps: unknown"
-    else:
+
         budget_text = (
-            f"Remaining agent steps: {remaining_agent_steps}"
+            "Remaining agent steps: unknown"
+        )
+
+    else:
+
+        budget_text = (
+            f"Remaining agent steps: "
+            f"{remaining_agent_steps}"
         )
 
     parts = [
         "Current task context:",
-        f"Implementation plan:\n{plan_text}",
-        f"Current plan step: {current_step_text}",
+        (
+            "Implementation plan:\n"
+            f"{plan_text}"
+        ),
+        (
+            "Current plan step: "
+            f"{current_step_text}"
+        ),
         budget_text,
     ]
 
-    if working_summary_text and working_summary_text.strip():
+    # =========================================================
+    # Repository Map
+    # =========================================================
+
+    if (
+        repo_map_text
+        and repo_map_text.strip()
+    ):
+
         parts.append(
-            f"Working summary:\n{working_summary_text.strip()}"
+            (
+                "Repository map:\n"
+                f"{repo_map_text.strip()}"
+            )
+        )
+
+    # =========================================================
+    # Working Summary
+    # =========================================================
+
+    if (
+        working_summary_text
+        and working_summary_text.strip()
+    ):
+
+        parts.append(
+            (
+                "Working summary:\n"
+                f"{working_summary_text.strip()}"
+            )
         )
 
     parts.append(
-        "Focus primarily on completing the current plan step."
+        (
+            "Focus primarily on completing "
+            "the current plan step."
+        )
     )
 
-    return "\n\n".join(parts) + "\n"
+    return (
+        "\n\n".join(
+            parts
+        )
+        + "\n"
+    )
