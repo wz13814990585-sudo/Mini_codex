@@ -1,6 +1,8 @@
 """Agent execution loop."""
 
-from .context import compact_messages
+from .context import (
+    compact_messages_for_pressure,
+)
 from .progress import ValidationStatus
 from .state import StepStatus
 
@@ -30,6 +32,9 @@ def run_agent_loop(
 
     The loop owns Agent-level policy:
     - planning progress
+    - context budget policy
+    - token accounting
+    - working summary updates
     - duplicate policy
     - validation
     - recovery
@@ -48,7 +53,7 @@ def run_agent_loop(
     ]
 
     # =========================================================
-    # Main step budget
+    # Main Step Budget
     # =========================================================
 
     for agent_step in range(
@@ -89,7 +94,7 @@ def run_agent_loop(
                 )
 
                 # =============================================
-                # Step failure budget exceeded
+                # Step Failure Budget Exceeded
                 # =============================================
 
                 if (
@@ -108,11 +113,13 @@ def run_agent_loop(
                     (
                         recovery_message,
                         should_continue,
-                    ) = agent.recovery.recover(
-                        reason=reason,
-                        replan_callback=(
-                            agent.replan
-                        ),
+                    ) = (
+                        agent.recovery.recover(
+                            reason=reason,
+                            replan_callback=(
+                                agent.replan
+                            ),
+                        )
                     )
 
                     print(
@@ -131,8 +138,6 @@ def run_agent_loop(
                             "could not be recovered."
                         )
 
-                    # 新策略开始，不应该继续
-                    # 带着旧 failure attempt。
                     current_plan_step.reset_attempts()
 
                     messages.append(
@@ -144,7 +149,7 @@ def run_agent_loop(
                         }
                     )
 
-                    # Recovery 可能已经触发 replan
+                    # Recovery may have triggered replan.
                     if agent.active_plan:
 
                         current_plan_step = (
@@ -153,7 +158,7 @@ def run_agent_loop(
                         )
 
         # =====================================================
-        # Build LLM Context
+        # Remaining Agent Budget
         # =====================================================
 
         remaining_agent_steps = (
@@ -161,9 +166,41 @@ def run_agent_loop(
             - agent_step
         )
 
-        compact_messages(
-            messages
+        # =====================================================
+        # Context Budget Policy
+        # =====================================================
+
+        context_pressure = (
+            agent.context_budget.pressure
         )
+
+        print(
+            "\n[Context Budget]"
+        )
+
+        print(
+            "Last Prompt Tokens: "
+            f"{agent.context_budget.last_prompt_tokens}"
+        )
+
+        print(
+            "Usage: "
+            f"{agent.context_budget.usage_ratio:.1%}"
+        )
+
+        print(
+            "Pressure: "
+            f"{context_pressure.value}"
+        )
+
+        compact_messages_for_pressure(
+            messages,
+            context_pressure,
+        )
+
+        # =====================================================
+        # Build System Prompt
+        # =====================================================
 
         system_prompt = (
             agent._build_system_prompt(
@@ -222,14 +259,71 @@ def run_agent_loop(
         # LLM Call
         # =====================================================
 
-        response = agent.llm.chat(
-            messages=(
-                llm_messages
-            ),
-            tools=(
-                agent.registry
-                .get_schemas()
-            ),
+        llm_response = (
+            agent.llm.chat(
+                messages=(
+                    llm_messages
+                ),
+                tools=(
+                    agent.registry
+                    .get_schemas()
+                ),
+            )
+        )
+
+        # =====================================================
+        # Token Metrics
+        # =====================================================
+
+        agent.token_metrics.record(
+            llm_response.usage
+        )
+
+        # =====================================================
+        # Context Observation
+        # =====================================================
+
+        agent.context_budget.observe(
+            llm_response
+            .usage
+            .prompt_tokens
+        )
+
+        print(
+            "\n[Token Usage]"
+        )
+
+        print(
+            "Prompt: "
+            f"{llm_response.usage.prompt_tokens}"
+        )
+
+        print(
+            "Completion: "
+            f"{llm_response.usage.completion_tokens}"
+        )
+
+        print(
+            "Total: "
+            f"{llm_response.usage.total_tokens}"
+        )
+
+        print(
+            "Task Total: "
+            f"{agent.token_metrics.total.total_tokens}"
+        )
+
+        print(
+            "Context Pressure: "
+            f"{agent.context_budget.pressure.value}"
+        )
+
+        # =====================================================
+        # Extract Provider Message
+        # =====================================================
+
+        response = (
+            llm_response.message
         )
 
         # =====================================================
@@ -244,7 +338,7 @@ def run_agent_loop(
             )
 
             # =============================================
-            # Validated edit may finish task
+            # Validated Edit May Finish Task
             # =============================================
 
             if tests_passed_after_edit(
@@ -264,7 +358,7 @@ def run_agent_loop(
                 )
 
             # =============================================
-            # Prevent premature finish
+            # Prevent Premature Finish
             # =============================================
 
             if (
@@ -297,8 +391,7 @@ def run_agent_loop(
                                 content
                                 or (
                                     "Stopped before "
-                                    "the plan was "
-                                    "complete."
+                                    "the plan was complete."
                                 )
                             ),
                         }
@@ -356,9 +449,6 @@ def run_agent_loop(
 
             # =================================================
             # 1. Prepare Tool Call
-            #
-            # Parsing is execution mechanism,
-            # therefore ToolExecutor owns it.
             # =================================================
 
             prepared = (
@@ -386,6 +476,17 @@ def run_agent_loop(
 
                 result = (
                     prepared.error
+                )
+
+                # ---------------------------------------------
+                # Working Summary:
+                # preparation failure is still a real fact.
+                # ---------------------------------------------
+
+                agent.working_summary.record_tool_result(
+                    tool_name=tool_name,
+                    arguments={},
+                    result=result,
                 )
 
                 if current_plan_step:
@@ -443,12 +544,6 @@ def run_agent_loop(
 
             # =================================================
             # 2. Duplicate Policy
-            #
-            # This intentionally remains outside
-            # ToolExecutor.
-            #
-            # Executor = mechanism
-            # ProgressController = policy
             # =================================================
 
             (
@@ -500,12 +595,6 @@ def run_agent_loop(
 
                 # =============================================
                 # 3. Reliable Execution
-                #
-                # ToolExecutor now owns:
-                #
-                # registry.execute
-                # exception normalization
-                # ToolResult contract enforcement
                 # =============================================
 
                 execution = (
@@ -519,11 +608,6 @@ def run_agent_loop(
                     execution.result
                 )
 
-                # =============================================
-                # Tool mechanism failure
-                # consumes plan step attempt
-                # =============================================
-
                 if (
                     not result.success
                     and current_plan_step
@@ -535,7 +619,17 @@ def run_agent_loop(
                     )
 
             # =================================================
-            # 4. ToolResult → LLM Observation
+            # 4. Working Summary
+            # =================================================
+
+            agent.working_summary.record_tool_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=result,
+            )
+
+            # =================================================
+            # 5. ToolResult → LLM Observation
             # =================================================
 
             observation_text = (
@@ -560,7 +654,7 @@ def run_agent_loop(
             )
 
             # =================================================
-            # 5. Record Agent Action
+            # 6. Record Agent Action
             # =================================================
 
             agent.progress.record_action(
@@ -605,9 +699,6 @@ def run_agent_loop(
 
                 if completed:
 
-                    # Plan state changed.
-                    # Remaining calls were generated
-                    # from stale context.
                     append_skipped_tool_results(
                         messages,
                         response.tool_calls[
@@ -642,8 +733,6 @@ def run_agent_loop(
 
                 if replanned:
 
-                    # Old tool calls are no longer
-                    # valid after the plan changes.
                     append_skipped_tool_results(
                         messages,
                         response.tool_calls[
@@ -692,18 +781,6 @@ def run_agent_loop(
                             0,
                         )
                     )
-
-                    # =========================================
-                    # Only explicit pytest success
-                    # becomes failed_count=0.
-                    #
-                    # This prevents:
-                    # collection errors
-                    # no-tests-collected
-                    # pytest internal failures
-                    #
-                    # from being misclassified as PASS.
-                    # =========================================
 
                     if (
                         tests_passed
@@ -957,10 +1034,6 @@ def apply_validation(
         )
     )
 
-    # =========================================================
-    # Log Validation State
-    # =========================================================
-
     if validation.message:
 
         print(
@@ -971,10 +1044,6 @@ def apply_validation(
             validation.message
         )
 
-    # =========================================================
-    # Objective Validation Progress
-    # =========================================================
-
     if validation.meaningful_progress:
 
         agent.recovery.mark_progress()
@@ -983,10 +1052,6 @@ def apply_validation(
             "\n[Meaningful Progress Detected]"
         )
 
-    # =========================================================
-    # Successful Full Suite
-    # =========================================================
-
     if (
         validation.status
         == ValidationStatus.PASSED
@@ -994,10 +1059,6 @@ def apply_validation(
     ):
 
         agent.progress.mark_edit_validated()
-
-    # =========================================================
-    # Not Stalled
-    # =========================================================
 
     if not validation.stalled:
 
@@ -1019,11 +1080,13 @@ def apply_validation(
     (
         recovery_message,
         should_continue,
-    ) = agent.recovery.recover(
-        reason=reason,
-        replan_callback=(
-            agent.replan
-        ),
+    ) = (
+        agent.recovery.recover(
+            reason=reason,
+            replan_callback=(
+                agent.replan
+            ),
+        )
     )
 
     print(
@@ -1190,6 +1253,78 @@ def summarize_agent_stop(
                 "Last validation: "
                 f"{failed} failures."
             )
+        )
+
+    # =========================================================
+    # Token Metrics
+    # =========================================================
+
+    token_metrics = getattr(
+        agent,
+        "token_metrics",
+        None,
+    )
+
+    if token_metrics is not None:
+
+        lines.append(
+            (
+                "LLM usage: "
+                f"{token_metrics.call_count} calls, "
+                f"{token_metrics.total.prompt_tokens} "
+                "prompt tokens, "
+                f"{token_metrics.total.completion_tokens} "
+                "completion tokens, "
+                f"{token_metrics.total.total_tokens} "
+                "total tokens."
+            )
+        )
+
+    # =========================================================
+    # Context Budget
+    # =========================================================
+
+    context_budget = getattr(
+        agent,
+        "context_budget",
+        None,
+    )
+
+    if context_budget is not None:
+
+        lines.append(
+            (
+                "Context state: "
+                f"{context_budget.last_prompt_tokens} "
+                "prompt tokens in the last call, "
+                f"{context_budget.usage_ratio:.1%} "
+                "of configured budget, "
+                f"pressure="
+                f"{context_budget.pressure.value}."
+            )
+        )
+
+    # =========================================================
+    # Working Summary
+    # =========================================================
+
+    working_summary = getattr(
+        agent,
+        "working_summary",
+        None,
+    )
+
+    if (
+        working_summary is not None
+        and working_summary.items
+    ):
+
+        lines.append(
+            "Working summary:"
+        )
+
+        lines.append(
+            working_summary.render()
         )
 
     # =========================================================

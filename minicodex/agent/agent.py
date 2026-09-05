@@ -5,6 +5,9 @@ from .state import AgentPlan
 from .progress import ProgressController
 from .recovery import RecoveryController
 from .tool_executor import ToolExecutor
+from .metrics import TokenMetrics
+from .context_budget import ContextBudget
+from .working_summary import WorkingSummary
 
 from ..prompts.system import (
     build_system_prompt,
@@ -22,6 +25,7 @@ class MiniCodexAgent:
         replanner=None,
         max_steps: int = 20,
         max_step_attempts: int = 5,
+        max_context_tokens: int = 64000,
     ):
         self.llm = llm
         self.registry = registry
@@ -30,36 +34,87 @@ class MiniCodexAgent:
         # Reliable Tool Execution Boundary
         # =====================================================
 
-        self.tool_executor = ToolExecutor(
-            registry
+        self.tool_executor = (
+            ToolExecutor(
+                registry
+            )
         )
+
+        # =====================================================
+        # Task-Level Token Metrics
+        # =====================================================
+
+        self.token_metrics = (
+            TokenMetrics()
+        )
+
+        # =====================================================
+        # Context Budget
+        # =====================================================
+
+        self.context_budget = (
+            ContextBudget(
+                max_context_tokens=(
+                    max_context_tokens
+                )
+            )
+        )
+
+        # =====================================================
+        # Working Summary
+        # =====================================================
+
+        self.working_summary = (
+            WorkingSummary(
+                max_items=30
+            )
+        )
+
+        # =====================================================
+        # Planning Components
+        # =====================================================
 
         self.planner = planner
         self.replanner = replanner
 
         self.max_steps = max_steps
-        self.max_step_attempts = max_step_attempts
 
-        # 当前任务状态
-        self.active_plan: AgentPlan | None = None
-        self.active_user_request: str | None = None
+        self.max_step_attempts = (
+            max_step_attempts
+        )
+
+        # =====================================================
+        # Current Task State
+        # =====================================================
+
+        self.active_plan: (
+            AgentPlan | None
+        ) = None
+
+        self.active_user_request: (
+            str | None
+        ) = None
 
         # =====================================================
         # Progress Controller
         # =====================================================
 
-        self.progress = ProgressController(
-            max_same_tool_repeats=2,
-            progress_window=6,
-            max_validation_no_progress=2,
+        self.progress = (
+            ProgressController(
+                max_same_tool_repeats=2,
+                progress_window=6,
+                max_validation_no_progress=2,
+            )
         )
 
         # =====================================================
         # Recovery Controller
         # =====================================================
 
-        self.recovery = RecoveryController(
-            max_recovery_level=3
+        self.recovery = (
+            RecoveryController(
+                max_recovery_level=3
+            )
         )
 
     # =========================================================
@@ -72,28 +127,48 @@ class MiniCodexAgent:
         use_planning: bool = True,
     ) -> str:
 
-        self.active_user_request = user_input
+        self.active_user_request = (
+            user_input
+        )
+
         self.active_plan = None
 
-        # 新任务开始时清空 task state
+        # =====================================================
+        # Reset Task State
+        # =====================================================
+
         self.progress.reset(
             new_task=True
         )
 
         self.recovery.reset()
 
+        self.token_metrics.reset()
+
+        self.context_budget.reset()
+
+        self.working_summary.reset()
+
         # =====================================================
-        # Planning
+        # Initial Planning
         # =====================================================
 
-        if use_planning and self.planner:
+        if (
+            use_planning
+            and self.planner
+        ):
 
             try:
+
                 self.active_plan = (
-                    self.planner.create_plan(
+                    self.planner
+                    .create_plan(
                         user_input,
                         max_agent_steps=(
                             self.max_steps
+                        ),
+                        token_metrics=(
+                            self.token_metrics
                         ),
                     )
                 )
@@ -103,9 +178,11 @@ class MiniCodexAgent:
                 )
 
             except Exception as e:
+
                 print(
                     f"\n[Planning Failed] "
-                    f"{type(e).__name__}: {e}"
+                    f"{type(e).__name__}: "
+                    f"{e}"
                 )
 
         # =====================================================
@@ -126,6 +203,7 @@ class MiniCodexAgent:
     ) -> dict:
 
         if self.active_plan is None:
+
             return {
                 "completed": False,
                 "step_id": None,
@@ -141,6 +219,7 @@ class MiniCodexAgent:
         )
 
         if step is None:
+
             return {
                 "completed": False,
                 "step_id": None,
@@ -150,16 +229,8 @@ class MiniCodexAgent:
                 ),
             }
 
-        # 真正完成 Plan Step
-        # 算 meaningful progress
         self.recovery.mark_progress()
 
-        # 当前 step 的 duplicate / stall history
-        # 不应该污染下一个 step。
-        #
-        # 注意：
-        # 普通 reset() 不会清除 task-level
-        # edit / validation evidence。
         self.progress.reset()
 
         self._print_plan(
@@ -189,6 +260,7 @@ class MiniCodexAgent:
     ) -> dict:
 
         if self.active_plan is None:
+
             return {
                 "replanned": False,
                 "reason": reason,
@@ -201,6 +273,7 @@ class MiniCodexAgent:
             }
 
         if self.replanner is None:
+
             return {
                 "replanned": False,
                 "reason": reason,
@@ -212,7 +285,11 @@ class MiniCodexAgent:
                 ),
             }
 
-        if self.active_user_request is None:
+        if (
+            self.active_user_request
+            is None
+        ):
+
             return {
                 "replanned": False,
                 "reason": reason,
@@ -225,6 +302,7 @@ class MiniCodexAgent:
             }
 
         try:
+
             new_plan = (
                 self.replanner.replan(
                     user_request=(
@@ -234,6 +312,9 @@ class MiniCodexAgent:
                         self.active_plan
                     ),
                     reason=reason,
+                    token_metrics=(
+                        self.token_metrics
+                    ),
                 )
             )
 
@@ -241,7 +322,8 @@ class MiniCodexAgent:
 
             error_message = (
                 "Replanning failed: "
-                f"{type(e).__name__}: {e}"
+                f"{type(e).__name__}: "
+                f"{e}"
             )
 
             return {
@@ -255,10 +337,10 @@ class MiniCodexAgent:
                 ),
             }
 
-        self.active_plan = new_plan
+        self.active_plan = (
+            new_plan
+        )
 
-        # 新 Plan 不继承旧 Plan 的
-        # duplicate / validation stall history
         self.progress.reset()
 
         print(
@@ -360,7 +442,9 @@ class MiniCodexAgent:
         **kwargs,
     ) -> str:
 
-        return build_system_prompt()
+        return (
+            build_system_prompt()
+        )
 
     # =========================================================
     # Dynamic Turn Context
@@ -381,7 +465,9 @@ class MiniCodexAgent:
                 plan
             )
             if plan
-            else "No explicit plan."
+            else (
+                "No explicit plan."
+            )
         )
 
         if current_step:
@@ -398,12 +484,18 @@ class MiniCodexAgent:
             )
 
         return build_turn_context(
-            plan_text=plan_text,
+            plan_text=(
+                plan_text
+            ),
             current_step_text=(
                 current_step_text
             ),
             remaining_agent_steps=(
                 remaining_agent_steps
+            ),
+            working_summary_text=(
+                self.working_summary
+                .render()
             ),
         )
 
@@ -421,7 +513,8 @@ class MiniCodexAgent:
                 f"{step.id}. "
                 f"[{step.status.value}] "
                 f"{step.description} "
-                f"(failures={step.attempts})"
+                f"(failures="
+                f"{step.attempts})"
             )
             for step
             in plan.all_steps()
@@ -441,7 +534,9 @@ class MiniCodexAgent:
             f"{plan.goal}"
         )
 
-        for step in plan.all_steps():
+        for step in (
+            plan.all_steps()
+        ):
 
             print(
                 f"{step.id}. "

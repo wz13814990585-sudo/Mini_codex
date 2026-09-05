@@ -65,6 +65,7 @@ def build_turn_context(
     plan_text: str,
     current_step_text: str,
     remaining_agent_steps: int | None,
+    working_summary_text: str | None = None,
 ) -> str:
     if remaining_agent_steps is None:
         budget_text = "Remaining agent steps: unknown"
@@ -73,10 +74,20 @@ def build_turn_context(
             f"Remaining agent steps: {remaining_agent_steps}"
         )
 
-    return (
-        "Current task context:\n"
-        f"Implementation plan:\n{plan_text}\n\n"
-        f"Current plan step: {current_step_text}\n"
-        f"{budget_text}\n"
+    parts = [
+        "Current task context:",
+        f"Implementation plan:\n{plan_text}",
+        f"Current plan step: {current_step_text}",
+        budget_text,
+    ]
+
+    if working_summary_text and working_summary_text.strip():
+        parts.append(
+            f"Working summary:\n{working_summary_text.strip()}"
+        )
+
+    parts.append(
         "Focus primarily on completing the current plan step."
     )
+
+    return "\n\n".join(parts) + "\n"

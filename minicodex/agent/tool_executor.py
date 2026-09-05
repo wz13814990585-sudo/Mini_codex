@@ -68,6 +68,10 @@ class ToolExecutor:
         """
 
         try:
+
+            if raw_arguments is None:
+                raw_arguments = "{}"
+
             arguments = json.loads(
                 raw_arguments
             )

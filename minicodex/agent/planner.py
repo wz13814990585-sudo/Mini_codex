@@ -1,20 +1,35 @@
 import json
 
+from .metrics import TokenMetrics
 from .state import AgentPlan, PlanStep
 
 
 class Planner:
 
-    def __init__(self, llm):
+    def __init__(
+        self,
+        llm,
+    ):
         self.llm = llm
+
+    # =========================================================
+    # Create Plan
+    # =========================================================
 
     def create_plan(
         self,
         user_request: str,
         max_agent_steps: int = 20,
+        token_metrics: TokenMetrics | None = None,
     ) -> AgentPlan:
 
-        max_plan_steps = max(3, min(6, max_agent_steps // 3 or 3))
+        max_plan_steps = max(
+            3,
+            min(
+                6,
+                max_agent_steps // 3 or 3,
+            ),
+        )
 
         messages = [
             {
@@ -25,7 +40,7 @@ class Planner:
                     "number of concrete implementation steps. "
                     "Do not execute tools. "
                     "Return valid JSON only."
-                )
+                ),
             },
             {
                 "role": "user",
@@ -48,25 +63,69 @@ Return exactly this JSON format:
         "step 3"
     ]
 }}
-"""
-            }
+""",
+            },
         ]
 
-        response = self.llm.chat(
+        # =====================================================
+        # LLM Call
+        # =====================================================
+
+        llm_response = self.llm.chat(
             messages=messages,
-            tools=None
+            tools=None,
         )
 
-        raw_content = response.content.strip()
+        # =====================================================
+        # Token Metrics
+        # =====================================================
 
-        # 防止模型偶尔返回 ```json ... ```
-        if raw_content.startswith("```"):
-            raw_content = raw_content.strip("`")
+        if token_metrics is not None:
 
-            if raw_content.startswith("json"):
-                raw_content = raw_content[4:]
+            token_metrics.record(
+                llm_response.usage
+            )
 
-            raw_content = raw_content.strip()
+        # =====================================================
+        # Extract Provider Message
+        # =====================================================
+
+        response = (
+            llm_response.message
+        )
+
+        raw_content = (
+            response.content
+            or ""
+        ).strip()
+
+        # =====================================================
+        # Remove Optional Markdown Fence
+        # =====================================================
+
+        if raw_content.startswith(
+            "```"
+        ):
+
+            raw_content = (
+                raw_content.strip("`")
+            )
+
+            if raw_content.startswith(
+                "json"
+            ):
+
+                raw_content = (
+                    raw_content[4:]
+                )
+
+            raw_content = (
+                raw_content.strip()
+            )
+
+        # =====================================================
+        # Parse Plan
+        # =====================================================
 
         data = json.loads(
             raw_content
@@ -75,15 +134,18 @@ Return exactly this JSON format:
         steps = [
             PlanStep(
                 id=index,
-                description=description
+                description=description,
             )
-            for index, description in enumerate(
-                data["steps"][:max_plan_steps],
-                start=1
+            for index, description
+            in enumerate(
+                data["steps"][
+                    :max_plan_steps
+                ],
+                start=1,
             )
         ]
 
         return AgentPlan(
             goal=data["goal"],
-            steps=steps
+            steps=steps,
         )
