@@ -12,6 +12,10 @@ from .agent.long_term_memory_runtime import (
 from .agent.planner import Planner
 from .agent.replanner import Replanner
 from .agent.repo_map import RepoMap
+from .agent.sandbox import (
+    SandboxLimits,
+    SandboxRunner,
+)
 from .agent.symbol_index import SymbolIndex
 from .agent.trace import (
     TraceRecorder,
@@ -68,6 +72,37 @@ def main():
 
     llm = (
         LLMClient()
+    )
+
+    # =========================================================
+    # Stage 17 Shared Process Sandbox
+    # =========================================================
+
+    sandbox = (
+        SandboxRunner(
+            workspace=(
+                workspace
+            ),
+            limits=(
+                SandboxLimits(
+                    timeout_seconds=60,
+                    max_output_bytes=(
+                        1_000_000
+                    ),
+                    max_file_bytes=(
+                        32
+                        * 1024
+                        * 1024
+                    ),
+                    max_cpu_seconds=30,
+                    max_memory_bytes=(
+                        1024
+                        * 1024
+                        * 1024
+                    ),
+                )
+            ),
+        )
     )
 
     # =========================================================
@@ -151,18 +186,26 @@ def main():
     )
 
     # =========================================================
-    # Execution / Validation
+    # Stage 17 Sandboxed Execution / Validation
     # =========================================================
 
     registry.register(
         RunCommandTool(
-            workspace
+            workspace=workspace,
+            timeout=30,
+            sandbox=(
+                sandbox
+            ),
         )
     )
 
     registry.register(
         RunTestsTool(
-            workspace
+            workspace=workspace,
+            timeout=60,
+            sandbox=(
+                sandbox
+            ),
         )
     )
 
@@ -275,9 +318,6 @@ def main():
 
     # =========================================================
     # Agent Callback Tools
-    #
-    # Register after runtime wrappers so callback tools receive
-    # the traced methods.
     # =========================================================
 
     registry.register(
@@ -306,14 +346,19 @@ def main():
             "\nYou > "
         ).strip()
 
-        if user_input.lower() in {
-            "exit",
-            "quit",
-        }:
+        if (
+            user_input.lower()
+            in {
+                "exit",
+                "quit",
+            }
+        ):
 
             break
 
-        if not user_input:
+        if not (
+            user_input
+        ):
 
             continue
 
@@ -388,7 +433,7 @@ def main():
         )
 
         # =====================================================
-        # Long-Term Memory Summary
+        # Long-Term Memory
         # =====================================================
 
         print(

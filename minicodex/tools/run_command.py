@@ -1,17 +1,26 @@
-import subprocess
 from pathlib import Path
+
+from ..agent.sandbox import (
+    SandboxLimits,
+    SandboxRunner,
+)
 
 from .base import BaseTool
 from .results import ToolResult
 
 
-class RunCommandTool(BaseTool):
+class RunCommandTool(
+    BaseTool
+):
 
-    name = "run_command"
+    name = (
+        "run_command"
+    )
 
     description = (
-        "Run a shell command inside the current project workspace "
-        "and return stdout, stderr, and the exit code. "
+        "Run a shell command inside the current project "
+        "workspace through the MiniCodex process sandbox and "
+        "return stdout, stderr, exit code, and sandbox metadata. "
         "Do not use this to run pytest; call run_tests instead."
     )
 
@@ -22,88 +31,276 @@ class RunCommandTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Shell command to execute, "
-                    "for example 'python calculator.py'."
+                    "for example "
+                    "'python calculator.py'."
                 ),
-            }
+            },
         },
-        "required": ["command"],
+        "required": [
+            "command",
+        ],
     }
 
     def __init__(
         self,
         workspace: str = ".",
         timeout: int = 30,
+        sandbox: (
+            SandboxRunner
+            | None
+        ) = None,
     ):
-        self.workspace = Path(workspace).resolve()
-        self.timeout = timeout
+
+        self.workspace = (
+            Path(
+                workspace
+            )
+            .resolve()
+        )
+
+        self.timeout = max(
+            1,
+            int(
+                timeout
+            ),
+        )
+
+        self.sandbox = (
+            sandbox
+            or SandboxRunner(
+                workspace=(
+                    self.workspace
+                ),
+                limits=(
+                    SandboxLimits(
+                        timeout_seconds=(
+                            self.timeout
+                        )
+                    )
+                ),
+            )
+        )
+
+    # =========================================================
+    # Execute
+    # =========================================================
 
     def execute(
         self,
         command: str,
     ) -> ToolResult:
 
-        try:
-            process = subprocess.run(
-                [
-                    "/bin/bash",
-                    "-o",
-                    "pipefail",
-                    "-c",
-                    command,
-                ],
-                cwd=self.workspace,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
+        sandbox_result = (
+            self.sandbox
+            .run_shell(
+                command,
+                timeout_seconds=(
+                    self.timeout
+                ),
             )
+        )
 
-        except subprocess.TimeoutExpired:
+        # =====================================================
+        # Sandbox Could Not Start
+        # =====================================================
+
+        if not (
+            sandbox_result.started
+        ):
+
             return ToolResult(
                 success=False,
                 summary=(
-                    f"Command timed out after "
-                    f"{self.timeout} seconds."
+                    "Command could not be started "
+                    "inside the process sandbox."
                 ),
                 data={
-                    "command": command,
-                    "timed_out": True,
-                    "timeout": self.timeout,
+                    "command": (
+                        command
+                    ),
+                    "exit_code": None,
+                    "command_succeeded": (
+                        False
+                    ),
+                    "stdout": "",
+                    "stderr": "",
+                    "timed_out": (
+                        False
+                    ),
+                    "sandbox": (
+                        sandbox_result
+                        .sandbox_metadata()
+                    ),
+                    "failure_type": (
+                        sandbox_result
+                        .failure_type
+                        or "sandbox_start"
+                    ),
                 },
-                error="Command execution timed out.",
+                error=(
+                    sandbox_result.error
+                    or (
+                        "Sandbox process "
+                        "could not start."
+                    )
+                ),
             )
 
-        stdout = process.stdout or ""
-        stderr = process.stderr or ""
+        # =====================================================
+        # Timeout
+        # =====================================================
 
-        command_succeeded = (
-            process.returncode == 0
+        if (
+            sandbox_result
+            .timed_out
+        ):
+
+            return ToolResult(
+                success=False,
+                summary=(
+                    "Command timed out after "
+                    f"{self.timeout} seconds "
+                    "inside the sandbox."
+                ),
+                data={
+                    "command": (
+                        command
+                    ),
+                    "exit_code": (
+                        sandbox_result
+                        .exit_code
+                    ),
+                    "command_succeeded": (
+                        False
+                    ),
+                    "stdout": (
+                        sandbox_result
+                        .stdout
+                    ),
+                    "stderr": (
+                        sandbox_result
+                        .stderr
+                    ),
+                    "timed_out": True,
+                    "output_truncated": (
+                        sandbox_result
+                        .output_limited
+                    ),
+                    "timeout": (
+                        self.timeout
+                    ),
+                    "sandbox": (
+                        sandbox_result
+                        .sandbox_metadata()
+                    ),
+                    "failure_type": (
+                        "sandbox_timeout"
+                    ),
+                },
+                error=(
+                    "Command execution "
+                    "timed out."
+                ),
+            )
+
+        stdout = (
+            sandbox_result
+            .stdout
+            or ""
         )
 
-        if command_succeeded:
+        stderr = (
+            sandbox_result
+            .stderr
+            or ""
+        )
+
+        command_succeeded = (
+            sandbox_result
+            .command_succeeded
+        )
+
+        exit_code = (
+            sandbox_result
+            .exit_code
+        )
+
+        # =====================================================
+        # Summary
+        # =====================================================
+
+        if (
+            command_succeeded
+        ):
+
             summary = (
-                f"Command completed successfully "
-                f"with exit code {process.returncode}."
+                "Command completed "
+                "successfully inside the "
+                "sandbox with exit code "
+                f"{exit_code}."
             )
+
         else:
+
             summary = (
-                f"Command completed with "
-                f"exit code {process.returncode}."
+                "Command completed inside "
+                "the sandbox with exit code "
+                f"{exit_code}."
             )
+
+        if (
+            sandbox_result
+            .output_limited
+        ):
+
+            summary += (
+                " Captured output was "
+                "truncated by the sandbox."
+            )
+
+        # =====================================================
+        # LLM Observation
+        # =====================================================
 
         llm_parts = [
-            f"Exit code: {process.returncode}"
+            (
+                "Exit code: "
+                f"{exit_code}"
+            )
         ]
 
-        if stdout.strip():
+        if (
+            sandbox_result
+            .output_limited
+        ):
+
             llm_parts.append(
-                "STDOUT:\n"
-                + stdout
+                (
+                    "Sandbox note: captured "
+                    "output was truncated."
+                )
             )
 
-        if stderr.strip():
+        if (
+            stdout.strip()
+        ):
+
             llm_parts.append(
-                "STDERR:\n"
-                + stderr
+                (
+                    "STDOUT:\n"
+                    + stdout
+                )
+            )
+
+        if (
+            stderr.strip()
+        ):
+
+            llm_parts.append(
+                (
+                    "STDERR:\n"
+                    + stderr
+                )
             )
 
         llm_content = "\n".join(
@@ -112,14 +309,36 @@ class RunCommandTool(BaseTool):
 
         return ToolResult(
             success=True,
-            summary=summary,
+            summary=(
+                summary
+            ),
             data={
-                "command": command,
-                "exit_code": process.returncode,
-                "command_succeeded": command_succeeded,
-                "stdout": stdout,
-                "stderr": stderr,
+                "command": (
+                    command
+                ),
+                "exit_code": (
+                    exit_code
+                ),
+                "command_succeeded": (
+                    command_succeeded
+                ),
+                "stdout": (
+                    stdout
+                ),
+                "stderr": (
+                    stderr
+                ),
                 "timed_out": False,
+                "output_truncated": (
+                    sandbox_result
+                    .output_limited
+                ),
+                "sandbox": (
+                    sandbox_result
+                    .sandbox_metadata()
+                ),
             },
-            llm_content=llm_content,
+            llm_content=(
+                llm_content
+            ),
         )

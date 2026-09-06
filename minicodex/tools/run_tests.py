@@ -1,13 +1,18 @@
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+from ..agent.sandbox import (
+    SandboxLimits,
+    SandboxRunner,
+)
 
 from .base import BaseTool
 from .results import ToolResult
 
 
 MAX_FAILURE_DETAIL_LINES = 40
+
 MAX_FAILED_TEST_NAMES = 20
 
 
@@ -21,14 +26,17 @@ class RunTestsTool(
     BaseTool
 ):
 
-    name = "run_tests"
+    name = (
+        "run_tests"
+    )
 
     description = (
-        "Run Python tests using pytest and return structured "
-        "validation evidence. Use purpose='acceptance' for "
-        "specific tests that demonstrate the user's requested "
-        "behavior. Use purpose='regression' for existing or "
-        "full-suite regression validation."
+        "Run Python tests using pytest inside the MiniCodex "
+        "process sandbox and return structured validation "
+        "evidence. Use purpose='acceptance' for specific tests "
+        "that demonstrate the user's requested behavior. Use "
+        "purpose='regression' for existing or full-suite "
+        "regression validation."
     )
 
     parameters = {
@@ -49,11 +57,10 @@ class RunTestsTool(
                     "regression",
                 ],
                 "description": (
-                    "Validation purpose. "
-                    "'acceptance' demonstrates that the "
-                    "specific behavior requested by the user "
-                    "works. 'regression' checks that existing "
-                    "behavior remains correct."
+                    "'acceptance' demonstrates "
+                    "the specific requested behavior. "
+                    "'regression' checks existing "
+                    "behavior."
                 ),
             },
         },
@@ -64,12 +71,45 @@ class RunTestsTool(
         self,
         workspace: str = ".",
         timeout: int = 60,
+        sandbox: (
+            SandboxRunner
+            | None
+        ) = None,
     ):
-        self.workspace = Path(
-            workspace
-        ).resolve()
 
-        self.timeout = timeout
+        self.workspace = (
+            Path(
+                workspace
+            )
+            .resolve()
+        )
+
+        self.timeout = max(
+            1,
+            int(
+                timeout
+            ),
+        )
+
+        self.sandbox = (
+            sandbox
+            or SandboxRunner(
+                workspace=(
+                    self.workspace
+                ),
+                limits=(
+                    SandboxLimits(
+                        timeout_seconds=(
+                            self.timeout
+                        )
+                    )
+                ),
+            )
+        )
+
+    # =========================================================
+    # Execute
+    # =========================================================
 
     def execute(
         self,
@@ -77,9 +117,12 @@ class RunTestsTool(
         purpose: str = "regression",
     ) -> ToolResult:
 
-        normalized_path = str(
-            path
-        ).strip()
+        normalized_path = (
+            str(
+                path
+            )
+            .strip()
+        )
 
         normalized_purpose = (
             str(
@@ -101,7 +144,8 @@ class RunTestsTool(
             raise ValueError(
                 (
                     "purpose must be either "
-                    "'acceptance' or 'regression'."
+                    "'acceptance' or "
+                    "'regression'."
                 )
             )
 
@@ -122,16 +166,35 @@ class RunTestsTool(
 
             raise ValueError(
                 (
-                    "Acceptance validation must target "
-                    "a specific test path. "
-                    "The full suite cannot by itself serve "
-                    "as acceptance evidence."
+                    "Acceptance validation "
+                    "must target a specific "
+                    "test path. The full suite "
+                    "cannot by itself serve as "
+                    "acceptance evidence."
                 )
             )
 
-        if not normalized_path:
+        if not (
+            normalized_path
+        ):
 
-            normalized_path = "."
+            normalized_path = (
+                "."
+            )
+
+        # =====================================================
+        # Workspace Guard
+        # =====================================================
+
+        normalized_path = (
+            self._normalize_test_path(
+                normalized_path
+            )
+        )
+
+        # =====================================================
+        # pytest argv
+        # =====================================================
 
         command = [
             sys.executable,
@@ -143,49 +206,134 @@ class RunTestsTool(
             "-q",
         ]
 
-        try:
-
-            process = subprocess.run(
+        sandbox_result = (
+            self.sandbox
+            .run_argv(
                 command,
-                cwd=self.workspace,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
+                timeout_seconds=(
+                    self.timeout
+                ),
             )
+        )
 
-        except subprocess.TimeoutExpired:
+        # =====================================================
+        # Sandbox Start Failure
+        # =====================================================
+
+        if not (
+            sandbox_result.started
+        ):
 
             return ToolResult(
                 success=False,
                 summary=(
-                    f"Tests timed out after "
-                    f"{self.timeout} seconds."
+                    "Tests could not be started "
+                    "inside the process sandbox."
                 ),
                 data={
-                    "path": normalized_path,
+                    "path": (
+                        normalized_path
+                    ),
                     "purpose": (
                         normalized_purpose
                     ),
-                    "timeout": self.timeout,
-                    "timed_out": True,
+                    "timed_out": False,
+                    "sandbox": (
+                        sandbox_result
+                        .sandbox_metadata()
+                    ),
+                    "failure_type": (
+                        sandbox_result
+                        .failure_type
+                        or "sandbox_start"
+                    ),
                 },
                 error=(
-                    "pytest execution timed out"
+                    sandbox_result.error
+                    or (
+                        "Sandbox pytest "
+                        "process could not start."
+                    )
                 ),
             )
+
+        # =====================================================
+        # Timeout
+        # =====================================================
+
+        if (
+            sandbox_result
+            .timed_out
+        ):
+
+            return ToolResult(
+                success=False,
+                summary=(
+                    "Tests timed out after "
+                    f"{self.timeout} seconds "
+                    "inside the sandbox."
+                ),
+                data={
+                    "path": (
+                        normalized_path
+                    ),
+                    "purpose": (
+                        normalized_purpose
+                    ),
+                    "timeout": (
+                        self.timeout
+                    ),
+                    "timed_out": True,
+                    "output_truncated": (
+                        sandbox_result
+                        .output_limited
+                    ),
+                    "sandbox": (
+                        sandbox_result
+                        .sandbox_metadata()
+                    ),
+                    "failure_type": (
+                        "sandbox_timeout"
+                    ),
+                },
+                error=(
+                    "pytest execution "
+                    "timed out"
+                ),
+            )
+
+        # =====================================================
+        # Parse pytest result
+        # =====================================================
 
         parsed = (
             parse_pytest_output(
                 exit_code=(
-                    process.returncode
+                    sandbox_result
+                    .exit_code
+                    if (
+                        sandbox_result
+                        .exit_code
+                        is not None
+                    )
+                    else -1
                 ),
                 stdout=(
-                    process.stdout
+                    sandbox_result
+                    .stdout
                 ),
                 stderr=(
-                    process.stderr
+                    sandbox_result
+                    .stderr
                 ),
             )
+        )
+
+        parsed[
+            "output_truncated"
+        ] = (
+            sandbox_result
+            .output_limited
         )
 
         llm_content = (
@@ -200,20 +348,93 @@ class RunTestsTool(
             )
         )
 
+        if (
+            sandbox_result
+            .output_limited
+        ):
+
+            summary += (
+                " Captured pytest output "
+                "was truncated by the sandbox."
+            )
+
         return ToolResult(
             success=True,
-            summary=summary,
+            summary=(
+                summary
+            ),
             data={
-                "path": normalized_path,
+                "path": (
+                    normalized_path
+                ),
                 "purpose": (
                     normalized_purpose
                 ),
                 **parsed,
+                "sandbox": (
+                    sandbox_result
+                    .sandbox_metadata()
+                ),
             },
             llm_content=(
                 llm_content
             ),
         )
+
+    # =========================================================
+    # Test Path Guard
+    # =========================================================
+
+    def _normalize_test_path(
+        self,
+        path: str,
+    ) -> str:
+
+        if (
+            path
+            in {
+                ".",
+                "./",
+            }
+        ):
+
+            return "."
+
+        candidate = (
+            (
+                self.workspace
+                / path
+            )
+            .resolve()
+        )
+
+        try:
+
+            relative = (
+                candidate
+                .relative_to(
+                    self.workspace
+                )
+            )
+
+        except ValueError:
+
+            raise ValueError(
+                (
+                    "Test path must remain "
+                    "inside the workspace."
+                )
+            )
+
+        return (
+            relative
+            .as_posix()
+        )
+
+
+# =============================================================
+# Parse pytest
+# =============================================================
 
 
 def parse_pytest_output(
@@ -289,25 +510,49 @@ def parse_pytest_output(
     ]
 
     return {
-        "exit_code": exit_code,
-        "passed": passed,
-        "failed": failed,
-        "errors": errors,
-        "skipped": skipped,
-        "xfailed": xfailed,
-        "xpassed": xpassed,
-        "failed_tests": failed_tests,
+        "exit_code": (
+            exit_code
+        ),
+        "passed": (
+            passed
+        ),
+        "failed": (
+            failed
+        ),
+        "errors": (
+            errors
+        ),
+        "skipped": (
+            skipped
+        ),
+        "xfailed": (
+            xfailed
+        ),
+        "xpassed": (
+            xpassed
+        ),
+        "failed_tests": (
+            failed_tests
+        ),
         "failure_details": (
             failure_details
         ),
         "stderr": (
-            stderr_lines[:20]
+            stderr_lines[
+                :20
+            ]
         ),
         "tests_passed": (
-            exit_code == 0
+            exit_code
+            == 0
         ),
         "timed_out": False,
     }
+
+
+# =============================================================
+# Summary
+# =============================================================
 
 
 def build_pytest_summary(
@@ -316,39 +561,61 @@ def build_pytest_summary(
 
     parts = []
 
-    if parsed[
-        "passed"
-    ]:
+    if (
+        parsed[
+            "passed"
+        ]
+    ):
 
         parts.append(
-            f"{parsed['passed']} passed"
+            (
+                f"{parsed['passed']} "
+                "passed"
+            )
         )
 
-    if parsed[
-        "failed"
-    ]:
+    if (
+        parsed[
+            "failed"
+        ]
+    ):
 
         parts.append(
-            f"{parsed['failed']} failed"
+            (
+                f"{parsed['failed']} "
+                "failed"
+            )
         )
 
-    if parsed[
-        "errors"
-    ]:
+    if (
+        parsed[
+            "errors"
+        ]
+    ):
 
         parts.append(
-            f"{parsed['errors']} errors"
+            (
+                f"{parsed['errors']} "
+                "errors"
+            )
         )
 
-    if parsed[
-        "skipped"
-    ]:
+    if (
+        parsed[
+            "skipped"
+        ]
+    ):
 
         parts.append(
-            f"{parsed['skipped']} skipped"
+            (
+                f"{parsed['skipped']} "
+                "skipped"
+            )
         )
 
-    if not parts:
+    if not (
+        parts
+    ):
 
         parts.append(
             (
@@ -365,6 +632,11 @@ def build_pytest_summary(
     )
 
 
+# =============================================================
+# LLM Content
+# =============================================================
+
+
 def build_pytest_llm_content(
     parsed: dict,
 ) -> str:
@@ -376,9 +648,24 @@ def build_pytest_llm_content(
         )
     ]
 
-    if parsed[
-        "failed_tests"
-    ]:
+    if (
+        parsed.get(
+            "output_truncated"
+        )
+    ):
+
+        sections.append(
+            (
+                "Sandbox note: pytest "
+                "output was truncated."
+            )
+        )
+
+    if (
+        parsed[
+            "failed_tests"
+        ]
+    ):
 
         sections.append(
             (
@@ -391,9 +678,11 @@ def build_pytest_llm_content(
             )
         )
 
-    if parsed[
-        "failure_details"
-    ]:
+    if (
+        parsed[
+            "failure_details"
+        ]
+    ):
 
         sections.append(
             (
@@ -406,9 +695,11 @@ def build_pytest_llm_content(
             )
         )
 
-    if parsed[
-        "stderr"
-    ]:
+    if (
+        parsed[
+            "stderr"
+        ]
+    ):
 
         sections.append(
             (
@@ -426,6 +717,11 @@ def build_pytest_llm_content(
     )
 
 
+# =============================================================
+# Extract Count
+# =============================================================
+
+
 def _extract_count(
     text: str,
     label: str,
@@ -436,19 +732,30 @@ def _extract_count(
         rf"{re.escape(label)}\b"
     )
 
-    matches = re.findall(
-        pattern,
-        text,
-        re.IGNORECASE,
+    matches = (
+        re.findall(
+            pattern,
+            text,
+            re.IGNORECASE,
+        )
     )
 
-    if not matches:
+    if not (
+        matches
+    ):
 
         return 0
 
     return int(
-        matches[-1]
+        matches[
+            -1
+        ]
     )
+
+
+# =============================================================
+# Failed Test Names
+# =============================================================
 
 
 def _extract_failed_test_names(
@@ -482,7 +789,14 @@ def _extract_failed_test_names(
 
             break
 
-    return failed_names
+    return (
+        failed_names
+    )
+
+
+# =============================================================
+# Failure Details
+# =============================================================
 
 
 def _failure_detail_lines(
@@ -494,7 +808,9 @@ def _failure_detail_lines(
 
     capturing = False
 
-    for line in stdout_lines:
+    for line in (
+        stdout_lines
+    ):
 
         if (
             "FAILURES"
@@ -512,11 +828,15 @@ def _failure_detail_lines(
 
             capturing = True
 
-        if capturing:
+        if (
+            capturing
+        ):
 
-            if re.fullmatch(
-                r"\.+",
-                line.strip(),
+            if (
+                re.fullmatch(
+                    r"\.+",
+                    line.strip(),
+                )
             ):
 
                 continue
@@ -534,4 +854,6 @@ def _failure_detail_lines(
 
                 break
 
-    return detail
+    return (
+        detail
+    )
