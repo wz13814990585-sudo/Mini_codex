@@ -7,6 +7,12 @@ from .agent.planner import Planner
 from .agent.replanner import Replanner
 from .agent.repo_map import RepoMap
 from .agent.symbol_index import SymbolIndex
+from .agent.trace import (
+    TraceRecorder,
+)
+from .agent.trace_runtime import (
+    attach_runtime_tracing,
+)
 
 from .llm.client import LLMClient
 
@@ -198,7 +204,24 @@ def main():
     )
 
     # =========================================================
-    # Stage 11: Git Awareness Tools
+    # Stage 14 Event / Trace
+    # =========================================================
+
+    trace_recorder = (
+        TraceRecorder(
+            max_events=5000
+        )
+    )
+
+    attach_runtime_tracing(
+        agent,
+        recorder=(
+            trace_recorder
+        ),
+    )
+
+    # =========================================================
+    # Stage 11 Git Awareness Tools
     # =========================================================
 
     registry.register(
@@ -219,6 +242,10 @@ def main():
 
     # =========================================================
     # Agent Callback Tools
+    #
+    # IMPORTANT:
+    # Register AFTER trace attachment so callback tools receive
+    # the traced plan/replan methods.
     # =========================================================
 
     registry.register(
@@ -268,6 +295,75 @@ def main():
         print(
             f"\nMiniCodex >\n"
             f"{result}"
+        )
+
+        # =====================================================
+        # Trace Summary
+        # =====================================================
+
+        trace_summary = (
+            trace_recorder
+            .summary()
+        )
+
+        print(
+            "\n[Trace Summary]"
+        )
+
+        print(
+            "Task ID: "
+            f"{trace_summary.task_id}"
+        )
+
+        print(
+            "Events: "
+            f"{trace_summary.total_events}"
+        )
+
+        print(
+            "LLM Calls: "
+            f"{trace_summary.llm_calls}"
+        )
+
+        print(
+            "Tool Calls: "
+            f"{trace_summary.tool_calls}"
+        )
+
+        print(
+            "Edits: "
+            f"{trace_summary.edits}"
+        )
+
+        print(
+            "Validation Runs: "
+            f"{trace_summary.validation_runs}"
+        )
+
+        print(
+            "Rollbacks: "
+            f"{trace_summary.rollbacks}"
+        )
+
+        print(
+            "Replans: "
+            f"{trace_summary.replans}"
+        )
+
+        print(
+            "Safety Blocks: "
+            f"{trace_summary.safety_blocks}"
+        )
+
+        # =====================================================
+        # Persist Latest Trace
+        # =====================================================
+
+        trace_recorder.save_jsonl(
+            PROJECT_ROOT
+            / ".minicodex"
+            / "traces"
+            / "latest.jsonl"
         )
 
 
