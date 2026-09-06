@@ -44,16 +44,6 @@ class ValidationPurpose(
     Enum,
 ):
 
-    """
-    Why a validation run exists.
-
-    ACCEPTANCE:
-        Does the behavior requested by the user actually work?
-
-    REGRESSION:
-        Did the change break existing project behavior?
-    """
-
     ACCEPTANCE = "acceptance"
     REGRESSION = "regression"
 
@@ -96,25 +86,6 @@ class ValidationNextAction(
 
 @dataclass(frozen=True)
 class ValidationEvidence:
-    """
-    Normalized behavioral validation evidence.
-
-    execution_succeeded:
-        Did the validation tool execute correctly?
-
-    outcome:
-        Did the validation itself pass or fail?
-
-    scope:
-        Was validation targeted or full-suite?
-
-    purpose:
-        Was this acceptance evidence or regression evidence?
-
-    edit_revision:
-        Which exact workspace edit revision did this
-        evidence validate?
-    """
 
     tool_name: str
 
@@ -210,11 +181,6 @@ class ValidationEvidence:
 
 @dataclass
 class ValidationState:
-    """
-    Validation evidence for the CURRENT edit revision.
-
-    Any successful edit invalidates all previous evidence.
-    """
 
     edit_revision: int = 0
 
@@ -254,18 +220,6 @@ class ValidationState:
 
 
 class ValidationPipeline:
-    """
-    Normalize validation results and manage validation
-    evidence for the current edit revision.
-
-    Completion evidence requires:
-
-        acceptance PASS
-        +
-        full regression PASS
-
-    for the same current edit revision.
-    """
 
     def __init__(
         self,
@@ -292,16 +246,13 @@ class ValidationPipeline:
     def record_edit(
         self,
     ) -> int:
-        """
-        A successful edit creates a new code revision.
-
-        Validation evidence from older revisions becomes stale.
-        """
 
         self.state.edit_revision += 1
 
         self.state.has_edit = True
 
+        # A new physical workspace revision invalidates
+        # every piece of validation evidence.
         self.state.targeted_passed = False
 
         self.state.acceptance_passed = False
@@ -353,20 +304,34 @@ class ValidationPipeline:
         self,
         evidence: ValidationEvidence,
     ) -> None:
+        """
+        Update validation truth conservatively.
+
+        A later contradictory result must invalidate an
+        earlier green result for the same evidence category.
+
+        Examples:
+
+            acceptance PASS
+            → acceptance FAIL
+            → acceptance_passed = False
+
+            full PASS
+            → full FAIL
+            → full_passed = False
+        """
 
         self.state.latest_evidence = (
             evidence
         )
 
-        if (
+        passed = (
             evidence.outcome
-            != ValidationOutcome.PASSED
-        ):
-
-            return
+            == ValidationOutcome.PASSED
+        )
 
         # =====================================================
-        # Acceptance Evidence
+        # Acceptance
         # =====================================================
 
         if (
@@ -375,13 +340,13 @@ class ValidationPipeline:
         ):
 
             self.state.acceptance_passed = (
-                True
+                passed
             )
 
             return
 
         # =====================================================
-        # Regression Evidence
+        # Regression
         # =====================================================
 
         if (
@@ -390,8 +355,15 @@ class ValidationPipeline:
         ):
 
             self.state.targeted_passed = (
-                True
+                passed
             )
+
+            # A known targeted regression failure contradicts
+            # any older claim that the current revision is
+            # fully regression-safe.
+            if not passed:
+
+                self.state.full_passed = False
 
             return
 
@@ -401,11 +373,18 @@ class ValidationPipeline:
         ):
 
             self.state.full_passed = (
-                True
+                passed
             )
 
+            return
+
+        # Unknown regression evidence cannot establish safety.
+        if not passed:
+
+            self.state.full_passed = False
+
     # =========================================================
-    # Next Validation Action
+    # Next Action
     # =========================================================
 
     def next_action(
@@ -421,15 +400,14 @@ class ValidationPipeline:
             or self.state.latest_evidence
         )
 
-        if current is None:
+        if (
+            current
+            is None
+        ):
 
             return (
                 ValidationNextAction.NONE
             )
-
-        # =====================================================
-        # No Reliable Conclusion
-        # =====================================================
 
         if (
             current.outcome
@@ -441,10 +419,6 @@ class ValidationPipeline:
                 .INVESTIGATE_INCONCLUSIVE
             )
 
-        # =====================================================
-        # Validation Failed
-        # =====================================================
-
         if (
             current.outcome
             == ValidationOutcome.FAILED
@@ -455,17 +429,14 @@ class ValidationPipeline:
                 .FIX_FAILURE
             )
 
-        # =====================================================
-        # Validation Passed
-        # =====================================================
-
-        if not self.state.has_edit:
+        if not (
+            self.state.has_edit
+        ):
 
             return (
                 ValidationNextAction.NONE
             )
 
-        # Both independent requirements already exist.
         if (
             self.state.acceptance_passed
             and self.state.full_passed
@@ -476,7 +447,6 @@ class ValidationPipeline:
                 .TASK_VALIDATED
             )
 
-        # Acceptance passed, but regression safety is missing.
         if (
             self.state.acceptance_passed
             and not self.state.full_passed
@@ -487,10 +457,8 @@ class ValidationPipeline:
                 .RUN_FULL_VALIDATION
             )
 
-        # Regression evidence exists, but user-requested
-        # behavior has not been demonstrated.
-        if (
-            not self.state.acceptance_passed
+        if not (
+            self.state.acceptance_passed
         ):
 
             return (
@@ -509,13 +477,6 @@ class ValidationPipeline:
     def current_edit_validated(
         self,
     ) -> bool:
-        """
-        Regression-level validation only.
-
-        This intentionally does NOT mean the whole user task
-        is complete. CompletionGate additionally requires
-        acceptance evidence.
-        """
 
         return bool(
             self.state.has_edit
@@ -563,7 +524,7 @@ class ValidationPipeline:
         )
 
     # =========================================================
-    # RunTests Result Normalization
+    # Normalize RunTests
     # =========================================================
 
     def _from_run_tests(
@@ -790,8 +751,7 @@ class ValidationPipeline:
         if normalized:
 
             return (
-                ValidationScope
-                .TARGETED
+                ValidationScope.TARGETED
             )
 
         return (
@@ -806,6 +766,13 @@ class ValidationPipeline:
     def _validation_purpose(
         value,
     ) -> ValidationPurpose:
+        """
+        Unknown purpose values degrade to regression.
+
+        This is conservative:
+        an invalid value can never fabricate acceptance
+        evidence.
+        """
 
         normalized = (
             str(value)

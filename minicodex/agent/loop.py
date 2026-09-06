@@ -85,7 +85,10 @@ def run_agent_loop(
 
     Rollback mechanics belong to RollbackEngine.
 
-    Completion truth belongs to CompletionGate.
+    Completion evidence belongs to CompletionGate.
+
+    Final task completion additionally requires that an
+    active implementation plan is complete.
     """
 
     messages = [
@@ -193,7 +196,7 @@ def run_agent_loop(
                         }
                     )
 
-                    # Recovery may replace the active plan.
+                    # Recovery may replace the plan.
                     if agent.active_plan:
 
                         current_plan_step = (
@@ -244,14 +247,12 @@ def run_agent_loop(
         )
 
         # =====================================================
-        # Build System Prompt
+        # System Prompt
         # =====================================================
 
         system_prompt = (
             agent._build_system_prompt(
-                user_input=(
-                    user_input
-                ),
+                user_input=user_input,
                 plan=(
                     agent.active_plan
                 ),
@@ -331,10 +332,6 @@ def run_agent_loop(
             llm_response.usage
         )
 
-        # =====================================================
-        # Context Observation
-        # =====================================================
-
         agent.context_budget.observe(
             llm_response
             .usage
@@ -369,10 +366,6 @@ def run_agent_loop(
             "Context Pressure: "
             f"{agent.context_budget.pressure.value}"
         )
-
-        # =====================================================
-        # Provider Message
-        # =====================================================
 
         response = (
             llm_response.message
@@ -409,145 +402,16 @@ def run_agent_loop(
                 f"{completion.reason}"
             )
 
-            # =============================================
-            # Editing Task Fully Validated
-            # =============================================
-
-            if (
-                completion.can_complete
-            ):
-
-                return (
-                    content
-                    or summarize_agent_stop(
-                        agent,
-                        (
-                            "Task completed with "
-                            "acceptance evidence and "
-                            "full regression evidence."
-                        ),
-                    )
-                )
-
-            # =============================================
-            # There Has Been An Edit
+            # =================================================
+            # GATE 1:
+            # Active Plan Must Be Complete
             #
-            # Once a mutation occurred, completion evidence
-            # cannot be bypassed by final LLM prose.
-            # =============================================
+            # This MUST occur before CompletionGate READY.
+            # =================================================
 
             if (
-                completion.has_edit
-                and not completion.can_complete
-            ):
-
-                remaining_budget = (
-                    agent.max_steps
-                    - agent_step
-                    - 1
-                )
-
-                if (
-                    remaining_budget
-                    > 0
-                ):
-
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": (
-                                content
-                                or (
-                                    "The implementation "
-                                    "appears complete."
-                                )
-                            ),
-                        }
-                    )
-
-                    # =====================================
-                    # Acceptance Missing
-                    # =====================================
-
-                    if (
-                        completion.status
-                        == (
-                            CompletionStatus
-                            .NEEDS_ACCEPTANCE
-                        )
-                    ):
-
-                        reminder = (
-                            "The current edit revision "
-                            "cannot complete yet because "
-                            "acceptance evidence is missing. "
-                            "Run a specific relevant test "
-                            "that demonstrates the user's "
-                            "requested behavior using "
-                            "run_tests("
-                            "path=<specific_test>, "
-                            "purpose='acceptance')."
-                        )
-
-                    # =====================================
-                    # Full Regression Missing
-                    # =====================================
-
-                    elif (
-                        completion.status
-                        == (
-                            CompletionStatus
-                            .NEEDS_FULL_VALIDATION
-                        )
-                    ):
-
-                        reminder = (
-                            "Acceptance evidence exists, "
-                            "but full regression validation "
-                            "is still missing. Run "
-                            "run_tests("
-                            "path='.', "
-                            "purpose='regression')."
-                        )
-
-                    else:
-
-                        reminder = (
-                            "The task does not yet have "
-                            "sufficient completion evidence."
-                        )
-
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                reminder
-                            ),
-                        }
-                    )
-
-                    continue
-
-                return summarize_agent_stop(
-                    agent,
-                    (
-                        "Agent stopped before "
-                        "completion evidence was "
-                        "fully established. "
-                        f"{completion.reason}"
-                    ),
-                    content,
-                )
-
-            # =============================================
-            # Incomplete Plan Protection
-            # =============================================
-
-            if (
-                agent.active_plan
-                and not (
-                    agent.active_plan
-                    .is_completed()
+                active_plan_incomplete(
+                    agent
                 )
             ):
 
@@ -602,9 +466,140 @@ def run_agent_loop(
                     content,
                 )
 
-            # =============================================
+            # =================================================
+            # GATE 2:
+            # Editing Task Fully Validated
+            # =================================================
+
+            if (
+                completion.can_complete
+            ):
+
+                return (
+                    content
+                    or summarize_agent_stop(
+                        agent,
+                        (
+                            "Task completed with "
+                            "acceptance evidence, "
+                            "full regression evidence, "
+                            "and a completed plan."
+                        ),
+                    )
+                )
+
+            # =================================================
+            # An Edit Exists But Evidence Is Incomplete
+            # =================================================
+
+            if (
+                completion.has_edit
+                and not completion.can_complete
+            ):
+
+                remaining_budget = (
+                    agent.max_steps
+                    - agent_step
+                    - 1
+                )
+
+                if (
+                    remaining_budget
+                    > 0
+                ):
+
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": (
+                                content
+                                or (
+                                    "The implementation "
+                                    "appears complete."
+                                )
+                            ),
+                        }
+                    )
+
+                    # =========================================
+                    # Acceptance Missing
+                    # =========================================
+
+                    if (
+                        completion.status
+                        == (
+                            CompletionStatus
+                            .NEEDS_ACCEPTANCE
+                        )
+                    ):
+
+                        reminder = (
+                            "The current edit revision "
+                            "cannot complete yet because "
+                            "acceptance evidence is missing. "
+                            "Run a specific relevant test "
+                            "that demonstrates the user's "
+                            "requested behavior using "
+                            "run_tests("
+                            "path=<specific_test>, "
+                            "purpose='acceptance')."
+                        )
+
+                    # =========================================
+                    # Full Regression Missing
+                    # =========================================
+
+                    elif (
+                        completion.status
+                        == (
+                            CompletionStatus
+                            .NEEDS_FULL_VALIDATION
+                        )
+                    ):
+
+                        reminder = (
+                            "Acceptance evidence exists, "
+                            "but full regression validation "
+                            "is still missing. Run "
+                            "run_tests("
+                            "path='.', "
+                            "purpose='regression')."
+                        )
+
+                    else:
+
+                        reminder = (
+                            "The task does not yet have "
+                            "sufficient completion evidence."
+                        )
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                reminder
+                            ),
+                        }
+                    )
+
+                    continue
+
+                return summarize_agent_stop(
+                    agent,
+                    (
+                        "Agent stopped before "
+                        "completion evidence was "
+                        "fully established. "
+                        f"{completion.reason}"
+                    ),
+                    content,
+                )
+
+            # =================================================
             # Read-Only / Informational Task
-            # =============================================
+            #
+            # No successful edit exists and no plan is pending.
+            # =================================================
 
             return content
 
@@ -731,7 +726,7 @@ def run_agent_loop(
             )
 
             # =================================================
-            # 2. Duplicate Policy
+            # 2. Duplicate Tool Policy
             # =================================================
 
             (
@@ -783,7 +778,7 @@ def run_agent_loop(
                 # =============================================
                 # 3. Reliable Tool Execution
                 #
-                # At Stage 10 this may actually be
+                # Editing tools pass through
                 # CheckpointingToolExecutor.
                 # =============================================
 
@@ -857,11 +852,15 @@ def run_agent_loop(
             # =================================================
             # Successful Edit
             #
-            # CheckpointingToolExecutor has already:
+            # CheckpointingToolExecutor already performed:
             #
-            # capture → edit → seal
+            # capture
+            # ↓
+            # edit
+            # ↓
+            # seal
             #
-            # Here Loop creates the logical workspace revision.
+            # Loop now creates the logical revision.
             # =================================================
 
             if (
@@ -1161,6 +1160,9 @@ def run_agent_loop(
 
         # =====================================================
         # Completion Gate After Tool Batch
+        #
+        # Validation READY alone is not enough.
+        # An active plan must also be complete.
         # =====================================================
 
         completion = (
@@ -1171,6 +1173,11 @@ def run_agent_loop(
 
         if (
             completion.can_complete
+            and not (
+                active_plan_incomplete(
+                    agent
+                )
+            )
         ):
 
             return summarize_agent_stop(
@@ -1179,7 +1186,9 @@ def run_agent_loop(
                     "Task completed: "
                     "the current edit revision "
                     "has acceptance evidence "
-                    "and full regression evidence."
+                    "and full regression evidence, "
+                    "and the implementation plan "
+                    "is complete."
                 ),
             )
 
@@ -1209,22 +1218,64 @@ def validation_evidence_key(
     """
     Identity of one comparable validation series.
 
-    Failure counts may only be compared when purpose,
-    scope and test path are identical.
+    Only the same:
+
+        purpose
+        +
+        scope
+        +
+        path
+
+    may be compared.
+
+    Revision is deliberately NOT part of this key because
+    we need to compare the same test across revisions.
 
     Example:
 
-        acceptance|targeted|tests/test_divide.py
+        revision 1
+        acceptance|targeted|tests/test_feature.py
+        5 failed
 
-    must never be compared with:
+        ↓ edit
 
-        regression|full|.
+        revision 2
+        acceptance|targeted|tests/test_feature.py
+        8 failed
+
+    This is a valid cross-revision comparison.
     """
 
     return (
         f"{evidence.purpose.value}"
         f"|{evidence.scope.value}"
         f"|{evidence.path or ''}"
+    )
+
+
+# =============================================================
+# Plan Completion Policy
+# =============================================================
+
+
+def active_plan_incomplete(
+    agent,
+) -> bool:
+
+    """
+    Return True when an active implementation plan still
+    contains unfinished steps.
+    """
+
+    plan = getattr(
+        agent,
+        "active_plan",
+        None,
+    )
+
+    return bool(
+        plan
+        and not plan.is_completed()
     )
 
 
@@ -1284,6 +1335,44 @@ def evaluate_completion(
 def can_complete_edit_task(
     agent,
 ) -> bool:
+    """
+    Raw CompletionGate result.
+
+    Kept for compatibility with existing Stage 9 tests.
+
+    This does NOT include implementation-plan policy.
+    """
+
+    return (
+        evaluate_completion(
+            agent
+        )
+        .can_complete
+    )
+
+
+def can_finish_edit_task(
+    agent,
+) -> bool:
+    """
+    Final orchestration-level completion decision.
+
+    Editing task completion requires:
+
+        plan complete or no plan
+        +
+        acceptance PASS
+        +
+        full regression PASS
+    """
+
+    if (
+        active_plan_incomplete(
+            agent
+        )
+    ):
+
+        return False
 
     return (
         evaluate_completion(
@@ -1308,22 +1397,23 @@ def apply_validation_evidence(
 ]:
 
     """
-    Convert normalized ValidationEvidence into orchestration.
+    Convert ValidationEvidence into Agent-level control flow.
 
     ValidationPipeline:
-        What does the validation mean?
+        What does this result mean?
 
     ProgressController:
-        Is the same validation target improving or regressing?
+        Is the SAME validation target improving,
+        unchanged or regressing?
 
     RollbackEngine:
-        Restore the before-state when policy chooses rollback.
+        Restore the prior physical state.
 
     CompletionGate:
-        Is there enough evidence to finish?
+        Does current revision have enough evidence?
 
     AgentLoop:
-        What happens next?
+        What should happen next?
     """
 
     # =========================================================
@@ -1352,6 +1442,9 @@ def apply_validation_evidence(
 
     # =========================================================
     # Comparable Validation Trend
+    #
+    # Stage 10.5:
+    # Revision is explicitly passed to ProgressController.
     # =========================================================
 
     validation_progress = (
@@ -1362,6 +1455,9 @@ def apply_validation_evidence(
                 validation_evidence_key(
                     evidence
                 )
+            ),
+            edit_revision=(
+                evidence.edit_revision
             ),
         )
     )
@@ -1379,12 +1475,16 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # Automatic Rollback On Strict Regression
+    # Automatic Rollback
     #
-    # Only FAILED evidence can trigger this.
+    # Requirements:
     #
-    # PASSED → another suite with failures is protected
-    # by validation_key and therefore starts a new series.
+    # 1. Current validation FAILED
+    # 2. Same test series became worse
+    # 3. Regression crossed an edit revision
+    #
+    # Same-revision fluctuation MUST NOT automatically undo
+    # code because it may represent flaky/environmental tests.
     # =========================================================
 
     if (
@@ -1393,6 +1493,10 @@ def apply_validation_evidence(
         and (
             validation_progress.status
             == ValidationStatus.REGRESSED
+        )
+        and (
+            validation_progress
+            .crossed_revision
         )
     ):
 
@@ -1457,6 +1561,9 @@ def apply_validation_evidence(
 
     # =========================================================
     # Both Acceptance + Full Regression
+    #
+    # This does NOT itself terminate the task because the
+    # active plan may still be incomplete.
     # =========================================================
 
     if (
@@ -1590,8 +1697,8 @@ def apply_validation_evidence(
     # =========================================================
     # Ordinary Failure
     #
-    # A regression has already had an opportunity to
-    # trigger rollback above.
+    # Cross-revision regression already had an opportunity
+    # to trigger rollback above.
     # =========================================================
 
     if (
@@ -1701,14 +1808,32 @@ def rollback_regressed_edit(
 
     """
     Roll back the CURRENT edit revision when the SAME
-    validation target became strictly worse.
+    validation target became strictly worse across revisions.
 
-    Important:
+    Example:
 
-    RollbackEngine owns the physical restore.
+        revision 1:
+        5 failed
 
-    This function only decides whether that mechanism should
-    be invoked and updates orchestration state afterward.
+        ↓ edit
+
+        revision 2:
+        8 failed
+
+        → revision 2 may be rolled back.
+
+    But:
+
+        revision 2:
+        5 failed
+        ↓ rerun without edit
+        8 failed
+
+        → MUST NOT automatically rollback.
+
+    RollbackEngine owns physical restoration.
+
+    This function owns orchestration policy.
     """
 
     pipeline = getattr(
@@ -1738,6 +1863,20 @@ def rollback_regressed_edit(
         return None
 
     # =========================================================
+    # Defensive Cross-Revision Guard
+    #
+    # apply_validation_evidence already checks this, but this
+    # helper also protects itself when called directly.
+    # =========================================================
+
+    if not (
+        validation_progress
+        .crossed_revision
+    ):
+
+        return None
+
+    # =========================================================
     # Evidence Must Belong To Current Revision
     # =========================================================
 
@@ -1754,8 +1893,16 @@ def rollback_regressed_edit(
 
         return None
 
+    if (
+        validation_progress
+        .current_revision
+        != current_revision
+    ):
+
+        return None
+
     # =========================================================
-    # Resolve Current Revision Checkpoint
+    # Resolve Checkpoint Protecting Current Revision
     # =========================================================
 
     checkpoint = (
@@ -1790,6 +1937,15 @@ def rollback_regressed_edit(
             "failed -> "
             f"{validation_progress.current_failed} "
             "failed."
+        )
+    )
+
+    print(
+        (
+            "Revision transition: "
+            f"{validation_progress.previous_revision} "
+            "-> "
+            f"{validation_progress.current_revision}"
         )
     )
 
@@ -1851,6 +2007,14 @@ def rollback_regressed_edit(
                     validation_progress
                     .validation_key
                 ),
+                "previous_revision": (
+                    validation_progress
+                    .previous_revision
+                ),
+                "current_revision": (
+                    validation_progress
+                    .current_revision
+                ),
                 "failed_before": (
                     validation_progress
                     .previous_failed
@@ -1866,7 +2030,7 @@ def rollback_regressed_edit(
         )
 
     # =========================================================
-    # Rollback Failed / Was Blocked
+    # Rollback Failed / Blocked
     # =========================================================
 
     if not (
@@ -1902,16 +2066,13 @@ def rollback_regressed_edit(
         )
 
     # =========================================================
-    # Rollback Is A New Workspace State
+    # Rollback Creates A New Monotonic Workspace Revision
     #
-    # Revision sequence remains monotonic:
+    # revision 4 = A
+    # revision 5 = bad B
+    # revision 6 = rollback → A
     #
-    # revision 4 = before
-    # revision 5 = bad edit
-    # revision 6 = rollback result
-    #
-    # Even if revision 4 and revision 6 have identical
-    # physical content.
+    # revision is an event identity, not an undo cursor.
     # =========================================================
 
     rollback_revision = (
@@ -1920,19 +2081,19 @@ def rollback_regressed_edit(
     )
 
     # =========================================================
-    # Validation Trend Is Now Stale
+    # Old Validation Trends Are Stale
     # =========================================================
 
     agent.progress.reset()
 
     # =========================================================
-    # Recovery Has Made Real Progress
+    # Recovery Has Made Deterministic Progress
     # =========================================================
 
     agent.recovery.mark_progress()
 
     # =========================================================
-    # Tell LLM What Deterministically Happened
+    # Tell LLM What Happened
     # =========================================================
 
     messages.append(
@@ -1940,9 +2101,9 @@ def rollback_regressed_edit(
             "role": "user",
             "content": (
                 "The Harness detected that the latest "
-                "comparable validation became worse and "
-                "automatically rolled back the responsible "
-                "edit. "
+                "comparable validation became worse across "
+                "an edit revision and automatically rolled "
+                "back the responsible edit. "
                 f"Checkpoint "
                 f"{checkpoint.checkpoint_id} was restored. "
                 f"The restored workspace is now revision "
@@ -1995,7 +2156,8 @@ def append_skipped_tool_results(
     call to receive a corresponding tool response.
 
     When plan, validation or recovery state changes midway
-    through a batch, remaining calls are intentionally skipped.
+    through a tool batch, later tool calls are intentionally
+    skipped.
     """
 
     for tool_call in tool_calls:
@@ -2169,6 +2331,13 @@ def summarize_agent_stop(
             )
         )
 
+        lines.append(
+            (
+                "Plan completion gate: "
+                f"{not active_plan_incomplete(agent)}."
+            )
+        )
+
     # =========================================================
     # Checkpoint / Rollback State
     # =========================================================
@@ -2218,56 +2387,85 @@ def summarize_agent_stop(
             )
 
     # =========================================================
-    # Validation Failure Trend
+    # Validation Trend
     # =========================================================
 
-    failed = getattr(
-        agent.progress,
-        "last_validation_failed_count",
-        None,
-    )
-
-    validation_key = getattr(
-        agent.progress,
-        "last_validation_key",
+    progress = getattr(
+        agent,
+        "progress",
         None,
     )
 
     if (
-        failed
-        == 0
-    ):
-
-        lines.append(
-            (
-                "Latest validation "
-                "failure count: 0."
-            )
-        )
-
-    elif (
-        failed
+        progress
         is not None
     ):
 
-        lines.append(
-            (
-                "Latest validation "
-                "failure count: "
-                f"{failed}."
-            )
+        failed = getattr(
+            progress,
+            "last_validation_failed_count",
+            None,
         )
 
-    if (
-        validation_key
-    ):
-
-        lines.append(
-            (
-                "Validation trend key: "
-                f"{validation_key}."
-            )
+        validation_key = getattr(
+            progress,
+            "last_validation_key",
+            None,
         )
+
+        validation_revision = getattr(
+            progress,
+            "last_validation_revision",
+            None,
+        )
+
+        if (
+            failed
+            == 0
+        ):
+
+            lines.append(
+                (
+                    "Latest validation "
+                    "failure count: 0."
+                )
+            )
+
+        elif (
+            failed
+            is not None
+        ):
+
+            lines.append(
+                (
+                    "Latest validation "
+                    "failure count: "
+                    f"{failed}."
+                )
+            )
+
+        if (
+            validation_key
+        ):
+
+            lines.append(
+                (
+                    "Validation trend key: "
+                    f"{validation_key}."
+                )
+            )
+
+        if (
+            validation_revision
+            is not None
+        ):
+
+            lines.append(
+                (
+                    "Validation trend revision: "
+                    f"{validation_revision}."
+                )
+            )
 
     # =========================================================
     # Token Metrics
