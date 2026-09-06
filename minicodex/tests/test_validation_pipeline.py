@@ -1166,3 +1166,206 @@ def test_validation_pipeline_reset():
         .latest_evidence
         is None
     )
+
+# =============================================================
+# Acceptance PASS → FAIL Revokes Green Evidence
+# =============================================================
+
+
+def test_acceptance_pass_then_failure_revokes_acceptance():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": "tests/test_feature.py",
+            "purpose": "acceptance",
+        },
+        result=(
+            passed_result()
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is True
+    )
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": "tests/test_feature.py",
+            "purpose": "acceptance",
+        },
+        result=(
+            failed_result(
+                failed=1
+            )
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .acceptance_passed
+        is False
+    )
+
+
+# =============================================================
+# Full PASS → FAIL Revokes Green Evidence
+# =============================================================
+
+
+def test_full_pass_then_failure_revokes_full_regression():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": "regression",
+        },
+        result=(
+            passed_result()
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is True
+    )
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": "regression",
+        },
+        result=(
+            failed_result(
+                failed=1
+            )
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+
+# =============================================================
+# Full PASS → INCONCLUSIVE Revokes Green Evidence
+# =============================================================
+
+
+def test_full_pass_then_inconclusive_revokes_full_regression():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": "regression",
+        },
+        result=(
+            passed_result()
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is True
+    )
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": "regression",
+        },
+        result=(
+            inconclusive_result()
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is False
+    )
+
+
+# =============================================================
+# Targeted Regression Failure Revokes Full Green Evidence
+# =============================================================
+
+
+def test_targeted_regression_failure_revokes_full_regression():
+
+    pipeline = (
+        ValidationPipeline()
+    )
+
+    pipeline.record_edit()
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": ".",
+            "purpose": "regression",
+        },
+        result=(
+            passed_result()
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is True
+    )
+
+    pipeline.observe(
+        tool_name="run_tests",
+        arguments={
+            "path": "tests/test_existing.py",
+            "purpose": "regression",
+        },
+        result=(
+            failed_result(
+                failed=1
+            )
+        ),
+    )
+
+    assert (
+        pipeline.state
+        .targeted_passed
+        is False
+    )
+
+    assert (
+        pipeline.state
+        .full_passed
+        is False
+    )

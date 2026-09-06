@@ -529,3 +529,161 @@ def test_different_validation_targets_do_not_trigger_rollback(
         checkpoint.rolled_back
         is False
     )
+
+# =============================================================
+# Same Revision Regression Must NOT Roll Back
+# =============================================================
+
+
+def test_same_revision_regression_does_not_trigger_rollback(
+    tmp_path: Path,
+):
+
+    file_path = (
+        tmp_path
+        / "demo.py"
+    )
+
+    file_path.write_text(
+        "value = 1\n",
+        encoding="utf-8",
+    )
+
+    agent = (
+        make_agent(
+            tmp_path
+        )
+    )
+
+    # =========================================================
+    # Create Revision 1
+    # =========================================================
+
+    checkpoint = (
+        agent.checkpoint_manager
+        .capture(
+            path="demo.py",
+            edit_revision=1,
+        )
+    )
+
+    file_path.write_text(
+        "value = 2\n",
+        encoding="utf-8",
+    )
+
+    agent.checkpoint_manager.seal(
+        checkpoint.checkpoint_id
+    )
+
+    revision = (
+        agent.validation_pipeline
+        .record_edit()
+    )
+
+    assert (
+        revision
+        == 1
+    )
+
+    # =========================================================
+    # First Validation
+    # =========================================================
+
+    first = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "tests/test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
+            },
+            result=(
+                failed_result(
+                    5
+                )
+            ),
+        )
+    )
+
+    apply_validation_evidence(
+        agent=agent,
+        evidence=first,
+        messages=[],
+    )
+
+    # =========================================================
+    # Second Validation
+    #
+    # IMPORTANT:
+    # No edit occurred between the two test runs.
+    #
+    # 5 → 8 is numerically worse, but still revision 1.
+    # Therefore rollback MUST NOT happen.
+    # =========================================================
+
+    second = (
+        agent.validation_pipeline
+        .observe(
+            tool_name="run_tests",
+            arguments={
+                "path": (
+                    "tests/test_feature.py"
+                ),
+                "purpose": (
+                    "acceptance"
+                ),
+            },
+            result=(
+                failed_result(
+                    8
+                )
+            ),
+        )
+    )
+
+    messages = []
+
+    (
+        early_stop,
+        restart,
+    ) = (
+        apply_validation_evidence(
+            agent=agent,
+            evidence=second,
+            messages=messages,
+        )
+    )
+
+    assert (
+        early_stop
+        is None
+    )
+
+    # =========================================================
+    # No Rollback
+    # =========================================================
+
+    assert (
+        checkpoint.rolled_back
+        is False
+    )
+
+    assert (
+        file_path.read_text(
+            encoding="utf-8"
+        )
+        == "value = 2\n"
+    )
+
+    # No rollback revision was created.
+    assert (
+        agent.validation_pipeline
+        .state
+        .edit_revision
+        == 1
+    )
