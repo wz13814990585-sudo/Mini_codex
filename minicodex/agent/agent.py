@@ -9,6 +9,10 @@ from .checkpoint_executor import (
 from .context_budget import (
     ContextBudget,
 )
+from .git_awareness import (
+    GitAwareness,
+    GitRepositoryInspector,
+)
 from .loop import (
     run_agent_loop,
 )
@@ -20,6 +24,9 @@ from .progress import (
 )
 from .recovery import (
     RecoveryController,
+)
+from .rollback import (
+    RollbackEngine,
 )
 from .state import (
     AgentPlan,
@@ -39,12 +46,6 @@ from ..prompts.system import (
     build_turn_context,
 )
 
-from .rollback import RollbackEngine
-
-from .git_awareness import (
-    GitAwareness,
-    GitRepositoryInspector,
-)
 
 class MiniCodexAgent:
 
@@ -59,6 +60,7 @@ class MiniCodexAgent:
         max_step_attempts: int = 5,
         max_context_tokens: int = 64000,
     ):
+
         self.llm = llm
 
         self.registry = registry
@@ -74,7 +76,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Stage 11: Git Awareness
+        # Stage 11 Git Awareness
         # =====================================================
 
         self.git_inspector = (
@@ -92,12 +94,9 @@ class MiniCodexAgent:
                 )
             )
         )
+
         # =====================================================
-        # Behavioral Validation Pipeline
-        #
-        # This must exist before the checkpoint executor
-        # because checkpoint revisions are derived from the
-        # current ValidationPipeline revision.
+        # Behavioral Validation
         # =====================================================
 
         self.validation_pipeline = (
@@ -105,7 +104,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Checkpoint Manager
+        # Checkpoint / Rollback
         # =====================================================
 
         self.checkpoint_manager = (
@@ -120,7 +119,8 @@ class MiniCodexAgent:
         self.rollback_engine = (
             RollbackEngine(
                 workspace=(
-                    self.checkpoint_manager.workspace
+                    self.checkpoint_manager
+                    .workspace
                 ),
                 checkpoint_manager=(
                     self.checkpoint_manager
@@ -129,7 +129,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Reliable Tool Execution Boundary
+        # Reliable Tool Execution
         # =====================================================
 
         base_tool_executor = (
@@ -157,7 +157,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Task-Level Token Metrics
+        # Token Metrics
         # =====================================================
 
         self.token_metrics = (
@@ -199,12 +199,16 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Planning Components
+        # Planning
         # =====================================================
 
-        self.planner = planner
+        self.planner = (
+            planner
+        )
 
-        self.replanner = replanner
+        self.replanner = (
+            replanner
+        )
 
         self.max_steps = (
             max_steps
@@ -215,7 +219,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Current Task State
+        # Active Task State
         # =====================================================
 
         self.active_plan: (
@@ -229,14 +233,7 @@ class MiniCodexAgent:
         ) = None
 
         # =====================================================
-        # Progress Controller
-        #
-        # Owns:
-        # - duplicate detection
-        # - action stall detection
-        # - validation failure trend
-        #
-        # Does NOT own final validation truth.
+        # Progress
         # =====================================================
 
         self.progress = (
@@ -248,7 +245,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Recovery Controller
+        # Recovery
         # =====================================================
 
         self.recovery = (
@@ -266,11 +263,7 @@ class MiniCodexAgent:
         registry,
     ):
         """
-        Resolve the common workspace from registered tools.
-
-        MiniCodex currently constructs all filesystem tools with
-        one shared workspace. We use the first tool exposing a
-        workspace attribute as the canonical task workspace.
+        Resolve the shared workspace from registered tools.
         """
 
         tools = getattr(
@@ -350,9 +343,9 @@ class MiniCodexAgent:
         self.working_summary.reset()
 
         # =====================================================
-        # Git Task Baseline
+        # Capture Task-Start Git Baseline
         #
-        # Capture BEFORE MiniCodex performs any task edit.
+        # This must happen before MiniCodex performs any edit.
         # =====================================================
 
         self.git_awareness.reset_task()
@@ -363,25 +356,8 @@ class MiniCodexAgent:
 
         self._refresh_repo_map()
 
-        try:
-
-            self.git_awareness.refresh()
-
-            git_awareness_text = (
-                self.git_awareness
-                .render()
-            )
-
-        except Exception as e:
-
-            git_awareness_text = (
-                "Git awareness unavailable: "
-                f"{type(e).__name__}: "
-                f"{e}"
-            )
-
         # =====================================================
-        # Initial Planning
+        # Initial Plan
         # =====================================================
 
         if (
@@ -449,7 +425,8 @@ class MiniCodexAgent:
         try:
 
             self.repo_map_text = (
-                self.repo_map.build()
+                self.repo_map
+                .build()
             )
 
         except Exception as e:
@@ -749,7 +726,43 @@ class MiniCodexAgent:
         **kwargs,
     ) -> str:
 
+        # =====================================================
+        # Fresh Repository Map
+        # =====================================================
+
         self._refresh_repo_map()
+
+        # =====================================================
+        # Fresh Git State
+        #
+        # Stage 11 invariant:
+        #
+        # Context is cache.
+        # Git / filesystem are source of truth.
+        #
+        # Therefore Git is refreshed on EVERY LLM turn.
+        # =====================================================
+
+        try:
+
+            self.git_awareness.refresh()
+
+            git_awareness_text = (
+                self.git_awareness
+                .render()
+            )
+
+        except Exception as e:
+
+            git_awareness_text = (
+                "Git awareness unavailable: "
+                f"{type(e).__name__}: "
+                f"{e}"
+            )
+
+        # =====================================================
+        # Plan
+        # =====================================================
 
         plan_text = (
             self._plan_to_text(
@@ -774,17 +787,32 @@ class MiniCodexAgent:
                 "No active plan step."
             )
 
-        return build_turn_context(
-            plan_text=plan_text,
-            current_step_text=current_step_text,
-            remaining_agent_steps=remaining_agent_steps,
-            working_summary_text=(
-                self.working_summary.render()
-            ),
-            repo_map_text=self.repo_map_text,
-            git_awareness_text=(
-                self.git_awareness.render()
-            ),
+        # =====================================================
+        # Build Context
+        # =====================================================
+
+        return (
+            build_turn_context(
+                plan_text=(
+                    plan_text
+                ),
+                current_step_text=(
+                    current_step_text
+                ),
+                remaining_agent_steps=(
+                    remaining_agent_steps
+                ),
+                working_summary_text=(
+                    self.working_summary
+                    .render()
+                ),
+                repo_map_text=(
+                    self.repo_map_text
+                ),
+                git_awareness_text=(
+                    git_awareness_text
+                ),
+            )
         )
 
     # =========================================================

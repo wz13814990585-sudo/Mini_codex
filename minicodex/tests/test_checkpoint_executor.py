@@ -161,6 +161,7 @@ class FakeWriteTool(
 def build_executor(
     tmp_path: Path,
     revision: int = 1,
+    on_successful_edit=None,
 ):
 
     registry = (
@@ -208,6 +209,9 @@ def build_executor(
             next_edit_revision=(
                 lambda: revision
             ),
+            on_successful_edit=(
+                on_successful_edit
+            ),
         )
     )
 
@@ -219,7 +223,7 @@ def build_executor(
 
 
 # =============================================================
-# Successful Existing-File Edit
+# Successful Existing File
 # =============================================================
 
 
@@ -250,18 +254,12 @@ def test_successful_edit_captures_before_state(
 
     prepared = (
         executor.prepare(
-            tool_name=(
-                "write_file"
-            ),
+            tool_name="write_file",
             raw_arguments=(
                 json.dumps(
                     {
-                        "path": (
-                            "demo.txt"
-                        ),
-                        "content": (
-                            "after"
-                        ),
+                        "path": "demo.txt",
+                        "content": "after",
                     }
                 )
             ),
@@ -301,22 +299,34 @@ def test_successful_edit_captures_before_state(
     )
 
     assert (
-        checkpoint.snapshot
-        .content
+        checkpoint.snapshot.content
         == "before"
     )
 
     assert (
-        execution.result
-        .data[
+        execution.result.data[
             "checkpoint_id"
         ]
         == checkpoint.checkpoint_id
     )
 
+    assert (
+        execution.result.data[
+            "checkpoint_sealed"
+        ]
+        is True
+    )
+
+    assert (
+        execution.result.data[
+            "safety_degraded"
+        ]
+        is False
+    )
+
 
 # =============================================================
-# New File Checkpoint
+# New File
 # =============================================================
 
 
@@ -374,20 +384,18 @@ def test_new_file_edit_captures_missing_state(
     )
 
     assert (
-        checkpoint.snapshot
-        .existed
+        checkpoint.snapshot.existed
         is False
     )
 
     assert (
-        checkpoint.snapshot
-        .content
+        checkpoint.snapshot.content
         is None
     )
 
 
 # =============================================================
-# Failed Edit Discards Checkpoint
+# Failed Edit
 # =============================================================
 
 
@@ -422,12 +430,8 @@ def test_failed_edit_discards_checkpoint(
             raw_arguments=(
                 json.dumps(
                     {
-                        "path": (
-                            "demo.txt"
-                        ),
-                        "content": (
-                            "after"
-                        ),
+                        "path": "demo.txt",
+                        "content": "after",
                         "fail": True,
                     }
                 )
@@ -460,7 +464,7 @@ def test_failed_edit_discards_checkpoint(
 
 
 # =============================================================
-# Missing Path Blocks Edit
+# Missing Path
 # =============================================================
 
 
@@ -485,9 +489,7 @@ def test_edit_without_path_is_blocked(
             raw_arguments=(
                 json.dumps(
                     {
-                        "content": (
-                            "hello"
-                        ),
+                        "content": "hello",
                     }
                 )
             ),
@@ -506,13 +508,10 @@ def test_edit_without_path_is_blocked(
     )
 
     assert (
-        execution.result
-        .data[
+        execution.result.data[
             "failure_type"
         ]
-        == (
-            "checkpoint_precondition"
-        )
+        == "checkpoint_precondition"
     )
 
     assert (
@@ -527,7 +526,7 @@ def test_edit_without_path_is_blocked(
 
 
 # =============================================================
-# Non-Edit Tool Does Not Create Checkpoint
+# Non Edit
 # =============================================================
 
 
@@ -571,7 +570,7 @@ def test_non_edit_tool_does_not_checkpoint(
 
 
 # =============================================================
-# Checkpoint Uses Next Revision
+# Revision Binding
 # =============================================================
 
 
@@ -626,12 +625,8 @@ def test_checkpoint_is_bound_to_next_revision(
             raw_arguments=(
                 json.dumps(
                     {
-                        "path": (
-                            "demo.txt"
-                        ),
-                        "content": (
-                            "new"
-                        ),
+                        "path": "demo.txt",
+                        "content": "new",
                     }
                 )
             ),
@@ -664,8 +659,7 @@ def test_checkpoint_is_bound_to_next_revision(
     )
 
     assert (
-        execution.result
-        .data[
+        execution.result.data[
             "checkpoint_revision"
         ]
         == 8
@@ -680,6 +674,12 @@ def test_checkpoint_is_bound_to_next_revision(
         checkpoint.after_sha256
         is not None
     )
+
+
+# =============================================================
+# Seal
+# =============================================================
+
 
 def test_successful_edit_seals_checkpoint(
     tmp_path: Path,
@@ -702,12 +702,8 @@ def test_successful_edit_seals_checkpoint(
             raw_arguments=(
                 json.dumps(
                     {
-                        "path": (
-                            "demo.txt"
-                        ),
-                        "content": (
-                            "after"
-                        ),
+                        "path": "demo.txt",
+                        "content": "after",
                     }
                 )
             ),
@@ -749,4 +745,172 @@ def test_successful_edit_seals_checkpoint(
             "checkpoint_after_sha256"
         ]
         == checkpoint.after_sha256
+    )
+
+
+# =============================================================
+# Successful Edit Callback
+# =============================================================
+
+
+def test_successful_edit_calls_tracking_callback(
+    tmp_path: Path,
+):
+
+    touched = []
+
+    (
+        executor,
+        _,
+        _,
+    ) = (
+        build_executor(
+            tmp_path,
+            revision=1,
+            on_successful_edit=(
+                touched.append
+            ),
+        )
+    )
+
+    prepared = (
+        executor.prepare(
+            tool_name="write_file",
+            raw_arguments=(
+                json.dumps(
+                    {
+                        "path": "demo.txt",
+                        "content": "hello",
+                    }
+                )
+            ),
+        )
+    )
+
+    execution = (
+        executor.execute_prepared(
+            prepared
+        )
+    )
+
+    assert (
+        execution.result.success
+        is True
+    )
+
+    assert (
+        touched
+        == [
+            "demo.txt"
+        ]
+    )
+
+
+# =============================================================
+# Seal Failure Does NOT Lie About Physical Edit
+# =============================================================
+
+
+def test_seal_failure_keeps_physical_edit_successful(
+    tmp_path: Path,
+):
+
+    touched = []
+
+    (
+        executor,
+        manager,
+        _,
+    ) = (
+        build_executor(
+            tmp_path,
+            revision=3,
+            on_successful_edit=(
+                touched.append
+            ),
+        )
+    )
+
+    def broken_seal(
+        checkpoint_id,
+    ):
+
+        raise RuntimeError(
+            "simulated seal failure"
+        )
+
+    manager.seal = (
+        broken_seal
+    )
+
+    prepared = (
+        executor.prepare(
+            tool_name="write_file",
+            raw_arguments=(
+                json.dumps(
+                    {
+                        "path": "demo.txt",
+                        "content": "physical change",
+                    }
+                )
+            ),
+        )
+    )
+
+    execution = (
+        executor.execute_prepared(
+            prepared
+        )
+    )
+
+    # The file really changed, therefore success must remain true.
+    assert (
+        execution.result.success
+        is True
+    )
+
+    assert (
+        (
+            tmp_path
+            / "demo.txt"
+        ).read_text(
+            encoding="utf-8"
+        )
+        == "physical change"
+    )
+
+    assert (
+        execution.result.data[
+            "checkpoint_sealed"
+        ]
+        is False
+    )
+
+    assert (
+        execution.result.data[
+            "safety_degraded"
+        ]
+        is True
+    )
+
+    assert (
+        execution.result.data[
+            "checkpoint_failure_type"
+        ]
+        == "checkpoint_seal"
+    )
+
+    # Invalid checkpoint was discarded.
+    assert (
+        manager.latest()
+        is None
+    )
+
+    # Git ownership tracking still occurs because the file
+    # physically changed.
+    assert (
+        touched
+        == [
+            "demo.txt"
+        ]
     )

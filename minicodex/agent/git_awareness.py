@@ -152,7 +152,7 @@ class GitDiffResult:
 
 
 # =============================================================
-# Task-Level Git Awareness
+# Task-Level Git State
 # =============================================================
 
 
@@ -163,12 +163,22 @@ class GitTaskState:
 
     current: GitRepoState
 
+    # Historical:
+    # MiniCodex touched these at least once during this task.
     agent_touched_files: tuple[str, ...]
 
+    # Already dirty when the task started.
     pre_existing_changed_files: tuple[str, ...]
 
+    # MiniCodex touched them AND they are still currently dirty.
+    agent_current_changed_files: tuple[str, ...]
+
+    # Currently dirty, touched by MiniCodex, and were clean
+    # when the task started.
     agent_introduced_files: tuple[str, ...]
 
+    # Historical safety warning:
+    # MiniCodex touched files that were dirty at task start.
     agent_touched_preexisting_files: tuple[str, ...]
 
     def to_dict(
@@ -190,6 +200,9 @@ class GitTaskState:
             "pre_existing_changed_files": list(
                 self.pre_existing_changed_files
             ),
+            "agent_current_changed_files": list(
+                self.agent_current_changed_files
+            ),
             "agent_introduced_files": list(
                 self.agent_introduced_files
             ),
@@ -208,16 +221,17 @@ class GitRepositoryInspector:
     """
     Read-only Git repository inspection.
 
-    This class never performs:
+    This class NEVER performs repository mutation.
+
+    No:
 
         git add
         git commit
-        git checkout
         git reset
+        git checkout
         git restore
+        git clean
         git stash
-
-    It only observes repository state.
     """
 
     CONFLICT_STATES = {
@@ -329,7 +343,9 @@ class GitRepositoryInspector:
         )
 
         branch = (
-            branch_result.stdout.strip()
+            branch_result
+            .stdout
+            .strip()
             or None
         )
 
@@ -348,7 +364,9 @@ class GitRepositoryInspector:
         )
 
         head_sha = (
-            head_result.stdout.strip()
+            head_result
+            .stdout
+            .strip()
             if (
                 head_result.returncode
                 == 0
@@ -392,10 +410,10 @@ class GitRepositoryInspector:
                 head_sha=head_sha,
                 dirty=False,
                 error=(
-                    status_result.stderr.strip()
-                    or (
-                        "git status failed."
-                    )
+                    status_result
+                    .stderr
+                    .strip()
+                    or "git status failed."
                 ),
             )
 
@@ -604,9 +622,84 @@ class GitRepositoryInspector:
                 ),
             )
 
-        text = (
+        diff_parts = []
+
+        if (
             result.stdout
+        ):
+
+            diff_parts.append(
+                result.stdout
+            )
+
+        # =====================================================
+        # Untracked Files
+        #
+        # Ordinary `git diff` does not show them.
+        #
+        # Stage 11 must still be able to describe newly-created
+        # Agent files relative to Git.
+        # =====================================================
+
+        if not staged:
+
+            untracked = set(
+                state.untracked_files
+            )
+
+            if (
+                normalized_path
+                is not None
+            ):
+
+                untracked_targets = (
+                    [
+                        normalized_path
+                    ]
+                    if (
+                        normalized_path
+                        in untracked
+                    )
+                    else []
+                )
+
+            else:
+
+                untracked_targets = (
+                    sorted(
+                        untracked
+                    )
+                )
+
+            for untracked_path in (
+                untracked_targets
+            ):
+
+                rendered = (
+                    self._render_untracked_diff(
+                        untracked_path
+                    )
+                )
+
+                if rendered:
+
+                    diff_parts.append(
+                        rendered
+                    )
+
+        text = (
+            "\n".join(
+                part.rstrip(
+                    "\n"
+                )
+                for part in diff_parts
+                if part
+            )
         )
+
+        if text:
+
+            text += "\n"
 
         total_chars = len(
             text
@@ -648,6 +741,126 @@ class GitRepositoryInspector:
                 truncated
             ),
             error=None,
+        )
+
+    # =========================================================
+    # Synthetic Untracked Diff
+    # =========================================================
+
+    def _render_untracked_diff(
+        self,
+        path: str,
+    ) -> str:
+
+        try:
+
+            normalized = (
+                self._normalize_path(
+                    path
+                )
+            )
+
+        except ValueError:
+
+            return ""
+
+        file_path = (
+            self.workspace
+            / normalized
+        )
+
+        if (
+            not file_path.exists()
+            or not file_path.is_file()
+        ):
+
+            return ""
+
+        try:
+
+            raw = (
+                file_path.read_bytes()
+            )
+
+        except OSError as e:
+
+            return (
+                f"diff --git a/{normalized} "
+                f"b/{normalized}\n"
+                "new file mode 100644\n"
+                f"[Unable to read untracked file: "
+                f"{type(e).__name__}: {e}]\n"
+            )
+
+        # Binary heuristic.
+        if (
+            b"\x00"
+            in raw
+        ):
+
+            return (
+                f"diff --git a/{normalized} "
+                f"b/{normalized}\n"
+                "new file mode 100644\n"
+                f"Binary file {normalized} "
+                "added; content omitted.\n"
+            )
+
+        try:
+
+            content = (
+                raw.decode(
+                    "utf-8"
+                )
+            )
+
+        except UnicodeDecodeError:
+
+            return (
+                f"diff --git a/{normalized} "
+                f"b/{normalized}\n"
+                "new file mode 100644\n"
+                f"Non-UTF-8 file {normalized} "
+                "added; content omitted.\n"
+            )
+
+        lines = (
+            content
+            .splitlines()
+        )
+
+        line_count = len(
+            lines
+        )
+
+        header = [
+            (
+                f"diff --git "
+                f"a/{normalized} "
+                f"b/{normalized}"
+            ),
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{normalized}",
+            (
+                "@@ -0,0 "
+                f"+1,{line_count} @@"
+            ),
+        ]
+
+        body = [
+            (
+                "+"
+                + line
+            )
+            for line in lines
+        ]
+
+        return "\n".join(
+            [
+                *header,
+                *body,
+            ]
         )
 
     # =========================================================
@@ -748,7 +961,7 @@ class GitRepositoryInspector:
                 continue
 
             # =================================================
-            # Conflict
+            # Conflicted
             # =================================================
 
             if (
@@ -823,9 +1036,6 @@ class GitRepositoryInspector:
 
             # =================================================
             # Rename / Copy
-            #
-            # porcelain -z stores the destination path in this
-            # record and the second path in the following token.
             # =================================================
 
             if (
@@ -847,6 +1057,8 @@ class GitRepositoryInspector:
                     path
                 )
 
+                # porcelain -z emits the second pathname as the
+                # following NUL-separated record.
                 if (
                     index
                     < len(
@@ -862,7 +1074,7 @@ class GitRepositoryInspector:
         return parsed
 
     # =========================================================
-    # Safe Workspace Path
+    # Workspace Path Guard
     # =========================================================
 
     def _normalize_path(
@@ -934,18 +1146,29 @@ class GitRepositoryInspector:
 
 class GitAwareness:
     """
-    Tracks repository state across one MiniCodex task.
+    Task-scoped Git state.
 
-    Important distinction:
+    Important:
 
-        baseline changes
-        = changes that already existed when the task started
+    `agent_touched_files`
+        historical fact
 
-        agent touched files
-        = files MiniCodex successfully edited during this task
+    `agent_current_changed_files`
+        currently dirty AND touched by Agent
 
-    This lets the Harness avoid claiming that every dirty file
-    belongs to the Agent.
+    This distinction means:
+
+        Agent edits A
+        ↓
+        rollback A
+        ↓
+        A becomes clean again
+
+    `agent_touched_files`
+        still contains A
+
+    `agent_current_changed_files`
+        no longer contains A
     """
 
     def __init__(
@@ -974,7 +1197,7 @@ class GitAwareness:
         ] = set()
 
     # =========================================================
-    # New Task
+    # Reset Task
     # =========================================================
 
     def reset_task(
@@ -1010,7 +1233,7 @@ class GitAwareness:
         )
 
     # =========================================================
-    # Record Agent Edit
+    # Agent Edit Tracking
     # =========================================================
 
     def record_agent_edit(
@@ -1041,12 +1264,22 @@ class GitAwareness:
             .changed_files
         )
 
+        current_changed = set(
+            self.current
+            .changed_files
+        )
+
         agent_touched = set(
             self._agent_touched_files
         )
 
-        agent_introduced = (
+        agent_current_changed = (
             agent_touched
+            & current_changed
+        )
+
+        agent_introduced = (
+            agent_current_changed
             - baseline_changed
         )
 
@@ -1072,6 +1305,11 @@ class GitAwareness:
                     baseline_changed
                 )
             ),
+            agent_current_changed_files=tuple(
+                sorted(
+                    agent_current_changed
+                )
+            ),
             agent_introduced_files=tuple(
                 sorted(
                     agent_introduced
@@ -1085,7 +1323,7 @@ class GitAwareness:
         )
 
     # =========================================================
-    # Render For LLM Context
+    # Render
     # =========================================================
 
     def render(
@@ -1135,17 +1373,18 @@ class GitAwareness:
         )
 
         lines = [
+            "Git repository state:",
             (
-                "Git repository state:"
+                f"Branch: "
+                f"{branch}"
             ),
             (
-                f"Branch: {branch}"
+                f"HEAD: "
+                f"{short_head}"
             ),
             (
-                f"HEAD: {short_head}"
-            ),
-            (
-                f"Dirty: {state.dirty}"
+                f"Dirty: "
+                f"{state.dirty}"
             ),
             (
                 "Current changed files: "
@@ -1161,45 +1400,72 @@ class GitAwareness:
                 "Pre-existing task-start changes: "
                 + (
                     ", ".join(
-                        task.pre_existing_changed_files
+                        task
+                        .pre_existing_changed_files
                     )
                     if (
-                        task.pre_existing_changed_files
+                        task
+                        .pre_existing_changed_files
                     )
                     else "(none)"
                 )
             ),
             (
-                "Files touched by MiniCodex this task: "
+                "Files ever touched by MiniCodex "
+                "this task: "
                 + (
                     ", ".join(
-                        task.agent_touched_files
+                        task
+                        .agent_touched_files
                     )
-                    if task.agent_touched_files
+                    if (
+                        task
+                        .agent_touched_files
+                    )
                     else "(none)"
                 )
             ),
             (
-                "Agent-introduced files/changes: "
+                "Current changed files touched "
+                "by MiniCodex: "
                 + (
                     ", ".join(
-                        task.agent_introduced_files
+                        task
+                        .agent_current_changed_files
                     )
-                    if task.agent_introduced_files
+                    if (
+                        task
+                        .agent_current_changed_files
+                    )
+                    else "(none)"
+                )
+            ),
+            (
+                "Current Agent-introduced changes: "
+                + (
+                    ", ".join(
+                        task
+                        .agent_introduced_files
+                    )
+                    if (
+                        task
+                        .agent_introduced_files
+                    )
                     else "(none)"
                 )
             ),
         ]
 
         if (
-            task.agent_touched_preexisting_files
+            task
+            .agent_touched_preexisting_files
         ):
 
             lines.append(
                 (
-                    "WARNING: MiniCodex touched files "
-                    "that were already dirty when the "
-                    "task started: "
+                    "WARNING: MiniCodex touched "
+                    "files that were already dirty "
+                    "when the task started: "
                     + ", ".join(
                         task
                         .agent_touched_preexisting_files
@@ -1212,7 +1478,7 @@ class GitAwareness:
         )
 
     # =========================================================
-    # Normalize Agent Path
+    # Agent Path Normalization
     # =========================================================
 
     def _normalize_agent_path(
