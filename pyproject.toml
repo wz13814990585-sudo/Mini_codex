@@ -13,7 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8.0"]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
 
 [project.scripts]
 minicodex = "minicodex.main:main"
@@ -21,7 +24,8 @@ minicodex = "minicodex.main:main"
 [tool.pytest.ini_options]
 testpaths = ["minicodex/tests"]
 pythonpath = ["."]
-addopts = "-p no:debugging -p no:asyncio --import-mode=prepend"
+addopts = "-p no:debugging --import-mode=prepend"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.setuptools.packages.find]
 include = ["minicodex*"]

@@ -243,6 +243,18 @@ class SafetyPolicy:
         arguments: dict,
     ) -> SafetyDecision:
 
+        if tool_name == "install_python_package":
+            return SafetyDecision(
+                level=SafetyLevel.CAUTION,
+                allowed=True,
+                reason=(
+                    "Tool installs a Python dependency into the "
+                    "MiniCodex interpreter environment."
+                ),
+                rule="dependency_install",
+                tool_name=tool_name,
+            )
+
         if (
             tool_name
             == "run_command"

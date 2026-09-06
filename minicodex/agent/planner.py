@@ -38,6 +38,9 @@ class Planner:
                     "You are a coding task planner. "
                     "Break the user's request into a small "
                     "number of concrete implementation steps. "
+                    "Give each step one independently verifiable "
+                    "outcome; do not bundle several game features "
+                    "or unrelated behaviors into one large step. "
                     "Do not execute tools. "
                     "Return valid JSON only."
                 ),

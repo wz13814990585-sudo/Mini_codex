@@ -65,11 +65,17 @@ class MiniCodexAgent:
         max_steps: int = 20,
         max_step_attempts: int = 5,
         max_context_tokens: int = 64000,
+        status_interval_seconds: float = 15.0,
     ):
 
         self.llm = llm
 
         self.registry = registry
+
+        self.status_interval_seconds = max(
+            0.0,
+            float(status_interval_seconds),
+        )
 
         # =====================================================
         # Shared Workspace

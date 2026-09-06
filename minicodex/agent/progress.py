@@ -92,6 +92,14 @@ class ProgressController:
 
         self.same_tool_repeat_count = 0
 
+        # Counts survive interleaved calls until real progress
+        # resets this controller.
+        self._tool_signature_counts: dict[
+            tuple[str, str], int
+        ] = {}
+
+        self.inspection_streak = 0
+
         # =====================================================
         # Action History
         # =====================================================
@@ -147,6 +155,10 @@ class ProgressController:
 
         self.same_tool_repeat_count = 0
 
+        self._tool_signature_counts.clear()
+
+        self.inspection_streak = 0
+
         self.recent_actions.clear()
 
         self.last_validation_failed_count = None
@@ -158,6 +170,17 @@ class ProgressController:
         self.validation_no_progress_count = 0
 
         self._validation_series.clear()
+
+    def mark_meaningful_progress(
+        self,
+    ) -> None:
+        """Start a fresh action phase without losing validation history."""
+
+        self.last_tool_signature = None
+        self.same_tool_repeat_count = 0
+        self._tool_signature_counts.clear()
+        self.inspection_streak = 0
+        self.recent_actions.clear()
 
     # =========================================================
     # Duplicate Tool Detection
@@ -181,6 +204,18 @@ class ProgressController:
             ),
         )
 
+        signature_count = (
+            self._tool_signature_counts.get(
+                signature,
+                0,
+            )
+            + 1
+        )
+
+        self._tool_signature_counts[
+            signature
+        ] = signature_count
+
         if (
             signature
             == self.last_tool_signature
@@ -197,8 +232,8 @@ class ProgressController:
             self.same_tool_repeat_count = 0
 
         if (
-            self.same_tool_repeat_count
-            >= self.max_same_tool_repeats
+            signature_count
+            > self.max_same_tool_repeats
         ):
 
             return (
@@ -228,11 +263,37 @@ class ProgressController:
             tool_name
         )
 
+        inspection_tools = {
+            "read_file",
+            "search_code",
+            "search_symbol",
+            "list_files",
+            "git_status",
+            "git_diff",
+        }
+
+        if tool_name in inspection_tools:
+            self.inspection_streak += 1
+        else:
+            self.inspection_streak = 0
+
         self.recent_actions = (
             self.recent_actions[
                 -self.progress_window:
             ]
         )
+
+    def consume_inspection_nudge(
+        self,
+    ) -> bool:
+        """Return true once after inspection-only drift."""
+
+        if self.inspection_streak < self.progress_window:
+            return False
+
+        self.inspection_streak = 0
+
+        return True
 
     # =========================================================
     # Action Stall Detection

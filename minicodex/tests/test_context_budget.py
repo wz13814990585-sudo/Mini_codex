@@ -327,6 +327,55 @@ def test_critical_pressure_keeps_one_recent_round():
         == "C" * 1200
     )
 
+
+def test_recent_write_payload_is_compacted_immediately():
+    messages = [
+        {"role": "user", "content": "Create a game."},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "write-1",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": (
+                            '{"path":"game.html","content":"'
+                            + "X" * 5000
+                            + '"}'
+                        ),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "write-1",
+            "content": "Successfully wrote game.html",
+        },
+    ]
+
+    compact_messages_for_pressure(
+        messages,
+        ContextPressure.NORMAL,
+    )
+
+    arguments = messages[1]["tool_calls"][0]["function"]["arguments"]
+    assert "5000 chars" in arguments
+    assert "X" * 100 not in arguments
+
+
+def test_critical_pressure_bounds_latest_large_result():
+    messages = build_messages()
+    messages[6]["content"] = "C" * 7000
+
+    compact_messages_for_pressure(
+        messages,
+        ContextPressure.CRITICAL,
+    )
+
+    assert len(messages[6]["content"]) < 7000
+
 from ..agent.agent import MiniCodexAgent
 from ..llm.types import (
     LLMResponse,

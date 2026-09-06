@@ -149,6 +149,26 @@ def test_read_tool_is_safe(
     )
 
 
+def test_dependency_install_tool_is_caution(
+    tmp_path,
+):
+    policy = SafetyPolicy(
+        workspace=tmp_path
+    )
+
+    decision = policy.assess(
+        "install_python_package",
+        {
+            "package": "requests",
+            "import_name": "requests",
+        },
+    )
+
+    assert decision.allowed is True
+    assert decision.level == SafetyLevel.CAUTION
+    assert decision.rule == "dependency_install"
+
+
 # =============================================================
 # SAFE Edit
 # =============================================================

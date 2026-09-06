@@ -1,5 +1,8 @@
 """Agent execution loop."""
 
+import threading
+import time
+
 from .completion import (
     CompletionGate,
     CompletionStatus,
@@ -48,6 +51,67 @@ EDIT_TOOL_NAMES = {
 COMPLETION_GATE = (
     CompletionGate()
 )
+
+
+def _chat_with_heartbeat(
+    agent,
+    *,
+    messages: list,
+    tools: list,
+):
+    """Keep the synchronous CLI visibly alive during slow LLM calls."""
+
+    interval = max(
+        0.0,
+        float(
+            getattr(
+                agent,
+                "status_interval_seconds",
+                15.0,
+            )
+        ),
+    )
+
+    print("\n[LLM] Waiting for model response...")
+
+    if interval == 0:
+        return agent.llm.chat(
+            messages=messages,
+            tools=tools,
+        )
+
+    stopped = threading.Event()
+    started = time.monotonic()
+
+    def report_wait() -> None:
+
+        while not stopped.wait(interval):
+            elapsed = int(time.monotonic() - started)
+            print(
+                "[LLM] Still working "
+                f"({elapsed}s elapsed)...",
+                flush=True,
+            )
+
+    reporter = threading.Thread(
+        target=report_wait,
+        daemon=True,
+    )
+    reporter.start()
+
+    try:
+        return agent.llm.chat(
+            messages=messages,
+            tools=tools,
+        )
+    finally:
+        stopped.set()
+        reporter.join(timeout=0.1)
+        elapsed = time.monotonic() - started
+        print(
+            "[LLM] Response received "
+            f"after {elapsed:.1f}s."
+        )
 
 
 # =============================================================
@@ -311,17 +375,13 @@ def run_agent_loop(
         # LLM Call
         # =====================================================
 
-        llm_response = (
-            agent.llm
-            .chat(
-                messages=(
-                    llm_messages
-                ),
-                tools=(
-                    agent.registry
-                    .get_schemas()
-                ),
-            )
+        llm_response = _chat_with_heartbeat(
+            agent,
+            messages=llm_messages,
+            tools=(
+                agent.registry
+                .get_schemas()
+            ),
         )
 
         # =====================================================
@@ -878,6 +938,8 @@ def run_agent_loop(
                     "\n[Edit Applied]"
                 )
 
+                agent.progress.mark_meaningful_progress()
+
                 print(
                     "[Validation Revision] "
                     f"{revision}"
@@ -977,8 +1039,17 @@ def run_agent_loop(
             # =================================================
 
             if (
-                tool_name
-                == "run_tests"
+                tool_name == "run_tests"
+                or (
+                    tool_name == "run_command"
+                    and str(
+                        arguments.get(
+                            "purpose",
+                            "diagnostic",
+                        )
+                    ).strip().lower()
+                    == "acceptance"
+                )
             ):
 
                 evidence = (
@@ -1059,6 +1130,57 @@ def run_agent_loop(
                         )
 
                         break
+
+            # =================================================
+            # Inspection-Only Drift
+            # =================================================
+
+            if (
+                agent._step_likely_requires_edit(
+                    current_plan_step
+                )
+                and
+                agent.progress
+                .consume_inspection_nudge()
+            ):
+
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "You have performed several "
+                            "inspection-only actions without "
+                            "changing or validating the current "
+                            "revision. Use the evidence already "
+                            "collected. If the current step is "
+                            "already implemented, run one focused "
+                            "acceptance check and complete it. "
+                            "Otherwise make the smallest required "
+                            "edit. Do not continue broad searching."
+                        ),
+                    }
+                )
+
+                print(
+                    "\n[Inspection Nudge] "
+                    "Switching from broad inspection to a "
+                    "focused edit or acceptance check."
+                )
+
+                restart_agent_loop = True
+
+                append_skipped_tool_results(
+                    messages,
+                    response.tool_calls[
+                        tool_index + 1:
+                    ],
+                    (
+                        "inspection-only drift triggered "
+                        "a strategy nudge"
+                    ),
+                )
+
+                break
 
             # =================================================
             # General Action Stall Detection

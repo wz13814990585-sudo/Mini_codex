@@ -319,6 +319,41 @@ class WorkingSummary:
             return
 
         # =====================================================
+        # Dependency Installation
+        # =====================================================
+
+        if tool_name == "install_python_package":
+            package = str(
+                arguments.get("package", "")
+                or ""
+            ).strip()
+            import_name = str(
+                arguments.get("import_name", "")
+                or ""
+            ).strip()
+
+            if result.success:
+                action = (
+                    "already available"
+                    if result.data.get("already_available")
+                    else "installed and import-verified"
+                )
+                self.add(
+                    f"Python dependency {package} ({import_name}) "
+                    f"is {action}."
+                )
+            else:
+                self.add(
+                    self._failure_fact(
+                        tool_name,
+                        package,
+                        result,
+                    )
+                )
+
+            return
+
+        # =====================================================
         # Tests
         # =====================================================
 

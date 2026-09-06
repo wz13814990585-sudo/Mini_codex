@@ -33,8 +33,8 @@ class SearchCodeTool(BaseTool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Optional relative directory to search. "
-                    "Defaults to the project root."
+                    "Optional relative file or directory to "
+                    "search. Defaults to the project root."
                 ),
             },
             "max_results": {
@@ -83,9 +83,15 @@ class SearchCodeTool(BaseTool):
                 f"Search path not found: {path}"
             )
 
-        if not search_root.is_dir():
+        if search_root.is_file():
+            candidate_files = [search_root]
+
+        elif search_root.is_dir():
+            candidate_files = search_root.rglob("*")
+
+        else:
             raise ValueError(
-                f"Search path is not a directory: {path}"
+                f"Search path is not a file or directory: {path}"
             )
 
         ignored_dirs = {
@@ -114,7 +120,7 @@ class SearchCodeTool(BaseTool):
 
         stop_search = False
 
-        for file_path in search_root.rglob("*"):
+        for file_path in candidate_files:
 
             if not file_path.is_file():
                 continue

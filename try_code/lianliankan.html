@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>连连看</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: radial-gradient(circle at 50% 20%, #3a1c71, #12031f);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      color: #f4efff;
+    }
+    h1 {
+      font-size: 30px;
+      letter-spacing: 6px;
+      text-shadow: 0 0 14px rgba(255, 167, 102, 0.55);
+    }
+    .panel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      font-size: 16px;
+    }
+    .panel .item {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 10px;
+      padding: 5px 16px;
+    }
+    .panel .item b {
+      color: #ffd166;
+    }
+    .panel .item .plain {
+      color: #ff9f68;
+    }
+    #comboText {
+      color: #7ef0c9;
+      display: none;
+    }
+
+    /* ===== 棋盘舞台：四周留出可绕行的外圈区域 ===== */
+    .stage {
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 18px;
+      background: rgba(0, 0, 0, 0.25);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55), inset 0 0 60px rgba(255, 255, 255, 0.03);
+    }
+    .board {
+      position: absolute;
+      display: grid;
+      grid-template-columns: repeat(6, 54px);
+      grid-template-rows: repeat(6, 54px);
+      gap: 8px;
+      border-radius: 12px;
+      background: #1a1440;
+      padding: 0;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    .cell {
+      width: 54px;
+      height: 54px;
+      border: none;
+      border-radius: 10px;
+      font-size: 30px;
+      line-height: 54px;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.18s ease, background 0.15s ease;
+      box-shadow: inset 0 -4px 8px rgba(0, 0, 0, 0.18), inset 0 3px 6px rgba(255, 255, 255, 0.35);
+    }
+    .cell:hover {
+      transform: scale(1.07);
+      z-index: 2;
+    }
+    .cell.empty {
+      background: transparent !important;
+      box-shadow: none !important;
+      cursor: default;
+      pointer-events: none;
+    }
+    .cell.sel {
+      transform: scale(1.08);
+      box-shadow: 0 0 0 3px #ffffff, 0 0 18px 4px rgba(255, 209, 102, 0.9);
+      z-index: 3;
+    }
+    .cell.hintsel {
+      animation: hintPulse 0.55s ease-in-out 2;
+      z-index: 3;
+    }
+    .cell.gone {
+      animation: popAway 0.24s ease forwards;
+      pointer-events: none;
+    }
+    .cell.shake {
+      animation: shakeAnim 0.3s ease;
+    }
+
+    /* ===== 连通路径画笔 ===== */
+    #pathLayer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .path-line {
+      animation: lineIn 0.2s ease;
+      filter: drop-shadow(0 0 6px rgba(255, 209, 102, 0.95));
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .btn {
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 22px;
+      font-size: 15px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease;
+    }
+    .btn-primary {
+      background: #ff9f68;
+      color: #2a0f3a;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(255, 159, 104, 0.45);
+    }
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.10);
+      color: #f4efff;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+    .tips {
+      font-size: 13px;
+      color: #b7a8d6;
+      text-align: center;
+      line-height: 1.8;
+    }
+
+    #toast {
+      position: fixed;
+      left: 50%;
+      top: 16%;
+      transform: translateX(-50%);
+      background: rgba(20, 10, 40, 0.92);
+      border: 1px solid rgba(255, 209, 102, 0.55);
+      color: #ffd166;
+      padding: 10px 22px;
+      border-radius: 30px;
+      font-size: 15px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+      z-index: 20;
+    }
+    #toast.show {
+      opacity: 1;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      background: rgba(8, 4, 20, 0.82);
+      z-index: 30;
+      backdrop-filter: blur(3px);
+    }
+    .overlay.hidden {
+      display: none;
+    }
+    .overlay h2 {
+      font-size: 42px;
+      letter-spacing: 6px;
+      text-shadow: 0 0 22px rgba(255, 209, 102, 0.8);
+      animation: winBounce 0.5s ease;
+    }
+    .overlay p {
+      font-size: 17px;
+      color: #d9cdff;
+    }
+
+    @keyframes popAway {
+      0% { transform: scale(1); opacity: 1; }
+      45% { transform: scale(1.22); opacity: 0.9; }
+      100% { transform: scale(0.4); opacity: 0; }
+    }
+    @keyframes shakeAnim {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-6px); }
+      50% { transform: translateX(6px); }
+      75% { transform: translateX(-4px); }
+    }
+    @keyframes hintPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(126, 240, 201, 0); }
+      50% { box-shadow: 0 0 0 5px rgba(126, 240, 201, 0.95); }
+    }
+    @keyframes lineIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes winBounce {
+      0% { transform: scale(0.2); opacity: 0; }
+      70% { transform: scale(1.15); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <h1>🔗 连连看</h1>
+
+  <div class="panel">
+    <div class="item">剩余 <b id="pairsLeft">18</b> 对</div>
+    <div class="item">得分 <b class="plain" id="score">0</b></div>
+    <div class="item">用时 <b id="timeText">00:00</b></div>
+    <div class="item" id="comboText">🔥 连击 ×0</div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="board" id="board"></div>
+    <svg id="pathLayer" viewBox="0 0 456 456"></svg>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-ghost" id="hintBtn">💡 提示</button>
+    <button class="btn btn-primary" id="restartBtn">重新开始</button>
+  </div>
+  <div class="tips">
+    点击两个<b>相同图案</b>的方块，若两者之间存在一条<b>不超过两次转弯</b>、且只经过空格
+    （也允许沿<b>棋盘外圈</b>绕行）的路径，即可消除。<br />
+    消除一对得 10 分，连续消除（3.5 秒内）会触发连击加分；没有可消除组合时会自动打乱。
+  </div>
+
+  <div id="toast"></div>
+
+  <div class="overlay hidden" id="overlay">
+    <h2 id="overlayTitle">🎉 恭喜通关！</h2>
+    <p id="overlayMsg"></p>
+    <button class="btn btn-primary" id="overlayBtn">再来一局</button>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // ===== 基础配置 =====
+      var ROWS = 6;
+      var COLS = 6;
+      var CELL = 54;
+      var GAP = 8;
+      var MARGIN = 46;
+
+      // 18 种图案，每种恰好出现两次 => 36 格
+      var TYPES = ['🍎', '🍊', '🍋', '🍇', '🍓', '🍉', '🍒', '🍑',
+                   '🥝', '🍍', '🍌', '🥭', '🍐', '🍏', '🍈', '🥥', '🍆', '🌽'];
+      var BG = ['#f8b8c8', '#fcd38f', '#ffe29a', '#b8e6a6', '#9adfdb',
+                '#a9c3f5', '#d7b8f0', '#f3c1d8', '#cdeec3', '#b3d9f7',
+                '#e6d3a3', '#ffd9b3', '#f0c0e0', '#bde0a0', '#c8b6ff',
+                '#ffc8a2', '#a2e0c0', '#f5d3c8'];
+
+      var DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+      // ===== DOM =====
+      function $(id) { return document.getElementById(id); }
+      var stageEl = $('stage');
+      var boardEl = $('board');
+      var pathLayer = $('pathLayer');
+      var pairsEl = $('pairsLeft');
+      var scoreEl = $('score');
+      var timeEl = $('timeText');
+      var comboEl = $('comboText');
+      var hintBtn = $('hintBtn');
+      var restartBtn = $('restartBtn');
+      var toastEl = $('toast');
+      var overlayEl = $('overlay');
+      var overlayTitleEl = $('overlayTitle');
+      var overlayMsgEl = $('overlayMsg');
+      var overlayBtn = $('overlayBtn');
+
+      // 几何换算：index 从 -1..COLS（或 ROWS），负值/超界表示棋盘外圈
+      function linePos(i) { return MARGIN + i * (CELL + GAP) + CELL / 2; }
+      function xOf(c) { return linePos(c); }
+      function yOf(r) { return linePos(r); }
+
+      var boardW = 2 * MARGIN + (COLS - 1) * (CELL + GAP) + CELL;
+      var boardH = 2 * MARGIN + (ROWS - 1) * (CELL + GAP) + CELL;
+      stageEl.style.width = boardW + 'px';
+      stageEl.style.height = boardH + 'px';
+      boardEl.style.left = MARGIN + 'px';
+      boardEl.style.top = MARGIN + 'px';
+
+      // ===== 状态 =====
+      var grid = [];            // grid[r][c] = 图案字符串 或 null(已消除)
+      var els = [];             // 棋盘 DOM 元素引用
+      var iconSpans = [];
+      var selected = null;      // {r, c}
+      var busy = false;
+      var solved = false;
+      var session = 0;          // 用于让过期的异步回调失效
+      var pairsRemoved = 0;
+      var score = 0;
+      var combo = 0;
+      var lastMatchTime = 0;
+      var startTime = 0;
+      var TOTAL_PAIRS = TYPES.length;
+
+      // ===== 棋盘构建（一次构建，仅更新内容） =====
+      function buildBoard() {
+        boardEl.innerHTML = '';
+        els = [];
+        iconSpans = [];
+        for (var r = 0; r < ROWS; r++) {
+          els.push([]);
+          iconSpans.push([]);
+          for (var c = 0; c < COLS; c++) {
+            var cell = document.createElement('div');
+            cell.className = 'cell';
+            cell.setAttribute('role', 'button');
+            cell.setAttribute('data-row', r);
+            cell.setAttribute('data-col', c);
+            (function (rr, cc) {
+              cell.addEventListener('click', function () { onCellClick(rr, cc); });
+            })(r, c);
+            boardEl.appendChild(cell);
+            els[r].push(cell);
+            iconSpans[r].push(null);
+          }
+        }
+      }
+
+      function setIcon(r, c, icon) {
+        var cell = els[r][c];
+        cell.classList.remove('empty', 'sel', 'gone');
+        if (icon == null) {
+          cell.textContent = '';
+          cell.classList.add('empty');
+        } else {
+          cell.textContent = icon;
+          var tIdx = TYPES.indexOf(icon);
+          cell.style.background = BG[((tIdx % BG.length) + BG.length) % BG.length];
+        }
+      }
+
+      // ===== 连通性判定（允许 ≤2 次转弯，可走棋盘外圈） =====
+      // 棋盘外(index -1 或 ROWS/COLS)视为空格；棋盘内的方块视为障碍。
+      function cellEmpty(r, c) {
+        if (r < -1 || r > ROWS || c < -1 || c > COLS) return false;
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true; // 外圈
+        return grid[r][c] == null;
+      }
+
+      function reduceTurns(cells) {
+        if (cells.length < 3) return cells;
+        var out = [cells[0]];
+        for (var i = 1; i < cells.length - 1; i++) {
+          var a = cells[i - 1], b = cells[i], c = cells[i + 1];
+          var d1x = b.c - a.c, d1y = b.r - a.r;
+          var d2x = c.c - b.c, d2y = c.r - b.r;
+          if (d1x === d2x && d1y === d2y) continue; // 与前后共线，不是转弯点
+          out.push(b);
+        }
+        out.push(cells[cells.length - 1]);
+        return out;
+      }
+
+      // 返回转弯点数组（含两端）；不可连通返回 null
+      function findPath(r1, c1, r2, c2) {
+        if (r1 === r2 && c1 === c2) return null;
+        if (!grid[r1] || !grid[r2]) return null;
+        var v1 = grid[r1][c1], v2 = grid[r2][c2];
+        if (v1 == null || v2 == null || v1 !== v2) return null;
+
+        var q = [];
+        var seen = {};
+        var keyOf = function (r, c, d, t) { return r + '_' + c + '_' + d + '_' + t; };
+
+        function pushState(r, c, d, t, from) {
+          var k = keyOf(r, c, d, t);
+          if (seen[k]) return;
+          seen[k] = 1;
+          q.push({ r: r, c: c, d: d, t: t, from: from });
+        }
+
+        // 从起点四方向出发（不计转弯）
+        for (var d = 0; d < 4; d++) {
+          var nr = r1 + DIRS[d][0];
+          var nc = c1 + DIRS[d][1];
+          if (nr === r2 && nc === c2) {
+            return [{ r: r1, c: c1 }, { r: r2, c: c2 }]; // 相邻
+          }
+          if (!cellEmpty(nr, nc)) continue;
+          pushState(nr, nc, d, 0, null);
+        }
+
+        for (var i = 0; i < q.length; i++) {
+          var cur = q[i];
+          for (var d2 = 0; d2 < 4; d2++) {
+            var nr2 = cur.r + DIRS[d2][0];
+            var nc2 = cur.c + DIRS[d2][1];
+            if (nr2 === r2 && nc2 === c2) {
+              // 回溯整条路径
+              var cells = [{ r: r2, c: c2 }];
+              var p = cur;
+              while (p) { cells.push({ r: p.r, c: p.c }); p = p.from; }
+              cells.push({ r: r1, c: c1 });
+              cells.reverse();
+              return reduceTurns(cells);
+            }
+            if (!cellEmpty(nr2, nc2)) continue;
+            var t2 = cur.t;
+            if (d2 !== cur.d) {
+              if (cur.t >= 2) continue; // 超过两次转弯
+              t2 = cur.t + 1;
+            }
+            pushState(nr2, nc2, d2, t2, cur);
+          }
+        }
+        return null;
+      }
+
+      function canConnect(r1, c1, r2, c2) {
+        return !!findPath(r1, c1, r2, c2);
+      }
+
+      // 查找当前是否仍有可消除的一对
+      function anyMove() {
+        for (var r1 = 0; r1 < ROWS; r1++) {
+          for (var c1 = 0; c1 < COLS; c1++) {
+            if (grid[r1][c1] == null) continue;
+            for (var r2 = r1; r2 < ROWS; r2++) {
+              for (var c2 = (r2 === r1 ? c1 + 1 : 0); c2 < COLS; c2++) {
+                if (grid[r2][c2] == null || grid[r1][c1] !== grid[r2][c2]) continue;
+                if (canConnect(r1, c1, r2, c2)) return true;
+              }
+            }
+          }
+        }
+        return false;
+      }
+
+      function findPair() {
+        for (var r1 = 0; r1 < ROWS; r1++) {
+          for (var c1 = 0; c1 < COLS; c1++) {
+            if (grid[r1][c1] == null) continue;
+            for (var r2 = r1; r2 < ROWS; r2++) {
+              for (var c2 = (r2 === r1 ? c1 + 1 : 0); c2 < COLS; c2++) {
+                if (grid[r2][c2] == null || grid[r1][c1] !== grid[r2][c2]) continue;
+                if (canConnect(r1, c1, r2, c2)) return [{ r: r1, c: c1 }, { r: r2, c: c2 }];
+              }
+            }
+          }
+        }
+        return null;
+      }
+
+      // ===== 布局：每个图案恰好一对，位置随机 =====
+      function createLayout() {
+        var arr = [];
+        for (var t = 0; t < TYPES.length; t++) { arr.push(TYPES[t], TYPES[t]); }
+        for (var i = arr.length - 1; i > 0; i--) {
+          var j = Math.floor(Math.random() * (i + 1));
+          var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+        }
+        var k = 0;
+        for (var r = 0; r < ROWS; r++) {
+          for (var c = 0; c < COLS; c++) {
+            grid[r][c] = arr[k++];
+            setIcon(r, c, grid[r][c]);
+          }
+        }
+      }
+
+      // 打乱剩余方块（只重排仍在棋盘上的图案）
+      function shuffleOccupied() {
+        var occ = [];
+        for (var r = 0; r < ROWS; r++) {
+          for (var c = 0; c < COLS; c++) {
+            if (grid[r][c] != null) occ.push({ r: r, c: c });
+          }
+        }
+        var icons = occ.map(function (o) { return grid[o.r][o.c]; });
+        for (var i = icons.length - 1; i > 0; i--) {
+          var j = Math.floor(Math.random() * (i + 1));
+          var tmp = icons[i]; icons[i] = icons[j]; icons[j] = tmp;
+        }
+        occ.forEach(function (o, idx) {
+          grid[o.r][o.c] = icons[idx];
+          setIcon(o.r, o.c, grid[o.r][o.c]);
+        });
+      }
+
+      // 没有任何可消除组合时，自动打乱直至出现可走步
+      function ensureMoves() {
+        if (solved) return;
+        if (anyMove()) return;
+        showToast('没有可消除的组合，已自动打乱 🔀');
+        var ok = false;
+        for (var i = 0; i < 60 && !ok; i++) {
+          shuffleOccupied();
+          ok = anyMove();
+        }
+        if (!ok) {
+          showOverlay('⚠️ 死局', '重排后仍无解，请重新开始一局。');
+        }
+      }
+
+      // ===== 提示 =====
+      function doHint() {
+        if (busy || solved) return;
+        var pair = findPair();
+        if (!pair) return;
+        highlightPair(pair[0], pair[1]);
+      }
+
+      function highlightPair(a, b) {
+        var sid = ++session;
+        els[a.r][a.c].classList.add('hintsel');
+        els[b.r][b.c].classList.add('hintsel');
+        setTimeout(function () {
+          if (sid !== session) return;
+          els[a.r][a.c].classList.remove('hintsel');
+          els[b.r][b.c].classList.remove('hintsel');
+        }, 1150);
+      }
+
+      // ===== 点击交互 =====
+      function onCellClick(r, c) {
+        if (busy || solved) return;
+        var v = grid[r][c];
+        if (v == null) return;
+
+        if (!selected) {
+          selected = { r: r, c: c };
+          els[r][c].classList.add('sel');
+          return;
+        }
+        if (selected.r === r && selected.c === c) {
+          clearSelection();
+          return;
+        }
+
+        var a = selected;
+        clearSelection();
+
+        if (grid[a.r][a.c] === v) {
+          var path = findPath(a.r, a.c, r, c);
+          if (path) {
+            completeMatch({ r: a.r, c: a.c }, { r: r, c: c }, path);
+          } else {
+            // 相同图案但无法连通 => 抖动并取消选中
+            shakeCells([a, { r: r, c: c }]);
+          }
+        } else {
+          // 图案不同：选中新点击的格子
+          selected = { r: r, c: c };
+          els[r][c].classList.add('sel');
+        }
+      }
+
+      function clearSelection() {
+        if (selected) {
+          els[selected.r][selected.c].classList.remove('sel');
+          selected = null;
+        }
+      }
+
+      function shakeCells(cells) {
+        var sid = ++session;
+        cells.forEach(function (p) {
+          var el = els[p.r][p.c];
+          el.classList.add('shake');
+          setTimeout(function () {
+            if (sid !== session) return;
+            el.classList.remove('shake');
+          }, 320);
+        });
+      }
+
+      // ===== 消除 =====
+      function drawPath(turns) {
+        var pts = turns.map(function (p) {
+          return xOf(p.c).toFixed(1) + ',' + yOf(p.r).toFixed(1);
+        }).join(' ');
+        var line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        line.setAttribute('points', pts);
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', '#ffd166');
+        line.setAttribute('stroke-width', '4');
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('stroke-linejoin', 'round');
+        pathLayer.appendChild(line);
+        var sid = session;
+        setTimeout(function () {
+          if (line.parentNode) line.parentNode.removeChild(line);
+        }, 360);
+      }
+
+      function completeMatch(a, b, path) {
+        busy = true;
+        var sid = session;
+        clearSelection();
+        els[a.r][a.c].classList.add('gone');
+        els[b.r][b.c].classList.add('gone');
+        drawPath(path);
+        setTimeout(function () {
+          if (sid !== session) return;
+          grid[a.r][a.c] = null;
+          grid[b.r][b.c] = null;
+          setIcon(a.r, a.c, null);
+          setIcon(b.r, b.c, null);
+          finishMove();
+        }, 250);
+      }
+
+      function finishMove() {
+        pairsRemoved++;
+        var now = Date.now();
+        combo = (now - lastMatchTime <= 3500) ? combo + 1 : 1;
+        lastMatchTime = now;
+        score += 10 + (combo - 1) * 5;
+        updateStats();
+        busy = false;
+
+        if (pairsRemoved >= TOTAL_PAIRS) {
+          solved = true;
+          showOverlay('🎉 恭喜通关！', '太棒了，全部消除！ 得分 ' + score + '，用时 ' + formatTime(Date.now() - startTime) + '。');
+          return;
+        }
+        ensureMoves();
+      }
+
+      // ===== 数据面板 / 计时 =====
+      function updateStats() {
+        pairsEl.textContent = TOTAL_PAIRS - pairsRemoved;
+        scoreEl.textContent = score;
+        if (combo >= 2) {
+          comboEl.textContent = '🔥 连击 ×' + combo;
+          comboEl.style.display = '';
+        } else {
+          comboEl.style.display = 'none';
+        }
+      }
+
+      function formatTime(ms) {
+        var s = Math.floor(ms / 1000);
+        var m = Math.floor(s / 60);
+        var ss = ('0' + (s % 60)).slice(-2);
+        var mm = ('0' + m).slice(-2);
+        return mm + ':' + ss;
+      }
+
+      function tickTime() {
+        if (solved) return;
+        timeEl.textContent = formatTime(Date.now() - startTime);
+      }
+
+      // ===== 提示条 / 结算层 =====
+      var toastTimer = null;
+      function showToast(msg) {
+        toastEl.textContent = msg;
+        toastEl.classList.add('show');
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+          toastEl.classList.remove('show');
+        }, 1600);
+      }
+
+      function showOverlay(title, msg) {
+        overlayTitleEl.textContent = title;
+        overlayMsgEl.textContent = msg;
+        overlayEl.classList.remove('hidden');
+      }
+
+      function hideOverlay() {
+        overlayEl.classList.add('hidden');
+      }
+
+      // ===== 新游戏 / 重新开始 =====
+      function newGame() {
+        session++;
+        busy = false;
+        solved = false;
+        selected = null;
+        pairsRemoved = 0;
+        score = 0;
+        combo = 0;
+        lastMatchTime = 0;
+        startTime = Date.now();
+        hideOverlay();
+        pathLayer.innerHTML = '';
+
+        if (grid.length === 0) {
+          for (var r = 0; r < ROWS; r++) {
+            grid.push(new Array(COLS).fill(null));
+          }
+        }
+
+        createLayout();
+        // 保证初始局面至少有一对可消除（极罕见情况则重新洗盘）
+        var tries = 0;
+        while (!anyMove() && tries < 300) {
+          createLayout();
+          tries++;
+        }
+        updateStats();
+        timeEl.textContent = formatTime(0);
+      }
+
+      // ===== 事件绑定 =====
+      hintBtn.addEventListener('click', doHint);
+      restartBtn.addEventListener('click', newGame);
+      overlayBtn.addEventListener('click', newGame);
+
+      // ===== 启动 =====
+      buildBoard();
+      newGame();
+      setInterval(tickTime, 1000);
+
+      // 供自动化测试 / 调试使用的最小接口
+      window.__linkGame = {
+        ROWS: ROWS, COLS: COLS, TYPES: TYPES.slice(),
+        board: function () { return grid.map(function (row) { return row.slice(); }); },
+        canConnect: canConnect,
+        anyMove: anyMove,
+        findPair: findPair,
+        newGame: newGame,
+        clickCell: onCellClick,
+        pairsRemaining: function () { return TOTAL_PAIRS - pairsRemoved; },
+        score: function () { return score; },
+        solved: function () { return solved; }
+      };
+    })();
+  </script>
+</body>
+</html>

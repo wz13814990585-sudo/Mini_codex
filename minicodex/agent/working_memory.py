@@ -864,6 +864,47 @@ class WorkingMemory:
             )
 
         # =====================================================
+        # Dependency Installation
+        # =====================================================
+
+        elif tool_name == "install_python_package":
+            package = self._normalize_text(
+                arguments.get("package")
+            )
+            import_name = self._normalize_text(
+                arguments.get("import_name")
+            )
+
+            if package:
+                if result.success:
+                    state = (
+                        "already available"
+                        if data.get("already_available")
+                        else "installed and import-verified"
+                    )
+                else:
+                    state = "installation failed"
+
+                self.upsert(
+                    key=f"dependency:{package}",
+                    kind=MemoryKind.GENERAL,
+                    value=(
+                        f"Python dependency {package} "
+                        f"({import_name or 'unknown import'}) "
+                        f"is {state}."
+                    ),
+                    source_tool=tool_name,
+                    metadata={
+                        "package": package,
+                        "import_name": import_name,
+                        "installed": data.get("installed"),
+                        "import_verified": data.get(
+                            "import_verified"
+                        ),
+                    },
+                )
+
+        # =====================================================
         # Run Command
         # =====================================================
 

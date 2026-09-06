@@ -37,6 +37,9 @@ from .tools.replace_lines import ReplaceLinesTool
 from .tools.replace_symbol import ReplaceSymbolTool
 from .tools.run_command import RunCommandTool
 from .tools.run_tests import RunTestsTool
+from .tools.install_python_package import (
+    InstallPythonPackageTool,
+)
 from .tools.complete_plan_step import CompletePlanStepTool
 from .tools.replan import ReplanTool
 from .tools.git_status import GitStatusTool
@@ -206,6 +209,14 @@ def main():
             sandbox=(
                 sandbox
             ),
+        )
+    )
+
+    registry.register(
+        InstallPythonPackageTool(
+            workspace=workspace,
+            timeout=120,
+            sandbox=sandbox,
         )
     )
 

@@ -98,3 +98,26 @@ def test_search_code_reports_truncation(
     )
 
     assert result.data["truncated"] is True
+
+
+def test_search_code_accepts_a_file_path(
+    tmp_path,
+):
+    file_path = tmp_path / "game.html"
+    file_path.write_text(
+        "function resetGame() {}\n",
+        encoding="utf-8",
+    )
+
+    tool = SearchCodeTool(
+        workspace=str(tmp_path)
+    )
+
+    result = tool.execute(
+        query="resetGame",
+        path="game.html",
+    )
+
+    assert result.success is True
+    assert result.data["returned_match_count"] == 1
+    assert result.data["matches"][0]["path"] == "game.html"

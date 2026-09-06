@@ -96,6 +96,19 @@ def compact_messages(
     if len(messages) < 2:
         return messages
 
+    # Successful edit payloads already live on disk. Keeping a
+    # complete generated file or exact replacement body in the
+    # conversation can consume tens of thousands of tokens and
+    # does not help the next turn. Preserve the target and sizes,
+    # then require a focused read if source context is needed.
+    for message in messages[1:]:
+
+        if _has_tool_calls(message):
+            omit_tool_call_payloads(
+                message,
+                max_tool_chars=max_tool_chars,
+            )
+
     round_starts = [
         index
         for index, message
@@ -197,7 +210,56 @@ def compact_messages(
                 ),
             )
 
+    # Under critical pressure, one unusually large latest read
+    # or command result must not defeat compaction indefinitely.
+    if pressure_is_critical_payload_limit(
+        max_tool_chars
+    ):
+        _compact_oversized_recent_results(
+            messages,
+            max_chars=6000,
+        )
+
     return messages
+
+
+def pressure_is_critical_payload_limit(
+    max_tool_chars: int,
+) -> bool:
+    return max_tool_chars <= 200
+
+
+def _compact_oversized_recent_results(
+    messages: list,
+    max_chars: int,
+) -> None:
+    """Bound large recent observations during critical pressure."""
+
+    id_to_tool = _tool_call_index(messages)
+
+    for message in messages:
+
+        if message.get("role") != "tool":
+            continue
+
+        content = str(
+            message.get("content")
+            or ""
+        )
+
+        if len(content) <= max_chars:
+            continue
+
+        tool_name, arguments = id_to_tool.get(
+            message.get("tool_call_id"),
+            ("tool", "{}"),
+        )
+
+        message["content"] = summarize_tool_result(
+            tool_name,
+            arguments,
+            content,
+        )
 
 
 # =============================================================
@@ -668,26 +730,35 @@ def _omit_large_arguments(
     # patch_file
     # =========================================================
 
-    if (
-        tool_name
-        == "patch_file"
-        and "new_text" in args
+    edit_payload_fields = {
+        "patch_file": (
+            "old_text",
+            "new_text",
+        ),
+        "replace_lines": (
+            "content",
+            "new_text",
+        ),
+        "replace_symbol": (
+            "content",
+            "new_code",
+            "replacement",
+        ),
+    }
+
+    for field_name in edit_payload_fields.get(
+        tool_name,
+        (),
     ):
 
-        size = len(
-            str(
-                args["new_text"]
-            )
-        )
+        if field_name not in args:
+            continue
 
-        if (
-            size
-            > max_tool_chars
-        ):
+        size = len(str(args[field_name]))
 
-            args["new_text"] = (
-                f"[omitted, "
-                f"{size} chars]"
+        if size > max_tool_chars:
+            args[field_name] = (
+                f"[omitted, {size} chars]"
             )
 
     return json.dumps(

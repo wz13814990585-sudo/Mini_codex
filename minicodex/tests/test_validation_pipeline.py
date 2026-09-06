@@ -163,6 +163,55 @@ def test_acceptance_pass_is_recorded():
     )
 
 
+def test_acceptance_run_command_records_passed_evidence():
+    pipeline = ValidationPipeline()
+    pipeline.record_edit()
+
+    evidence = pipeline.observe(
+        tool_name="run_command",
+        arguments={
+            "command": "node game_probe.js",
+            "purpose": "acceptance",
+        },
+        result=ToolResult(
+            success=True,
+            summary="Command completed successfully.",
+            data={
+                "command_succeeded": True,
+                "exit_code": 0,
+            },
+        ),
+    )
+
+    assert evidence is not None
+    assert evidence.outcome == ValidationOutcome.PASSED
+    assert evidence.scope == ValidationScope.TARGETED
+    assert evidence.purpose == ValidationPurpose.ACCEPTANCE
+    assert pipeline.state.acceptance_passed is True
+
+
+def test_diagnostic_run_command_is_not_validation():
+    pipeline = ValidationPipeline()
+    pipeline.record_edit()
+
+    evidence = pipeline.observe(
+        tool_name="run_command",
+        arguments={
+            "command": "node --version",
+            "purpose": "diagnostic",
+        },
+        result=ToolResult(
+            success=True,
+            summary="Command completed successfully.",
+            data={
+                "command_succeeded": True,
+            },
+        ),
+    )
+
+    assert evidence is None
+    assert pipeline.state.acceptance_passed is False
+
 # =============================================================
 # Acceptance Pass Requires Full Regression
 # =============================================================

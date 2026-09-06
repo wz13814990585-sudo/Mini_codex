@@ -276,25 +276,88 @@ class ValidationPipeline:
         result: ToolResult,
     ) -> ValidationEvidence | None:
 
-        if (
-            tool_name
-            != "run_tests"
-        ):
+        if tool_name == "run_command":
 
-            return None
+            if (
+                str(
+                    arguments.get(
+                        "purpose",
+                        "diagnostic",
+                    )
+                ).strip().lower()
+                != "acceptance"
+            ):
+                return None
 
-        evidence = (
-            self._from_run_tests(
+            evidence = self._from_run_command(
                 arguments=arguments,
                 result=result,
             )
-        )
+
+        elif tool_name == "run_tests":
+
+            evidence = self._from_run_tests(
+                arguments=arguments,
+                result=result,
+            )
+
+        else:
+            return None
 
         self._record_evidence(
             evidence
         )
 
         return evidence
+
+    def _from_run_command(
+        self,
+        *,
+        arguments: dict,
+        result: ToolResult,
+    ) -> ValidationEvidence:
+        """Normalize an explicitly labelled acceptance command."""
+
+        command = str(
+            arguments.get(
+                "command",
+                "",
+            )
+        ).strip()
+
+        if not result.success:
+            outcome = ValidationOutcome.INCONCLUSIVE
+            execution_succeeded = False
+            failed_count = None
+        elif result.data.get("command_succeeded") is True:
+            outcome = ValidationOutcome.PASSED
+            execution_succeeded = True
+            failed_count = 0
+        elif result.data.get("command_succeeded") is False:
+            outcome = ValidationOutcome.FAILED
+            execution_succeeded = True
+            failed_count = 1
+        else:
+            outcome = ValidationOutcome.INCONCLUSIVE
+            execution_succeeded = True
+            failed_count = None
+
+        return ValidationEvidence(
+            tool_name="run_command",
+            execution_succeeded=execution_succeeded,
+            outcome=outcome,
+            scope=ValidationScope.TARGETED,
+            purpose=ValidationPurpose.ACCEPTANCE,
+            edit_revision=self.state.edit_revision,
+            failed=(
+                1
+                if outcome == ValidationOutcome.FAILED
+                else 0
+            ),
+            failed_count=failed_count,
+            path=command,
+            summary=result.summary,
+        )
 
     # =========================================================
     # Record Evidence

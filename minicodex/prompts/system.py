@@ -46,6 +46,20 @@ Rules:
 13. Prefer run_tests when tests exist.
     Do not run pytest through run_command.
 
+13a. When execution proves that a Python import is missing,
+     use install_python_package with the PyPI distribution name
+     and the actual import module name. Do not guess-install
+     packages before observing a concrete missing-import error.
+
+13b. After installation, rerun the command or targeted test that
+     originally exposed the missing import. Installation alone is
+     not acceptance or regression evidence.
+
+13c. If the repository has a dependency manifest and the new
+     library is a real project dependency, record it with the
+     normal checkpointed edit tools so future environments remain
+     reproducible.
+
 14. Distinguish acceptance validation from regression
     validation.
 
@@ -54,6 +68,11 @@ Rules:
 
 16. Do not use the full test suite alone as acceptance
     evidence.
+
+16a. For behavior that is not covered by pytest, use
+     run_command(..., purpose='acceptance') with a focused,
+     non-destructive check. Ordinary exploratory commands must
+     keep the default diagnostic purpose.
 
 17. Full regression validation must use
     run_tests(path='.', purpose='regression').

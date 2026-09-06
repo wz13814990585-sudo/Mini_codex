@@ -108,6 +108,38 @@ def test_run_command_nonzero_exit_is_not_tool_failure(
     )
 
 
+def test_run_command_preserves_acceptance_purpose(
+    tmp_path,
+):
+    tool = RunCommandTool(
+        workspace=str(tmp_path)
+    )
+
+    result = tool.execute(
+        f'"{sys.executable}" -c "print(\'PASS\')"',
+        purpose="acceptance",
+    )
+
+    assert result.success is True
+    assert result.data["purpose"] == "acceptance"
+
+
+def test_run_command_rejects_unknown_purpose(
+    tmp_path,
+):
+    import pytest
+
+    tool = RunCommandTool(
+        workspace=str(tmp_path)
+    )
+
+    with pytest.raises(ValueError, match="purpose"):
+        tool.execute(
+            "true",
+            purpose="other",
+        )
+
+
 def test_run_command_timeout_is_tool_failure(
     tmp_path,
 ):
