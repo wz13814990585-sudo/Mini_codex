@@ -3,6 +3,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from .agent.agent import MiniCodexAgent
+from .agent.long_term_memory import (
+    LongTermMemoryStore,
+)
+from .agent.long_term_memory_runtime import (
+    attach_long_term_memory,
+)
 from .agent.planner import Planner
 from .agent.replanner import Replanner
 from .agent.repo_map import RepoMap
@@ -221,6 +227,33 @@ def main():
     )
 
     # =========================================================
+    # Stage 16 Long-Term Memory
+    # =========================================================
+
+    long_term_memory = (
+        LongTermMemoryStore(
+            path=(
+                PROJECT_ROOT
+                / ".minicodex"
+                / "memory"
+                / "long_term.json"
+            ),
+            repository_key=(
+                PROJECT_ROOT.name
+            ),
+            max_records=200,
+        )
+    )
+
+    attach_long_term_memory(
+        agent,
+        store=(
+            long_term_memory
+        ),
+        retrieval_limit=5,
+    )
+
+    # =========================================================
     # Stage 11 Git Awareness Tools
     # =========================================================
 
@@ -243,9 +276,8 @@ def main():
     # =========================================================
     # Agent Callback Tools
     #
-    # IMPORTANT:
-    # Register AFTER trace attachment so callback tools receive
-    # the traced plan/replan methods.
+    # Register after runtime wrappers so callback tools receive
+    # the traced methods.
     # =========================================================
 
     registry.register(
@@ -353,6 +385,16 @@ def main():
         print(
             "Safety Blocks: "
             f"{trace_summary.safety_blocks}"
+        )
+
+        # =====================================================
+        # Long-Term Memory Summary
+        # =====================================================
+
+        print(
+            "[Long-Term Memory] "
+            f"{len(long_term_memory.records)} "
+            "stored task experiences."
         )
 
         # =====================================================
