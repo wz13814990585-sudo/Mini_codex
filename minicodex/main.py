@@ -23,6 +23,8 @@ from .tools.run_command import RunCommandTool
 from .tools.run_tests import RunTestsTool
 from .tools.complete_plan_step import CompletePlanStepTool
 from .tools.replan import ReplanTool
+from .tools.git_status import GitStatusTool
+from .tools.git_diff import GitDiffTool
 
 
 PROJECT_ROOT = (
@@ -65,7 +67,7 @@ def main():
     )
 
     # =========================================================
-    # Read / Navigation Tools
+    # Read / Navigation
     # =========================================================
 
     registry.register(
@@ -165,21 +167,17 @@ def main():
     )
 
     # =========================================================
-    # Replanner
-    # =========================================================
-
-    replanner = (
-        Replanner(
-            llm=llm
-        )
-    )
-
-    # =========================================================
     # Planner
     # =========================================================
 
     planner = (
         Planner(
+            llm=llm
+        )
+    )
+
+    replanner = (
+        Replanner(
             llm=llm
         )
     )
@@ -196,6 +194,26 @@ def main():
             replanner=replanner,
             repo_map=repo_map,
             max_steps=20,
+        )
+    )
+
+    # =========================================================
+    # Stage 11: Git Awareness Tools
+    # =========================================================
+
+    registry.register(
+        GitStatusTool(
+            awareness=(
+                agent.git_awareness
+            )
+        )
+    )
+
+    registry.register(
+        GitDiffTool(
+            inspector=(
+                agent.git_inspector
+            )
         )
     )
 
@@ -220,7 +238,7 @@ def main():
     )
 
     # =========================================================
-    # CLI Loop
+    # CLI
     # =========================================================
 
     while True:

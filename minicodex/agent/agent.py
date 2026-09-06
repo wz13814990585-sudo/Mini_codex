@@ -41,6 +41,10 @@ from ..prompts.system import (
 
 from .rollback import RollbackEngine
 
+from .git_awareness import (
+    GitAwareness,
+    GitRepositoryInspector,
+)
 
 class MiniCodexAgent:
 
@@ -60,6 +64,35 @@ class MiniCodexAgent:
         self.registry = registry
 
         # =====================================================
+        # Shared Workspace
+        # =====================================================
+
+        self.workspace = (
+            self._resolve_workspace(
+                registry
+            )
+        )
+
+        # =====================================================
+        # Stage 11: Git Awareness
+        # =====================================================
+
+        self.git_inspector = (
+            GitRepositoryInspector(
+                workspace=(
+                    self.workspace
+                )
+            )
+        )
+
+        self.git_awareness = (
+            GitAwareness(
+                inspector=(
+                    self.git_inspector
+                )
+            )
+        )
+        # =====================================================
         # Behavioral Validation Pipeline
         #
         # This must exist before the checkpoint executor
@@ -78,9 +111,7 @@ class MiniCodexAgent:
         self.checkpoint_manager = (
             CheckpointManager(
                 workspace=(
-                    self._resolve_workspace(
-                        registry
-                    )
+                    self.workspace
                 ),
                 max_checkpoints=50,
             )
@@ -117,6 +148,10 @@ class MiniCodexAgent:
                 ),
                 next_edit_revision=(
                     self._next_edit_revision
+                ),
+                on_successful_edit=(
+                    self.git_awareness
+                    .record_agent_edit
                 ),
             )
         )
@@ -315,10 +350,35 @@ class MiniCodexAgent:
         self.working_summary.reset()
 
         # =====================================================
+        # Git Task Baseline
+        #
+        # Capture BEFORE MiniCodex performs any task edit.
+        # =====================================================
+
+        self.git_awareness.reset_task()
+
+        # =====================================================
         # Initial Repository Map
         # =====================================================
 
         self._refresh_repo_map()
+
+        try:
+
+            self.git_awareness.refresh()
+
+            git_awareness_text = (
+                self.git_awareness
+                .render()
+            )
+
+        except Exception as e:
+
+            git_awareness_text = (
+                "Git awareness unavailable: "
+                f"{type(e).__name__}: "
+                f"{e}"
+            )
 
         # =====================================================
         # Initial Planning
@@ -714,25 +774,17 @@ class MiniCodexAgent:
                 "No active plan step."
             )
 
-        return (
-            build_turn_context(
-                plan_text=(
-                    plan_text
-                ),
-                current_step_text=(
-                    current_step_text
-                ),
-                remaining_agent_steps=(
-                    remaining_agent_steps
-                ),
-                working_summary_text=(
-                    self.working_summary
-                    .render()
-                ),
-                repo_map_text=(
-                    self.repo_map_text
-                ),
-            )
+        return build_turn_context(
+            plan_text=plan_text,
+            current_step_text=current_step_text,
+            remaining_agent_steps=remaining_agent_steps,
+            working_summary_text=(
+                self.working_summary.render()
+            ),
+            repo_map_text=self.repo_map_text,
+            git_awareness_text=(
+                self.git_awareness.render()
+            ),
         )
 
     # =========================================================

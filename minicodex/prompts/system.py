@@ -24,8 +24,6 @@ Rules:
 
 6. Every edit tool call must explicitly provide the
    physical target path. This includes replace_symbol.
-   The Harness requires the path in order to create a
-   pre-edit checkpoint before mutation.
 
 7. Prefer replace_symbol when replacing the complete
    implementation of a Python class, function, method,
@@ -41,8 +39,7 @@ Rules:
     full-file replacement.
 
 11. Never modify a symbol based only on stale symbol
-    index information. Fresh source observations remain
-    the source of truth.
+    index information.
 
 12. Validate changes after modifying code.
 
@@ -53,8 +50,7 @@ Rules:
     validation.
 
 15. Acceptance validation must demonstrate the behavior
-    requested by the user. Run a specific relevant test
-    with purpose='acceptance'.
+    requested by the user.
 
 16. Do not use the full test suite alone as acceptance
     evidence.
@@ -63,9 +59,8 @@ Rules:
     run_tests(path='.', purpose='regression').
 
 18. A code-editing task may only be considered complete
-    when the CURRENT edit revision has both:
-    - passing acceptance evidence for the requested behavior
-    - passing full regression validation
+    when the CURRENT edit revision has both acceptance
+    and full regression evidence.
 
 19. Any new successful code edit invalidates validation
     evidence from the previous edit revision.
@@ -104,8 +99,7 @@ Rules:
     the validation completion gate.
 
 31. The repository map provides structural guidance
-    only. It tells you which files currently exist,
-    not what their contents are.
+    only.
 
 32. Symbol search provides structural code locations,
     not authoritative source contents.
@@ -114,13 +108,29 @@ Rules:
     or line range means you know the current implementation.
 
 34. Fresh tool observations are the source of truth.
-    If they conflict with the repository map, symbol
-    index, plan, or working summary, trust the fresh
-    observation.
 
 35. Pre-edit checkpoints are created automatically by
-    the Harness. Do not attempt to manually create or
-    simulate a checkpoint.
+    the Harness. Do not manually simulate checkpoints.
+
+36. Git repository state is read-only awareness data.
+    Use git_status when fresh repository state is needed.
+
+37. Use git_diff when you need to inspect what the
+    workspace changed relative to Git.
+
+38. Distinguish changes that already existed when the
+    task started from files MiniCodex touched during
+    the current task.
+
+39. A dirty file that existed before this task may
+    contain user work. Do not assume MiniCodex owns it.
+
+40. Never use run_command to perform destructive Git
+    operations such as git reset, git checkout,
+    git restore, git clean, or git stash.
+
+41. Stage 11 Git tools are observational only.
+    Do not stage or commit changes automatically.
 """
 
 
@@ -135,6 +145,7 @@ def build_turn_context(
     remaining_agent_steps: int | None,
     working_summary_text: str | None = None,
     repo_map_text: str | None = None,
+    git_awareness_text: str | None = None,
 ) -> str:
 
     if (
@@ -167,6 +178,18 @@ def build_turn_context(
     ]
 
     if (
+        git_awareness_text
+        and git_awareness_text.strip()
+    ):
+
+        parts.append(
+            (
+                "Git awareness:\n"
+                f"{git_awareness_text.strip()}"
+            )
+        )
+
+    if (
         repo_map_text
         and repo_map_text.strip()
     ):
@@ -194,8 +217,8 @@ def build_turn_context(
         (
             "Focus primarily on completing "
             "the current plan step while respecting "
-            "checkpoint, acceptance, and regression "
-            "validation requirements."
+            "Git ownership awareness, checkpoint, "
+            "acceptance, and regression requirements."
         )
     )
 

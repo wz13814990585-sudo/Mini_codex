@@ -14,11 +14,6 @@ from ..tools.results import (
 )
 
 
-# =============================================================
-# Protected Edit Tools
-# =============================================================
-
-
 CHECKPOINTED_EDIT_TOOLS = {
     "patch_file",
     "replace_lines",
@@ -27,24 +22,7 @@ CHECKPOINTED_EDIT_TOOLS = {
 }
 
 
-# =============================================================
-# Checkpointing Executor
-# =============================================================
-
-
 class CheckpointingToolExecutor:
-    """
-    Safety wrapper around ToolExecutor.
-
-    Edit execution:
-
-        capture before-state
-            ↓
-        execute actual edit
-            ↓
-        failure → discard checkpoint
-        success → seal after-state
-    """
 
     def __init__(
         self,
@@ -55,6 +33,13 @@ class CheckpointingToolExecutor:
             [],
             int,
         ],
+        on_successful_edit: (
+            Callable[
+                [str],
+                None,
+            ]
+            | None
+        ) = None,
     ):
 
         self.executor = (
@@ -69,9 +54,9 @@ class CheckpointingToolExecutor:
             next_edit_revision
         )
 
-    # =========================================================
-    # Prepare
-    # =========================================================
+        self.on_successful_edit = (
+            on_successful_edit
+        )
 
     def prepare(
         self,
@@ -87,18 +72,10 @@ class CheckpointingToolExecutor:
             )
         )
 
-    # =========================================================
-    # Execute
-    # =========================================================
-
     def execute_prepared(
         self,
         prepared: PreparedToolCall,
     ) -> ToolExecution:
-
-        # =====================================================
-        # Already Failed During Preparation
-        # =====================================================
 
         if (
             prepared.error
@@ -112,10 +89,6 @@ class CheckpointingToolExecutor:
                 )
             )
 
-        # =====================================================
-        # Non-Edit Tool
-        # =====================================================
-
         if (
             prepared.tool_name
             not in CHECKPOINTED_EDIT_TOOLS
@@ -127,10 +100,6 @@ class CheckpointingToolExecutor:
                     prepared
                 )
             )
-
-        # =====================================================
-        # Explicit Target Path
-        # =====================================================
 
         path_value = (
             prepared.arguments
@@ -184,10 +153,6 @@ class CheckpointingToolExecutor:
             )
             .strip()
         )
-
-        # =====================================================
-        # Next Revision
-        # =====================================================
 
         try:
 
@@ -249,10 +214,6 @@ class CheckpointingToolExecutor:
                 ),
             )
 
-        # =====================================================
-        # Capture Before-State
-        # =====================================================
-
         try:
 
             checkpoint = (
@@ -285,10 +246,6 @@ class CheckpointingToolExecutor:
                 )
             )
 
-        # =====================================================
-        # Execute Real Edit
-        # =====================================================
-
         execution = (
             self.executor
             .execute_prepared(
@@ -300,25 +257,16 @@ class CheckpointingToolExecutor:
             execution.result
         )
 
-        # =====================================================
-        # Failed Edit
-        # =====================================================
+        if not (
+            result.success
+        ):
 
-        if not result.success:
-
-            (
-                self.checkpoint_manager
-                .discard(
-                    checkpoint
-                    .checkpoint_id
-                )
+            self.checkpoint_manager.discard(
+                checkpoint
+                .checkpoint_id
             )
 
             return execution
-
-        # =====================================================
-        # Seal After-State
-        # =====================================================
 
         try:
 
@@ -332,10 +280,6 @@ class CheckpointingToolExecutor:
 
         except Exception as e:
 
-            # The edit physically succeeded, but its safety
-            # checkpoint could not be finalized.
-            #
-            # Do NOT silently report edit success.
             return ToolExecution(
                 tool_name=(
                     prepared.tool_name
@@ -368,10 +312,6 @@ class CheckpointingToolExecutor:
                     ),
                 ),
             )
-
-        # =====================================================
-        # Expose Checkpoint Metadata
-        # =====================================================
 
         result.data[
             "checkpoint_id"
@@ -418,11 +358,34 @@ class CheckpointingToolExecutor:
             .after_sha256
         )
 
-        return execution
+        # =====================================================
+        # Stage 11: Agent-Owned Change Tracking
+        # =====================================================
 
-    # =========================================================
-    # Internal Failure Builder
-    # =========================================================
+        if (
+            self.on_successful_edit
+            is not None
+        ):
+
+            try:
+
+                self.on_successful_edit(
+                    path
+                )
+
+            except Exception as e:
+
+                # Git awareness is observational.
+                # It must never turn a verified edit into a
+                # failed edit.
+                result.data[
+                    "git_tracking_warning"
+                ] = (
+                    f"{type(e).__name__}: "
+                    f"{e}"
+                )
+
+        return execution
 
     @staticmethod
     def _checkpoint_failure(
