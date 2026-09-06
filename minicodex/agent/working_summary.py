@@ -1,21 +1,38 @@
-from dataclasses import dataclass, field
+from dataclasses import (
+    dataclass,
+    field,
+)
+
+from .working_memory import (
+    WorkingMemory,
+)
 
 
 @dataclass
 class WorkingSummary:
     """
-    Compact task-level factual memory.
+    Compact task-level factual execution history.
 
-    WorkingSummary preserves important execution facts
-    even when raw conversation history is compacted.
+    Stage 5 responsibility:
 
-    It is task-local and is reset for every new user task.
+        preserve recent factual execution events
+
+    Stage 15 WorkingMemory responsibility:
+
+        preserve latest-known structured task state
+
+    Both are task-local and reset for every new user task.
     """
 
     max_items: int = 30
 
     items: list[str] = field(
         default_factory=list
+    )
+
+    memory: WorkingMemory = field(
+        default_factory=WorkingMemory,
+        repr=False,
     )
 
     # =========================================================
@@ -28,6 +45,8 @@ class WorkingSummary:
 
         self.items.clear()
 
+        self.memory.reset()
+
     # =========================================================
     # Add Fact
     # =========================================================
@@ -38,15 +57,22 @@ class WorkingSummary:
     ) -> None:
 
         normalized = (
-            str(text)
+            str(
+                text
+            )
             .strip()
         )
 
         if not normalized:
+
             return
 
         # Avoid exact duplicate facts.
-        if normalized in self.items:
+        if (
+            normalized
+            in self.items
+        ):
+
             return
 
         self.items.append(
@@ -55,12 +81,16 @@ class WorkingSummary:
 
         # Keep summary bounded.
         if (
-            len(self.items)
+            len(
+                self.items
+            )
             > self.max_items
         ):
 
             overflow = (
-                len(self.items)
+                len(
+                    self.items
+                )
                 - self.max_items
             )
 
@@ -83,34 +113,70 @@ class WorkingSummary:
             arguments,
             dict,
         ):
+
             arguments = {}
 
-        path = str(
-            arguments.get(
-                "path",
-                ""
+        # =====================================================
+        # Stage 15 Structured Working Memory
+        #
+        # Memory is a cache, not source of truth.
+        #
+        # A memory-recording failure must never break the Agent
+        # execution path.
+        # =====================================================
+
+        try:
+
+            self.memory.record_tool_result(
+                tool_name=(
+                    tool_name
+                ),
+                arguments=(
+                    arguments
+                ),
+                result=(
+                    result
+                ),
             )
-            or ""
-        ).strip()
+
+        except Exception:
+
+            pass
+
+        path = (
+            str(
+                arguments.get(
+                    "path",
+                    "",
+                )
+                or ""
+            )
+            .strip()
+        )
 
         # =====================================================
         # Read File
         # =====================================================
 
-        if tool_name == "read_file":
+        if (
+            tool_name
+            == "read_file"
+        ):
 
             if result.success:
 
                 if path:
 
                     self.add(
-                        f"Inspected file: {path}."
+                        f"Inspected file: "
+                        f"{path}."
                     )
 
                 else:
 
                     self.add(
-                        "A file was inspected successfully."
+                        "A file was inspected "
+                        "successfully."
                     )
 
             else:
@@ -129,15 +195,21 @@ class WorkingSummary:
         # Search Code
         # =====================================================
 
-        if tool_name == "search_code":
+        if (
+            tool_name
+            == "search_code"
+        ):
 
-            query = str(
-                arguments.get(
-                    "query",
-                    ""
+            query = (
+                str(
+                    arguments.get(
+                        "query",
+                        "",
+                    )
+                    or ""
                 )
-                or ""
-            ).strip()
+                .strip()
+            )
 
             if result.success:
 
@@ -161,20 +233,69 @@ class WorkingSummary:
             return
 
         # =====================================================
-        # Write / Patch
+        # Search Symbol
         # =====================================================
 
-        if tool_name in {
-            "write_file",
-            "patch_file",
-        }:
+        if (
+            tool_name
+            == "search_symbol"
+        ):
+
+            query = (
+                str(
+                    arguments.get(
+                        "query",
+                        arguments.get(
+                            "name",
+                            "",
+                        ),
+                    )
+                    or ""
+                )
+                .strip()
+            )
+
+            if result.success:
+
+                if query:
+
+                    self.add(
+                        "Searched project symbols for: "
+                        f"{query}."
+                    )
+
+            else:
+
+                self.add(
+                    self._failure_fact(
+                        tool_name,
+                        query,
+                        result,
+                    )
+                )
+
+            return
+
+        # =====================================================
+        # Edit Tools
+        # =====================================================
+
+        if (
+            tool_name
+            in {
+                "write_file",
+                "patch_file",
+                "replace_lines",
+                "replace_symbol",
+            }
+        ):
 
             if result.success:
 
                 if path:
 
                     self.add(
-                        f"Modified file successfully: "
+                        "Modified file successfully: "
                         f"{path}."
                     )
 
@@ -201,7 +322,10 @@ class WorkingSummary:
         # Tests
         # =====================================================
 
-        if tool_name == "run_tests":
+        if (
+            tool_name
+            == "run_tests"
+        ):
 
             if not result.success:
 
@@ -221,28 +345,37 @@ class WorkingSummary:
                 )
             )
 
-            passed = int(
-                result.data.get(
-                    "passed",
-                    0,
+            passed = (
+                self._safe_int(
+                    result.data.get(
+                        "passed",
+                        0,
+                    )
                 )
             )
 
-            failed = int(
-                result.data.get(
-                    "failed",
-                    0,
+            failed = (
+                self._safe_int(
+                    result.data.get(
+                        "failed",
+                        0,
+                    )
                 )
             )
 
-            errors = int(
-                result.data.get(
-                    "errors",
-                    0,
+            errors = (
+                self._safe_int(
+                    result.data.get(
+                        "errors",
+                        0,
+                    )
                 )
             )
 
-            if tests_passed is True:
+            if (
+                tests_passed
+                is True
+            ):
 
                 self.add(
                     "Validation passed: "
@@ -251,7 +384,8 @@ class WorkingSummary:
                 )
 
             elif (
-                failed + errors
+                failed
+                + errors
                 > 0
             ):
 
@@ -265,8 +399,9 @@ class WorkingSummary:
             else:
 
                 self.add(
-                    "Validation ran, but no definitive "
-                    "pass/fail result was available."
+                    "Validation ran, but no "
+                    "definitive pass/fail result "
+                    "was available."
                 )
 
             return
@@ -275,15 +410,21 @@ class WorkingSummary:
         # Run Command
         # =====================================================
 
-        if tool_name == "run_command":
+        if (
+            tool_name
+            == "run_command"
+        ):
 
-            command = str(
-                arguments.get(
-                    "command",
-                    ""
+            command = (
+                str(
+                    arguments.get(
+                        "command",
+                        "",
+                    )
+                    or ""
                 )
-                or ""
-            ).strip()
+                .strip()
+            )
 
             command_succeeded = (
                 result.data.get(
@@ -293,21 +434,24 @@ class WorkingSummary:
 
             if (
                 result.success
-                and command_succeeded is True
+                and command_succeeded
+                is True
             ):
 
                 self.add(
-                    f"Command succeeded: "
+                    "Command succeeded: "
                     f"{command}."
                 )
 
             elif (
                 result.success
-                and command_succeeded is False
+                and command_succeeded
+                is False
             ):
 
                 self.add(
-                    f"Command completed unsuccessfully: "
+                    "Command completed "
+                    "unsuccessfully: "
                     f"{command}."
                 )
 
@@ -327,10 +471,15 @@ class WorkingSummary:
         # Complete Plan Step
         # =====================================================
 
-        if tool_name == "complete_plan_step":
+        if (
+            tool_name
+            == "complete_plan_step"
+        ):
 
-            if result.data.get(
-                "completed"
+            if (
+                result.data.get(
+                    "completed"
+                )
             ):
 
                 step_id = (
@@ -357,32 +506,106 @@ class WorkingSummary:
         # Replan
         # =====================================================
 
-        if tool_name == "replan":
+        if (
+            tool_name
+            == "replan"
+        ):
 
-            if result.data.get(
-                "replanned"
+            if (
+                result.data.get(
+                    "replanned"
+                )
             ):
 
-                reason = str(
-                    result.data.get(
-                        "reason",
-                        ""
+                reason = (
+                    str(
+                        result.data.get(
+                            "reason",
+                            "",
+                        )
+                        or ""
                     )
-                    or ""
-                ).strip()
+                    .strip()
+                )
 
                 if reason:
 
                     self.add(
-                        "Implementation plan was revised. "
+                        "Implementation plan "
+                        "was revised. "
                         f"Reason: {reason}"
                     )
 
                 else:
 
                     self.add(
-                        "Implementation plan was revised."
+                        "Implementation plan "
+                        "was revised."
                     )
+
+            return
+
+        # =====================================================
+        # Git Status
+        # =====================================================
+
+        if (
+            tool_name
+            == "git_status"
+        ):
+
+            if result.success:
+
+                self.add(
+                    "Git repository state "
+                    "was refreshed."
+                )
+
+            else:
+
+                self.add(
+                    self._failure_fact(
+                        tool_name,
+                        path,
+                        result,
+                    )
+                )
+
+            return
+
+        # =====================================================
+        # Git Diff
+        # =====================================================
+
+        if (
+            tool_name
+            == "git_diff"
+        ):
+
+            if result.success:
+
+                if path:
+
+                    self.add(
+                        "Inspected Git diff for: "
+                        f"{path}."
+                    )
+
+                else:
+
+                    self.add(
+                        "Inspected current Git diff."
+                    )
+
+            else:
+
+                self.add(
+                    self._failure_fact(
+                        tool_name,
+                        path,
+                        result,
+                    )
+                )
 
             return
 
@@ -408,17 +631,66 @@ class WorkingSummary:
         self,
     ) -> str:
 
-        if not self.items:
+        if (
+            not self.items
+            and len(
+                self.memory
+            )
+            == 0
+        ):
 
+            # Preserve Stage 5 compatibility.
             return (
                 "No important execution facts "
                 "have been recorded yet."
             )
 
-        return "\n".join(
-            f"- {item}"
-            for item
-            in self.items
+        sections = []
+
+        # =====================================================
+        # Stage 15 Current-State Memory
+        # =====================================================
+
+        if (
+            len(
+                self.memory
+            )
+            > 0
+        ):
+
+            sections.append(
+                (
+                    "Structured working memory "
+                    "(latest known task state):\n"
+                    f"{self.memory.render()}"
+                )
+            )
+
+        # =====================================================
+        # Stage 5 Recent History
+        # =====================================================
+
+        if self.items:
+
+            recent_items = (
+                self.items[
+                    -10:
+                ]
+            )
+
+            sections.append(
+                (
+                    "Recent execution facts:\n"
+                    + "\n".join(
+                        f"- {item}"
+                        for item
+                        in recent_items
+                    )
+                )
+            )
+
+        return "\n\n".join(
+            sections
         )
 
     # =========================================================
@@ -438,22 +710,50 @@ class WorkingSummary:
             else ""
         )
 
-        error = str(
-            getattr(
-                result,
-                "error",
-                ""
+        error = (
+            str(
+                getattr(
+                    result,
+                    "error",
+                    "",
+                )
+                or ""
             )
-            or ""
-        ).strip()
+            .strip()
+        )
 
         if error:
 
             return (
-                f"{tool_name}{target_text} failed: "
+                f"{tool_name}"
+                f"{target_text} failed: "
                 f"{error}"
             )
 
         return (
-            f"{tool_name}{target_text} failed."
+            f"{tool_name}"
+            f"{target_text} failed."
         )
+
+    # =========================================================
+    # Safe Int
+    # =========================================================
+
+    @staticmethod
+    def _safe_int(
+        value,
+    ) -> int:
+
+        try:
+
+            return int(
+                value
+                or 0
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            return 0
