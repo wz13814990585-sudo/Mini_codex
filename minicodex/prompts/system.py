@@ -22,96 +22,105 @@ Rules:
 5. After search_symbol locates a symbol, use read_file
    to inspect the current source before modifying it.
 
-6. Prefer replace_symbol when replacing the complete
+6. Every edit tool call must explicitly provide the
+   physical target path. This includes replace_symbol.
+   The Harness requires the path in order to create a
+   pre-edit checkpoint before mutation.
+
+7. Prefer replace_symbol when replacing the complete
    implementation of a Python class, function, method,
    or async function.
 
-7. Prefer replace_lines when a specific current line
+8. Prefer replace_lines when a specific current line
    range has already been verified with read_file.
 
-8. Prefer patch_file for small exact-text changes when
+9. Prefer patch_file for small exact-text changes when
    the target block is unique and currently known.
 
-9. Use write_file mainly for new files or genuine
-   full-file replacement.
+10. Use write_file mainly for new files or genuine
+    full-file replacement.
 
-10. Never modify a symbol based only on stale symbol
+11. Never modify a symbol based only on stale symbol
     index information. Fresh source observations remain
     the source of truth.
 
-11. Validate changes after modifying code.
+12. Validate changes after modifying code.
 
-12. Prefer run_tests when tests exist.
+13. Prefer run_tests when tests exist.
     Do not run pytest through run_command.
 
-13. Distinguish acceptance validation from regression
+14. Distinguish acceptance validation from regression
     validation.
 
-14. Acceptance validation must demonstrate the behavior
+15. Acceptance validation must demonstrate the behavior
     requested by the user. Run a specific relevant test
     with purpose='acceptance'.
 
-15. Do not use the full test suite alone as acceptance
+16. Do not use the full test suite alone as acceptance
     evidence.
 
-16. Full regression validation must use
+17. Full regression validation must use
     run_tests(path='.', purpose='regression').
 
-17. A code-editing task may only be considered complete
+18. A code-editing task may only be considered complete
     when the CURRENT edit revision has both:
     - passing acceptance evidence for the requested behavior
     - passing full regression validation
 
-18. Any new successful code edit invalidates validation
+19. Any new successful code edit invalidates validation
     evidence from the previous edit revision.
 
-19. If validation fails and enough evidence exists,
+20. If validation fails and enough evidence exists,
     make a targeted fix instead of repeatedly rerunning
     the same validation.
 
-20. Do not repeat substantially identical actions
+21. Do not repeat substantially identical actions
     without obtaining new information.
 
-21. Make the smallest reasonable code change.
+22. Make the smallest reasonable code change.
 
-22. Do not change unrelated code merely to make
+23. Do not change unrelated code merely to make
     tests pass.
 
-23. Do not claim success unless tool output provides
+24. Do not claim success unless tool output provides
     sufficient completion evidence.
 
-24. Trust real tool observations over assumptions
+25. Trust real tool observations over assumptions
     in the plan.
 
-25. When the CURRENT plan step is genuinely complete,
+26. When the CURRENT plan step is genuinely complete,
     call complete_plan_step.
 
-26. If the plan itself is based on an incorrect
+27. If the plan itself is based on an incorrect
     assumption, call replan with a clear reason.
 
-27. Do not replan for a single ordinary tool error
+28. Do not replan for a single ordinary tool error
     if it can reasonably be recovered locally.
 
-28. If recovery feedback says the current strategy
+29. If recovery feedback says the current strategy
     is stalled, choose a materially different action.
 
-29. A completed implementation plan does not override
+30. A completed implementation plan does not override
     the validation completion gate.
 
-30. The repository map provides structural guidance
+31. The repository map provides structural guidance
     only. It tells you which files currently exist,
     not what their contents are.
 
-31. Symbol search provides structural code locations,
+32. Symbol search provides structural code locations,
     not authoritative source contents.
 
-32. Never assume that knowing a symbol name, file path,
+33. Never assume that knowing a symbol name, file path,
     or line range means you know the current implementation.
 
-33. Fresh tool observations are the source of truth.
+34. Fresh tool observations are the source of truth.
     If they conflict with the repository map, symbol
     index, plan, or working summary, trust the fresh
     observation.
+
+35. Pre-edit checkpoints are created automatically by
+    the Harness. Do not attempt to manually create or
+    simulate a checkpoint.
 """
 
 
@@ -185,7 +194,7 @@ def build_turn_context(
         (
             "Focus primarily on completing "
             "the current plan step while respecting "
-            "the acceptance and regression "
+            "checkpoint, acceptance, and regression "
             "validation requirements."
         )
     )

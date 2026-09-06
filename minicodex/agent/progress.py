@@ -8,6 +8,7 @@ class ValidationStatus(
     str,
     Enum,
 ):
+
     UNKNOWN = "unknown"
     PASSED = "passed"
     IMPROVED = "improved"
@@ -18,19 +19,25 @@ class ValidationStatus(
 @dataclass
 class ValidationProgress:
     """
-    Tracks whether repeated validation attempts are
-    improving, unchanged, or regressing.
+    Trend between comparable validation runs.
 
-    This is NOT the source of truth for whether the
-    current edit revision is fully validated.
+    This is NOT validation truth.
 
-    That responsibility belongs to ValidationPipeline.
+    ValidationPipeline owns validation truth.
+
+    ProgressController only answers:
+
+        Is the SAME validation target improving,
+        unchanged, or regressing?
     """
 
     status: ValidationStatus
 
     previous_failed: int | None = None
+
     current_failed: int | None = None
+
+    validation_key: str | None = None
 
     message: str | None = None
 
@@ -41,10 +48,13 @@ class ValidationProgress:
         self,
     ) -> bool:
 
-        return self.status in {
-            ValidationStatus.PASSED,
-            ValidationStatus.IMPROVED,
-        }
+        return (
+            self.status
+            in {
+                ValidationStatus.PASSED,
+                ValidationStatus.IMPROVED,
+            }
+        )
 
 
 class ProgressController:
@@ -55,6 +65,7 @@ class ProgressController:
         progress_window: int = 6,
         max_validation_no_progress: int = 2,
     ):
+
         self.max_same_tool_repeats = (
             max_same_tool_repeats
         )
@@ -67,43 +78,41 @@ class ProgressController:
             max_validation_no_progress
         )
 
-        # =========================================
+        # =====================================================
         # Duplicate Tool State
-        # =========================================
+        # =====================================================
 
         self.last_tool_signature = None
+
         self.same_tool_repeat_count = 0
 
-        # =========================================
+        # =====================================================
         # Action History
-        # =========================================
+        # =====================================================
 
-        self.recent_actions: list[str] = []
+        self.recent_actions: list[
+            str
+        ] = []
 
-        # =========================================
-        # Validation Trend State
+        # =====================================================
+        # Validation Trend
         #
-        # This state may intentionally survive
-        # multiple edit revisions inside a task.
-        #
-        # Example:
-        #
-        # 5 failing
-        # → edit
-        # → 3 failing
-        #
-        # That is meaningful repair progress.
-        # =========================================
+        # Only comparable validation runs may share a trend.
+        # =====================================================
 
         self.last_validation_failed_count: (
             int | None
         ) = None
 
+        self.last_validation_key: (
+            str | None
+        ) = None
+
         self.validation_no_progress_count = 0
 
-    # =============================================
+    # =========================================================
     # Reset
-    # =============================================
+    # =========================================================
 
     def reset(
         self,
@@ -111,22 +120,20 @@ class ProgressController:
     ) -> None:
 
         self.last_tool_signature = None
+
         self.same_tool_repeat_count = 0
 
         self.recent_actions.clear()
 
-        # A normal reset occurs when a plan step completes
-        # or replanning happens.
-        #
-        # Validation trend is intentionally reset here
-        # because the local strategy context changed.
         self.last_validation_failed_count = None
+
+        self.last_validation_key = None
 
         self.validation_no_progress_count = 0
 
-    # =============================================
+    # =========================================================
     # Duplicate Tool Detection
-    # =============================================
+    # =========================================================
 
     def check_duplicate_tool_call(
         self,
@@ -180,9 +187,9 @@ class ProgressController:
             None,
         )
 
-    # =============================================
+    # =========================================================
     # Action History
-    # =============================================
+    # =========================================================
 
     def record_action(
         self,
@@ -199,9 +206,9 @@ class ProgressController:
             ]
         )
 
-    # =============================================
+    # =========================================================
     # Action Stall Detection
-    # =============================================
+    # =========================================================
 
     def is_action_stalled(
         self,
@@ -265,45 +272,60 @@ class ProgressController:
             and inspection_count >= 2
         )
 
-    # =============================================
+    # =========================================================
     # Validation Progress
-    # =============================================
+    # =========================================================
 
     def track_validation(
         self,
         failed_count: int | None,
+        validation_key: str | None = None,
     ) -> ValidationProgress:
 
-        # =========================================
-        # Cannot Understand Validation Result
-        # =========================================
+        # =====================================================
+        # Cannot Interpret Validation
+        # =====================================================
 
-        if failed_count is None:
+        if (
+            failed_count
+            is None
+        ):
 
             return ValidationProgress(
                 status=(
                     ValidationStatus.UNKNOWN
                 ),
-                message=None,
+                validation_key=(
+                    validation_key
+                ),
             )
 
-        previous = (
-            self.last_validation_failed_count
-        )
+        # =====================================================
+        # New Validation Series
+        #
+        # acceptance:test_a.py cannot be compared against
+        # regression:.
+        # =====================================================
 
-        # =========================================
-        # First Validation
-        # =========================================
+        if (
+            validation_key
+            != self.last_validation_key
+        ):
 
-        if previous is None:
+            self.last_validation_key = (
+                validation_key
+            )
 
             self.last_validation_failed_count = (
                 failed_count
             )
 
-            if failed_count == 0:
+            self.validation_no_progress_count = 0
 
-                self.validation_no_progress_count = 0
+            if (
+                failed_count
+                == 0
+            ):
 
                 return ValidationProgress(
                     status=(
@@ -311,6 +333,9 @@ class ProgressController:
                     ),
                     previous_failed=None,
                     current_failed=0,
+                    validation_key=(
+                        validation_key
+                    ),
                     message=(
                         "Validation succeeded."
                     ),
@@ -321,18 +346,79 @@ class ProgressController:
                     ValidationStatus.UNKNOWN
                 ),
                 previous_failed=None,
-                current_failed=failed_count,
+                current_failed=(
+                    failed_count
+                ),
+                validation_key=(
+                    validation_key
+                ),
+                message=(
+                    "Initial comparable validation "
+                    f"recorded: {failed_count} failed."
+                ),
+            )
+
+        previous = (
+            self.last_validation_failed_count
+        )
+
+        # =====================================================
+        # Defensive First Observation
+        # =====================================================
+
+        if (
+            previous
+            is None
+        ):
+
+            self.last_validation_failed_count = (
+                failed_count
+            )
+
+            if (
+                failed_count
+                == 0
+            ):
+
+                return ValidationProgress(
+                    status=(
+                        ValidationStatus.PASSED
+                    ),
+                    previous_failed=None,
+                    current_failed=0,
+                    validation_key=(
+                        validation_key
+                    ),
+                    message=(
+                        "Validation succeeded."
+                    ),
+                )
+
+            return ValidationProgress(
+                status=(
+                    ValidationStatus.UNKNOWN
+                ),
+                previous_failed=None,
+                current_failed=(
+                    failed_count
+                ),
+                validation_key=(
+                    validation_key
+                ),
                 message=(
                     "Initial validation recorded: "
                     f"{failed_count} failed."
                 ),
             )
 
-        # =========================================
-        # Tests Passed
-        # =========================================
+        # =====================================================
+        # Passed
+        # =====================================================
 
-        if failed_count == 0:
+        if (
+            failed_count
+            == 0
+        ):
 
             self.last_validation_failed_count = 0
 
@@ -342,18 +428,21 @@ class ProgressController:
                 status=(
                     ValidationStatus.PASSED
                 ),
-                previous_failed=previous,
+                previous_failed=(
+                    previous
+                ),
                 current_failed=0,
+                validation_key=(
+                    validation_key
+                ),
                 message=(
                     "Validation succeeded."
                 ),
             )
 
-        # =========================================
-        # Validation Improved
-        #
-        # 5 failed -> 3 failed
-        # =========================================
+        # =====================================================
+        # Improved
+        # =====================================================
 
         if (
             failed_count
@@ -370,8 +459,15 @@ class ProgressController:
                 status=(
                     ValidationStatus.IMPROVED
                 ),
-                previous_failed=previous,
-                current_failed=failed_count,
+                previous_failed=(
+                    previous
+                ),
+                current_failed=(
+                    failed_count
+                ),
+                validation_key=(
+                    validation_key
+                ),
                 message=(
                     "Validation improved: "
                     f"{previous} failed -> "
@@ -379,11 +475,9 @@ class ProgressController:
                 ),
             )
 
-        # =========================================
-        # Validation Unchanged
-        #
-        # 3 failed -> 3 failed
-        # =========================================
+        # =====================================================
+        # Unchanged
+        # =====================================================
 
         if (
             failed_count
@@ -405,21 +499,28 @@ class ProgressController:
                 status=(
                     ValidationStatus.UNCHANGED
                 ),
-                previous_failed=previous,
-                current_failed=failed_count,
+                previous_failed=(
+                    previous
+                ),
+                current_failed=(
+                    failed_count
+                ),
+                validation_key=(
+                    validation_key
+                ),
                 message=(
                     "Validation unchanged: "
                     f"{failed_count} tests "
                     "still failing."
                 ),
-                stalled=stalled,
+                stalled=(
+                    stalled
+                ),
             )
 
-        # =========================================
-        # Validation Regressed
-        #
-        # 2 failed -> 5 failed
-        # =========================================
+        # =====================================================
+        # Regressed
+        # =====================================================
 
         self.validation_no_progress_count += 1
 
@@ -436,12 +537,21 @@ class ProgressController:
             status=(
                 ValidationStatus.REGRESSED
             ),
-            previous_failed=previous,
-            current_failed=failed_count,
+            previous_failed=(
+                previous
+            ),
+            current_failed=(
+                failed_count
+            ),
+            validation_key=(
+                validation_key
+            ),
             message=(
                 "Validation regressed: "
                 f"{previous} failed -> "
                 f"{failed_count} failed."
             ),
-            stalled=stalled,
+            stalled=(
+                stalled
+            ),
         )

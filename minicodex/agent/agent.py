@@ -1,19 +1,45 @@
 import re
 
-from .loop import run_agent_loop
-from .state import AgentPlan
-from .progress import ProgressController
-from .recovery import RecoveryController
-from .tool_executor import ToolExecutor
-from .metrics import TokenMetrics
-from .context_budget import ContextBudget
-from .working_summary import WorkingSummary
-from .validation import ValidationPipeline
+from .checkpoint import (
+    CheckpointManager,
+)
+from .checkpoint_executor import (
+    CheckpointingToolExecutor,
+)
+from .context_budget import (
+    ContextBudget,
+)
+from .loop import (
+    run_agent_loop,
+)
+from .metrics import (
+    TokenMetrics,
+)
+from .progress import (
+    ProgressController,
+)
+from .recovery import (
+    RecoveryController,
+)
+from .state import (
+    AgentPlan,
+)
+from .tool_executor import (
+    ToolExecutor,
+)
+from .validation import (
+    ValidationPipeline,
+)
+from .working_summary import (
+    WorkingSummary,
+)
 
 from ..prompts.system import (
     build_system_prompt,
     build_turn_context,
 )
+
+from .rollback import RollbackEngine
 
 
 class MiniCodexAgent:
@@ -30,15 +56,68 @@ class MiniCodexAgent:
         max_context_tokens: int = 64000,
     ):
         self.llm = llm
+
         self.registry = registry
+
+        # =====================================================
+        # Behavioral Validation Pipeline
+        #
+        # This must exist before the checkpoint executor
+        # because checkpoint revisions are derived from the
+        # current ValidationPipeline revision.
+        # =====================================================
+
+        self.validation_pipeline = (
+            ValidationPipeline()
+        )
+
+        # =====================================================
+        # Checkpoint Manager
+        # =====================================================
+
+        self.checkpoint_manager = (
+            CheckpointManager(
+                workspace=(
+                    self._resolve_workspace(
+                        registry
+                    )
+                ),
+                max_checkpoints=50,
+            )
+        )
+
+        self.rollback_engine = (
+            RollbackEngine(
+                workspace=(
+                    self.checkpoint_manager.workspace
+                ),
+                checkpoint_manager=(
+                    self.checkpoint_manager
+                ),
+            )
+        )
 
         # =====================================================
         # Reliable Tool Execution Boundary
         # =====================================================
 
-        self.tool_executor = (
+        base_tool_executor = (
             ToolExecutor(
                 registry
+            )
+        )
+
+        self.tool_executor = (
+            CheckpointingToolExecutor(
+                executor=(
+                    base_tool_executor
+                ),
+                checkpoint_manager=(
+                    self.checkpoint_manager
+                ),
+                next_edit_revision=(
+                    self._next_edit_revision
+                ),
             )
         )
 
@@ -89,9 +168,12 @@ class MiniCodexAgent:
         # =====================================================
 
         self.planner = planner
+
         self.replanner = replanner
 
-        self.max_steps = max_steps
+        self.max_steps = (
+            max_steps
+        )
 
         self.max_step_attempts = (
             max_step_attempts
@@ -102,11 +184,13 @@ class MiniCodexAgent:
         # =====================================================
 
         self.active_plan: (
-            AgentPlan | None
+            AgentPlan
+            | None
         ) = None
 
         self.active_user_request: (
-            str | None
+            str
+            | None
         ) = None
 
         # =====================================================
@@ -129,22 +213,6 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Behavioral Validation Pipeline
-        #
-        # Owns:
-        # - validation evidence
-        # - edit revision
-        # - evidence invalidation
-        # - targeted/full scope
-        # - validation escalation
-        # - current edit validation state
-        # =====================================================
-
-        self.validation_pipeline = (
-            ValidationPipeline()
-        )
-
-        # =====================================================
         # Recovery Controller
         # =====================================================
 
@@ -152,6 +220,62 @@ class MiniCodexAgent:
             RecoveryController(
                 max_recovery_level=3
             )
+        )
+
+    # =========================================================
+    # Workspace Resolution
+    # =========================================================
+
+    @staticmethod
+    def _resolve_workspace(
+        registry,
+    ):
+        """
+        Resolve the common workspace from registered tools.
+
+        MiniCodex currently constructs all filesystem tools with
+        one shared workspace. We use the first tool exposing a
+        workspace attribute as the canonical task workspace.
+        """
+
+        tools = getattr(
+            registry,
+            "_tools",
+            {},
+        )
+
+        for tool in (
+            tools.values()
+        ):
+
+            workspace = getattr(
+                tool,
+                "workspace",
+                None,
+            )
+
+            if (
+                workspace
+                is not None
+            ):
+
+                return workspace
+
+        return "."
+
+    # =========================================================
+    # Next Edit Revision
+    # =========================================================
+
+    def _next_edit_revision(
+        self,
+    ) -> int:
+
+        return (
+            self.validation_pipeline
+            .state
+            .edit_revision
+            + 1
         )
 
     # =========================================================
@@ -179,6 +303,8 @@ class MiniCodexAgent:
         )
 
         self.validation_pipeline.reset()
+
+        self.checkpoint_manager.reset()
 
         self.recovery.reset()
 
@@ -234,9 +360,11 @@ class MiniCodexAgent:
         # Agent Loop
         # =====================================================
 
-        return run_agent_loop(
-            self,
-            user_input,
+        return (
+            run_agent_loop(
+                self,
+                user_input,
+            )
         )
 
     # =========================================================
@@ -246,14 +374,11 @@ class MiniCodexAgent:
     def _refresh_repo_map(
         self,
     ) -> None:
-        """
-        Refresh repository structural context.
 
-        RepoMap only scans paths. It never reads full source
-        contents, and traversal is bounded by RepoMap limits.
-        """
-
-        if self.repo_map is None:
+        if (
+            self.repo_map
+            is None
+        ):
 
             self.repo_map_text = (
                 "Repository map unavailable."
@@ -283,7 +408,10 @@ class MiniCodexAgent:
         self,
     ) -> dict:
 
-        if self.active_plan is None:
+        if (
+            self.active_plan
+            is None
+        ):
 
             return {
                 "completed": False,
@@ -299,7 +427,10 @@ class MiniCodexAgent:
             .complete_current_step()
         )
 
-        if step is None:
+        if (
+            step
+            is None
+        ):
 
             return {
                 "completed": False,
@@ -320,7 +451,9 @@ class MiniCodexAgent:
 
         return {
             "completed": True,
-            "step_id": step.id,
+            "step_id": (
+                step.id
+            ),
             "step_description": (
                 step.description
             ),
@@ -340,7 +473,10 @@ class MiniCodexAgent:
         reason: str,
     ) -> dict:
 
-        if self.active_plan is None:
+        if (
+            self.active_plan
+            is None
+        ):
 
             return {
                 "replanned": False,
@@ -353,7 +489,10 @@ class MiniCodexAgent:
                 ),
             }
 
-        if self.replanner is None:
+        if (
+            self.replanner
+            is None
+        ):
 
             return {
                 "replanned": False,
@@ -385,7 +524,8 @@ class MiniCodexAgent:
         try:
 
             new_plan = (
-                self.replanner.replan(
+                self.replanner
+                .replan(
                     user_request=(
                         self.active_user_request
                     ),
@@ -429,7 +569,8 @@ class MiniCodexAgent:
         )
 
         print(
-            f"Reason: {reason}"
+            f"Reason: "
+            f"{reason}"
         )
 
         self._print_plan(
@@ -456,11 +597,16 @@ class MiniCodexAgent:
         current_step,
     ) -> bool:
 
-        if current_step is None:
+        if (
+            current_step
+            is None
+        ):
+
             return False
 
         text = (
-            current_step.description
+            current_step
+            .description
         )
 
         lowered = (
@@ -503,6 +649,7 @@ class MiniCodexAgent:
             for keyword
             in chinese_keywords
         ):
+
             return True
 
         return any(
@@ -536,14 +683,11 @@ class MiniCodexAgent:
         plan=None,
         current_step=None,
         remaining_agent_steps: (
-            int | None
+            int
+            | None
         ) = None,
         **kwargs,
     ) -> str:
-
-        # =====================================================
-        # Refresh Repository Structure
-        # =====================================================
 
         self._refresh_repo_map()
 
@@ -570,23 +714,25 @@ class MiniCodexAgent:
                 "No active plan step."
             )
 
-        return build_turn_context(
-            plan_text=(
-                plan_text
-            ),
-            current_step_text=(
-                current_step_text
-            ),
-            remaining_agent_steps=(
-                remaining_agent_steps
-            ),
-            working_summary_text=(
-                self.working_summary
-                .render()
-            ),
-            repo_map_text=(
-                self.repo_map_text
-            ),
+        return (
+            build_turn_context(
+                plan_text=(
+                    plan_text
+                ),
+                current_step_text=(
+                    current_step_text
+                ),
+                remaining_agent_steps=(
+                    remaining_agent_steps
+                ),
+                working_summary_text=(
+                    self.working_summary
+                    .render()
+                ),
+                repo_map_text=(
+                    self.repo_map_text
+                ),
+            )
         )
 
     # =========================================================

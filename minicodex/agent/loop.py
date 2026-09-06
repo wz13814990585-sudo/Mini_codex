@@ -7,14 +7,26 @@ from .completion import (
 from .context import (
     compact_messages_for_pressure,
 )
-from .state import StepStatus
+from .progress import (
+    ValidationStatus,
+)
+from .state import (
+    StepStatus,
+)
 from .validation import (
     ValidationEvidence,
     ValidationNextAction,
     ValidationOutcome,
 )
 
-from ..tools.results import ToolResult
+from ..tools.results import (
+    ToolResult,
+)
+
+
+# =============================================================
+# Constants
+# =============================================================
 
 
 INCOMPLETE_PLAN_REMINDER = (
@@ -51,26 +63,29 @@ def run_agent_loop(
     """
     Main orchestration loop.
 
-    The loop owns Agent-level orchestration:
+    Responsibilities:
 
     - planning progress
     - context budget policy
     - token accounting
     - working summary updates
-    - duplicate policy
+    - duplicate tool policy
     - validation orchestration
+    - validation trend tracking
+    - automatic rollback orchestration
     - completion gating
     - recovery
-    - plan transitions
+    - replanning
     - stopping decisions
 
-    Tool execution mechanics are delegated to ToolExecutor.
+    Tool execution mechanics belong to ToolExecutor /
+    CheckpointingToolExecutor.
 
-    Validation meaning and edit-revision truth are delegated
-    to ValidationPipeline.
+    Validation meaning belongs to ValidationPipeline.
 
-    Final editing-task completion is delegated to
-    CompletionGate.
+    Rollback mechanics belong to RollbackEngine.
+
+    Completion truth belongs to CompletionGate.
     """
 
     messages = [
@@ -122,7 +137,7 @@ def run_agent_loop(
                 )
 
                 # =============================================
-                # Step Failure Budget Exceeded
+                # Step Attempt Budget Exceeded
                 # =============================================
 
                 if (
@@ -133,7 +148,7 @@ def run_agent_loop(
                     reason = (
                         f"Plan step "
                         f"{current_plan_step.id} "
-                        f"has exceeded its attempt budget. "
+                        "has exceeded its attempt budget. "
                         f"Current step: "
                         f"{current_plan_step.description}"
                     )
@@ -142,7 +157,8 @@ def run_agent_loop(
                         recovery_message,
                         should_continue,
                     ) = (
-                        agent.recovery.recover(
+                        agent.recovery
+                        .recover(
                             reason=reason,
                             replan_callback=(
                                 agent.replan
@@ -177,7 +193,7 @@ def run_agent_loop(
                         }
                     )
 
-                    # Recovery may have changed the plan.
+                    # Recovery may replace the active plan.
                     if agent.active_plan:
 
                         current_plan_step = (
@@ -199,7 +215,8 @@ def run_agent_loop(
         # =====================================================
 
         context_pressure = (
-            agent.context_budget.pressure
+            agent.context_budget
+            .pressure
         )
 
         print(
@@ -232,8 +249,12 @@ def run_agent_loop(
 
         system_prompt = (
             agent._build_system_prompt(
-                user_input=user_input,
-                plan=agent.active_plan,
+                user_input=(
+                    user_input
+                ),
+                plan=(
+                    agent.active_plan
+                ),
                 current_step=(
                     current_plan_step
                 ),
@@ -269,16 +290,18 @@ def run_agent_loop(
             llm_messages.append(
                 {
                     "role": "user",
-                    "content": build_turn(
-                        plan=(
-                            agent.active_plan
-                        ),
-                        current_step=(
-                            current_plan_step
-                        ),
-                        remaining_agent_steps=(
-                            remaining_agent_steps
-                        ),
+                    "content": (
+                        build_turn(
+                            plan=(
+                                agent.active_plan
+                            ),
+                            current_step=(
+                                current_plan_step
+                            ),
+                            remaining_agent_steps=(
+                                remaining_agent_steps
+                            ),
+                        )
                     ),
                 }
             )
@@ -288,7 +311,8 @@ def run_agent_loop(
         # =====================================================
 
         llm_response = (
-            agent.llm.chat(
+            agent.llm
+            .chat(
                 messages=(
                     llm_messages
                 ),
@@ -347,7 +371,7 @@ def run_agent_loop(
         )
 
         # =====================================================
-        # Extract Provider Message
+        # Provider Message
         # =====================================================
 
         response = (
@@ -364,10 +388,6 @@ def run_agent_loop(
                 response.content
                 or ""
             )
-
-            # =============================================
-            # Completion Gate
-            # =============================================
 
             completion = (
                 evaluate_completion(
@@ -390,7 +410,7 @@ def run_agent_loop(
             )
 
             # =============================================
-            # Editing Task Fully Completed
+            # Editing Task Fully Validated
             # =============================================
 
             if (
@@ -410,17 +430,15 @@ def run_agent_loop(
                 )
 
             # =============================================
-            # An Edit Exists But Completion Evidence
-            # Is Missing
+            # There Has Been An Edit
             #
-            # Plan completion does not override this.
+            # Once a mutation occurred, completion evidence
+            # cannot be bypassed by final LLM prose.
             # =============================================
 
             if (
                 completion.has_edit
-                and not (
-                    completion.can_complete
-                )
+                and not completion.can_complete
             ):
 
                 remaining_budget = (
@@ -448,7 +466,7 @@ def run_agent_loop(
                     )
 
                     # =====================================
-                    # Missing Acceptance
+                    # Acceptance Missing
                     # =====================================
 
                     if (
@@ -472,7 +490,7 @@ def run_agent_loop(
                         )
 
                     # =====================================
-                    # Missing Full Regression
+                    # Full Regression Missing
                     # =====================================
 
                     elif (
@@ -486,8 +504,7 @@ def run_agent_loop(
                         reminder = (
                             "Acceptance evidence exists, "
                             "but full regression validation "
-                            "is still missing. "
-                            "Run "
+                            "is still missing. Run "
                             "run_tests("
                             "path='.', "
                             "purpose='regression')."
@@ -523,7 +540,7 @@ def run_agent_loop(
                 )
 
             # =============================================
-            # Prevent Premature Finish With Incomplete Plan
+            # Incomplete Plan Protection
             # =============================================
 
             if (
@@ -586,9 +603,7 @@ def run_agent_loop(
                 )
 
             # =============================================
-            # Non-Editing / Read-Only Task
-            #
-            # No edit means CompletionGate is not required.
+            # Read-Only / Informational Task
             # =============================================
 
             return content
@@ -619,11 +634,13 @@ def run_agent_loop(
         ):
 
             tool_name = (
-                tool_call.function.name
+                tool_call
+                .function
+                .name
             )
 
             # =================================================
-            # 1. Prepare Tool Call
+            # 1. Prepare
             # =================================================
 
             prepared = (
@@ -641,7 +658,7 @@ def run_agent_loop(
             )
 
             # =================================================
-            # Preparation Failure
+            # Preparation Failed
             # =================================================
 
             if (
@@ -653,22 +670,19 @@ def run_agent_loop(
                     prepared.error
                 )
 
-                # ---------------------------------------------
-                # Working Summary
-                # ---------------------------------------------
-
                 agent.working_summary.record_tool_result(
-                    tool_name=tool_name,
+                    tool_name=(
+                        tool_name
+                    ),
                     arguments={},
-                    result=result,
+                    result=(
+                        result
+                    ),
                 )
 
                 if current_plan_step:
 
-                    (
-                        current_plan_step
-                        .increment_attempt()
-                    )
+                    current_plan_step.increment_attempt()
 
                 observation_text = (
                     result.to_llm_text()
@@ -733,33 +747,32 @@ def run_agent_loop(
 
             if not allowed:
 
-                result = ToolResult(
-                    success=False,
-                    summary=(
-                        f"Tool call "
-                        f"'{tool_name}' "
-                        "was blocked as "
-                        "a duplicate."
-                    ),
-                    data={
-                        "tool_name": (
-                            tool_name
+                result = (
+                    ToolResult(
+                        success=False,
+                        summary=(
+                            f"Tool call "
+                            f"'{tool_name}' "
+                            "was blocked as "
+                            "a duplicate."
                         ),
-                        "failure_type": (
-                            "duplicate_call"
+                        data={
+                            "tool_name": (
+                                tool_name
+                            ),
+                            "failure_type": (
+                                "duplicate_call"
+                            ),
+                        },
+                        error=(
+                            duplicate_reason
                         ),
-                    },
-                    error=(
-                        duplicate_reason
-                    ),
+                    )
                 )
 
                 if current_plan_step:
 
-                    (
-                        current_plan_step
-                        .increment_attempt()
-                    )
+                    current_plan_step.increment_attempt()
 
                 print(
                     "\n[Duplicate Tool Blocked]"
@@ -768,7 +781,10 @@ def run_agent_loop(
             else:
 
                 # =============================================
-                # 3. Reliable Execution
+                # 3. Reliable Tool Execution
+                #
+                # At Stage 10 this may actually be
+                # CheckpointingToolExecutor.
                 # =============================================
 
                 execution = (
@@ -787,23 +803,26 @@ def run_agent_loop(
                     and current_plan_step
                 ):
 
-                    (
-                        current_plan_step
-                        .increment_attempt()
-                    )
+                    current_plan_step.increment_attempt()
 
             # =================================================
             # 4. Working Summary
             # =================================================
 
             agent.working_summary.record_tool_result(
-                tool_name=tool_name,
-                arguments=arguments,
-                result=result,
+                tool_name=(
+                    tool_name
+                ),
+                arguments=(
+                    arguments
+                ),
+                result=(
+                    result
+                ),
             )
 
             # =================================================
-            # 5. ToolResult → LLM Observation
+            # 5. Tool Observation
             # =================================================
 
             observation_text = (
@@ -828,7 +847,7 @@ def run_agent_loop(
             )
 
             # =================================================
-            # 6. Record Agent Action
+            # 6. Record Action
             # =================================================
 
             agent.progress.record_action(
@@ -838,9 +857,11 @@ def run_agent_loop(
             # =================================================
             # Successful Edit
             #
-            # Every successful edit creates a new revision.
-            # Acceptance/regression evidence from older
-            # revisions immediately becomes stale.
+            # CheckpointingToolExecutor has already:
+            #
+            # capture → edit → seal
+            #
+            # Here Loop creates the logical workspace revision.
             # =================================================
 
             if (
@@ -862,6 +883,19 @@ def run_agent_loop(
                     "[Validation Revision] "
                     f"{revision}"
                 )
+
+                checkpoint_id = (
+                    result.data.get(
+                        "checkpoint_id"
+                    )
+                )
+
+                if checkpoint_id:
+
+                    print(
+                        "[Checkpoint] "
+                        f"{checkpoint_id}"
+                    )
 
             # =================================================
             # Complete Plan Step
@@ -940,7 +974,7 @@ def run_agent_loop(
                 continue
 
             # =================================================
-            # Structured Validation Pipeline
+            # Structured Validation
             # =================================================
 
             if (
@@ -951,9 +985,15 @@ def run_agent_loop(
                 evidence = (
                     agent.validation_pipeline
                     .observe(
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        result=result,
+                        tool_name=(
+                            tool_name
+                        ),
+                        arguments=(
+                            arguments
+                        ),
+                        result=(
+                            result
+                        ),
                     )
                 )
 
@@ -991,9 +1031,15 @@ def run_agent_loop(
                         restart_agent_loop,
                     ) = (
                         apply_validation_evidence(
-                            agent=agent,
-                            evidence=evidence,
-                            messages=messages,
+                            agent=(
+                                agent
+                            ),
+                            evidence=(
+                                evidence
+                            ),
+                            messages=(
+                                messages
+                            ),
                         )
                     )
 
@@ -1039,8 +1085,11 @@ def run_agent_loop(
                     recovery_message,
                     should_continue,
                 ) = (
-                    agent.recovery.recover(
-                        reason=reason,
+                    agent.recovery
+                    .recover(
+                        reason=(
+                            reason
+                        ),
                         replan_callback=(
                             agent.replan
                         ),
@@ -1099,7 +1148,7 @@ def run_agent_loop(
                 break
 
         # =====================================================
-        # After Tool Call Batch
+        # After Tool Batch
         # =====================================================
 
         if early_stop:
@@ -1145,6 +1194,37 @@ def run_agent_loop(
             "the maximum number of "
             "agent steps was reached."
         ),
+    )
+
+
+# =============================================================
+# Validation Evidence Identity
+# =============================================================
+
+
+def validation_evidence_key(
+    evidence: ValidationEvidence,
+) -> str:
+
+    """
+    Identity of one comparable validation series.
+
+    Failure counts may only be compared when purpose,
+    scope and test path are identical.
+
+    Example:
+
+        acceptance|targeted|tests/test_divide.py
+
+    must never be compared with:
+
+        regression|full|.
+    """
+
+    return (
+        f"{evidence.purpose.value}"
+        f"|{evidence.scope.value}"
+        f"|{evidence.path or ''}"
     )
 
 
@@ -1228,26 +1308,26 @@ def apply_validation_evidence(
 ]:
 
     """
-    Convert normalized ValidationEvidence into AgentLoop
-    orchestration.
-
-    Responsibilities:
+    Convert normalized ValidationEvidence into orchestration.
 
     ValidationPipeline:
-        What does this validation result mean?
+        What does the validation mean?
 
     ProgressController:
-        Are repeated failures improving or stalled?
+        Is the same validation target improving or regressing?
+
+    RollbackEngine:
+        Restore the before-state when policy chooses rollback.
 
     CompletionGate:
-        Is there enough independent evidence to finish?
+        Is there enough evidence to finish?
 
     AgentLoop:
-        What should execution do next?
+        What happens next?
     """
 
     # =========================================================
-    # Evidence → Failure Count For Progress Trend
+    # Evidence → Failed Count
     # =========================================================
 
     if (
@@ -1270,10 +1350,19 @@ def apply_validation_evidence(
 
         failed_count = None
 
+    # =========================================================
+    # Comparable Validation Trend
+    # =========================================================
+
     validation_progress = (
         agent.progress
         .track_validation(
-            failed_count
+            failed_count,
+            validation_key=(
+                validation_evidence_key(
+                    evidence
+                )
+            ),
         )
     )
 
@@ -1288,6 +1377,52 @@ def apply_validation_evidence(
         print(
             validation_progress.message
         )
+
+    # =========================================================
+    # Automatic Rollback On Strict Regression
+    #
+    # Only FAILED evidence can trigger this.
+    #
+    # PASSED → another suite with failures is protected
+    # by validation_key and therefore starts a new series.
+    # =========================================================
+
+    if (
+        evidence.outcome
+        == ValidationOutcome.FAILED
+        and (
+            validation_progress.status
+            == ValidationStatus.REGRESSED
+        )
+    ):
+
+        rollback_control = (
+            rollback_regressed_edit(
+                agent=(
+                    agent
+                ),
+                evidence=(
+                    evidence
+                ),
+                validation_progress=(
+                    validation_progress
+                ),
+                messages=(
+                    messages
+                ),
+            )
+        )
+
+        if (
+            rollback_control
+            is not None
+        ):
+
+            return rollback_control
+
+    # =========================================================
+    # Meaningful Progress
+    # =========================================================
 
     if (
         validation_progress
@@ -1321,7 +1456,7 @@ def apply_validation_evidence(
     )
 
     # =========================================================
-    # Both Acceptance + Regression Exist
+    # Both Acceptance + Full Regression
     # =========================================================
 
     if (
@@ -1353,7 +1488,7 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # Regression Exists But Acceptance Is Missing
+    # Need Acceptance
     # =========================================================
 
     if (
@@ -1389,7 +1524,7 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # Acceptance Passed → Need Full Regression
+    # Need Full Regression
     # =========================================================
 
     if (
@@ -1453,7 +1588,10 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # Failed But Not Yet Stalled
+    # Ordinary Failure
+    #
+    # A regression has already had an opportunity to
+    # trigger rollback above.
     # =========================================================
 
     if (
@@ -1474,7 +1612,7 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # No Validation Stall
+    # No Stall
     # =========================================================
 
     if not (
@@ -1488,7 +1626,7 @@ def apply_validation_evidence(
         )
 
     # =========================================================
-    # Validation Recovery
+    # Recovery Escalation
     # =========================================================
 
     reason = (
@@ -1501,8 +1639,11 @@ def apply_validation_evidence(
         recovery_message,
         should_continue,
     ) = (
-        agent.recovery.recover(
-            reason=reason,
+        agent.recovery
+        .recover(
+            reason=(
+                reason
+            ),
             replan_callback=(
                 agent.replan
             ),
@@ -1543,6 +1684,302 @@ def apply_validation_evidence(
 
 
 # =============================================================
+# Automatic Rollback Policy
+# =============================================================
+
+
+def rollback_regressed_edit(
+    *,
+    agent,
+    evidence: ValidationEvidence,
+    validation_progress,
+    messages: list,
+) -> tuple[
+    str | None,
+    bool,
+] | None:
+
+    """
+    Roll back the CURRENT edit revision when the SAME
+    validation target became strictly worse.
+
+    Important:
+
+    RollbackEngine owns the physical restore.
+
+    This function only decides whether that mechanism should
+    be invoked and updates orchestration state afterward.
+    """
+
+    pipeline = getattr(
+        agent,
+        "validation_pipeline",
+        None,
+    )
+
+    checkpoint_manager = getattr(
+        agent,
+        "checkpoint_manager",
+        None,
+    )
+
+    rollback_engine = getattr(
+        agent,
+        "rollback_engine",
+        None,
+    )
+
+    if (
+        pipeline is None
+        or checkpoint_manager is None
+        or rollback_engine is None
+    ):
+
+        return None
+
+    # =========================================================
+    # Evidence Must Belong To Current Revision
+    # =========================================================
+
+    current_revision = (
+        pipeline
+        .state
+        .edit_revision
+    )
+
+    if (
+        evidence.edit_revision
+        != current_revision
+    ):
+
+        return None
+
+    # =========================================================
+    # Resolve Current Revision Checkpoint
+    # =========================================================
+
+    checkpoint = (
+        checkpoint_manager
+        .latest_for_revision(
+            evidence.edit_revision
+        )
+    )
+
+    if (
+        checkpoint
+        is None
+    ):
+
+        return None
+
+    if (
+        not checkpoint.sealed
+        or checkpoint.rolled_back
+    ):
+
+        return None
+
+    print(
+        "\n[Automatic Rollback]"
+    )
+
+    print(
+        (
+            "Validation regression detected: "
+            f"{validation_progress.previous_failed} "
+            "failed -> "
+            f"{validation_progress.current_failed} "
+            "failed."
+        )
+    )
+
+    print(
+        (
+            "Validation series: "
+            f"{validation_progress.validation_key}"
+        )
+    )
+
+    print(
+        (
+            "Checkpoint: "
+            f"{checkpoint.checkpoint_id}"
+        )
+    )
+
+    # =========================================================
+    # Physical Rollback
+    # =========================================================
+
+    rollback_result = (
+        rollback_engine
+        .rollback(
+            checkpoint
+            .checkpoint_id
+        )
+    )
+
+    # =========================================================
+    # Working Summary
+    # =========================================================
+
+    working_summary = getattr(
+        agent,
+        "working_summary",
+        None,
+    )
+
+    if (
+        working_summary
+        is not None
+    ):
+
+        working_summary.record_tool_result(
+            tool_name=(
+                "automatic_rollback"
+            ),
+            arguments={
+                "checkpoint_id": (
+                    checkpoint
+                    .checkpoint_id
+                ),
+                "edit_revision": (
+                    evidence
+                    .edit_revision
+                ),
+                "validation_key": (
+                    validation_progress
+                    .validation_key
+                ),
+                "failed_before": (
+                    validation_progress
+                    .previous_failed
+                ),
+                "failed_after": (
+                    validation_progress
+                    .current_failed
+                ),
+            },
+            result=(
+                rollback_result
+            ),
+        )
+
+    # =========================================================
+    # Rollback Failed / Was Blocked
+    # =========================================================
+
+    if not (
+        rollback_result.success
+    ):
+
+        print(
+            "\n[Rollback Failed]"
+        )
+
+        print(
+            rollback_result.to_llm_text()
+        )
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Validation became worse after the "
+                    "current edit, so the Harness attempted "
+                    "an automatic rollback, but rollback "
+                    "was blocked or failed. "
+                    f"{rollback_result.to_llm_text()} "
+                    "Inspect the current physical workspace "
+                    "before making another modification."
+                ),
+            }
+        )
+
+        return (
+            None,
+            True,
+        )
+
+    # =========================================================
+    # Rollback Is A New Workspace State
+    #
+    # Revision sequence remains monotonic:
+    #
+    # revision 4 = before
+    # revision 5 = bad edit
+    # revision 6 = rollback result
+    #
+    # Even if revision 4 and revision 6 have identical
+    # physical content.
+    # =========================================================
+
+    rollback_revision = (
+        pipeline
+        .record_edit()
+    )
+
+    # =========================================================
+    # Validation Trend Is Now Stale
+    # =========================================================
+
+    agent.progress.reset()
+
+    # =========================================================
+    # Recovery Has Made Real Progress
+    # =========================================================
+
+    agent.recovery.mark_progress()
+
+    # =========================================================
+    # Tell LLM What Deterministically Happened
+    # =========================================================
+
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "The Harness detected that the latest "
+                "comparable validation became worse and "
+                "automatically rolled back the responsible "
+                "edit. "
+                f"Checkpoint "
+                f"{checkpoint.checkpoint_id} was restored. "
+                f"The restored workspace is now revision "
+                f"{rollback_revision}. "
+                "All previous validation evidence is stale. "
+                "Inspect the restored source and choose a "
+                "materially different repair strategy. "
+                "Do not immediately repeat the reverted edit."
+            ),
+        }
+    )
+
+    print(
+        "\n[Rollback Successful]"
+    )
+
+    print(
+        (
+            "Restored checkpoint: "
+            f"{checkpoint.checkpoint_id}"
+        )
+    )
+
+    print(
+        (
+            "New workspace revision: "
+            f"{rollback_revision}"
+        )
+    )
+
+    return (
+        None,
+        True,
+    )
+
+
+# =============================================================
 # Tool Call History Integrity
 # =============================================================
 
@@ -1554,12 +1991,11 @@ def append_skipped_tool_results(
 ) -> None:
 
     """
-    Tool-call protocols expect every assistant tool call
-    to receive a corresponding tool response.
+    Provider tool-call protocols expect every assistant tool
+    call to receive a corresponding tool response.
 
-    When plan/recovery/validation state changes midway
-    through a batch, remaining calls are deliberately
-    skipped instead of executed.
+    When plan, validation or recovery state changes midway
+    through a batch, remaining calls are intentionally skipped.
     """
 
     for tool_call in tool_calls:
@@ -1600,7 +2036,7 @@ def summarize_agent_stop(
     )
 
     # =========================================================
-    # Plan Status
+    # Plan
     # =========================================================
 
     if plan:
@@ -1619,15 +2055,18 @@ def summarize_agent_stop(
             step
             for step
             in plan.all_steps()
-            if step.status in {
-                StepStatus.PENDING,
-                StepStatus.IN_PROGRESS,
-            }
+            if (
+                step.status
+                in {
+                    StepStatus.PENDING,
+                    StepStatus.IN_PROGRESS,
+                }
+            )
         ]
 
         lines.append(
             (
-                f"Plan progress: "
+                "Plan progress: "
                 f"{len(completed)} completed, "
                 f"{len(remaining)} remaining."
             )
@@ -1643,15 +2082,19 @@ def summarize_agent_stop(
                 )
             )
 
-        if plan.is_completed():
+        if (
+            plan.is_completed()
+        ):
 
             lines.append(
-                "All plan steps are "
-                "marked complete."
+                (
+                    "All plan steps are "
+                    "marked complete."
+                )
             )
 
     # =========================================================
-    # Validation State
+    # Validation
     # =========================================================
 
     pipeline = getattr(
@@ -1727,12 +2170,66 @@ def summarize_agent_stop(
         )
 
     # =========================================================
+    # Checkpoint / Rollback State
+    # =========================================================
+
+    checkpoint_manager = getattr(
+        agent,
+        "checkpoint_manager",
+        None,
+    )
+
+    if (
+        checkpoint_manager
+        is not None
+    ):
+
+        checkpoints = (
+            checkpoint_manager
+            .all_checkpoints()
+        )
+
+        lines.append(
+            (
+                "Checkpoint count: "
+                f"{len(checkpoints)}."
+            )
+        )
+
+        if checkpoints:
+
+            latest = (
+                checkpoints[-1]
+            )
+
+            lines.append(
+                (
+                    "Latest checkpoint: "
+                    f"{latest.checkpoint_id}, "
+                    f"revision="
+                    f"{latest.edit_revision}, "
+                    f"path="
+                    f"{latest.snapshot.path}, "
+                    f"sealed="
+                    f"{latest.sealed}, "
+                    f"rolled_back="
+                    f"{latest.rolled_back}."
+                )
+            )
+
+    # =========================================================
     # Validation Failure Trend
     # =========================================================
 
     failed = getattr(
         agent.progress,
         "last_validation_failed_count",
+        None,
+    )
+
+    validation_key = getattr(
+        agent.progress,
+        "last_validation_key",
         None,
     )
 
@@ -1758,6 +2255,17 @@ def summarize_agent_stop(
                 "Latest validation "
                 "failure count: "
                 f"{failed}."
+            )
+        )
+
+    if (
+        validation_key
+    ):
+
+        lines.append(
+            (
+                "Validation trend key: "
+                f"{validation_key}."
             )
         )
 
