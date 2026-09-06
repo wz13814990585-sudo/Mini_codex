@@ -28,6 +28,12 @@ from .recovery import (
 from .rollback import (
     RollbackEngine,
 )
+from .safety import (
+    SafetyPolicy,
+)
+from .safety_executor import (
+    SafetyToolExecutor,
+)
 from .state import (
     AgentPlan,
 )
@@ -96,6 +102,21 @@ class MiniCodexAgent:
         )
 
         # =====================================================
+        # Stage 12 Safety / Permission
+        # =====================================================
+
+        self.safety_policy = (
+            SafetyPolicy(
+                workspace=(
+                    self.workspace
+                ),
+                git_awareness=(
+                    self.git_awareness
+                ),
+            )
+        )
+
+        # =====================================================
         # Behavioral Validation
         # =====================================================
 
@@ -138,7 +159,7 @@ class MiniCodexAgent:
             )
         )
 
-        self.tool_executor = (
+        checkpoint_executor = (
             CheckpointingToolExecutor(
                 executor=(
                     base_tool_executor
@@ -152,6 +173,29 @@ class MiniCodexAgent:
                 on_successful_edit=(
                     self.git_awareness
                     .record_agent_edit
+                ),
+            )
+        )
+
+        # =====================================================
+        # Stage 12 Safety Boundary
+        #
+        # LLM
+        #   ↓
+        # Safety
+        #   ↓
+        # Checkpoint
+        #   ↓
+        # ToolExecutor
+        # =====================================================
+
+        self.tool_executor = (
+            SafetyToolExecutor(
+                executor=(
+                    checkpoint_executor
+                ),
+                policy=(
+                    self.safety_policy
                 ),
             )
         )
@@ -343,9 +387,7 @@ class MiniCodexAgent:
         self.working_summary.reset()
 
         # =====================================================
-        # Capture Task-Start Git Baseline
-        #
-        # This must happen before MiniCodex performs any edit.
+        # Task-Start Git Baseline
         # =====================================================
 
         self.git_awareness.reset_task()
@@ -734,13 +776,6 @@ class MiniCodexAgent:
 
         # =====================================================
         # Fresh Git State
-        #
-        # Stage 11 invariant:
-        #
-        # Context is cache.
-        # Git / filesystem are source of truth.
-        #
-        # Therefore Git is refreshed on EVERY LLM turn.
         # =====================================================
 
         try:
@@ -756,6 +791,25 @@ class MiniCodexAgent:
 
             git_awareness_text = (
                 "Git awareness unavailable: "
+                f"{type(e).__name__}: "
+                f"{e}"
+            )
+
+        # =====================================================
+        # Safety Context
+        # =====================================================
+
+        try:
+
+            safety_policy_text = (
+                self.safety_policy
+                .render()
+            )
+
+        except Exception as e:
+
+            safety_policy_text = (
+                "Safety policy unavailable: "
                 f"{type(e).__name__}: "
                 f"{e}"
             )
@@ -811,6 +865,9 @@ class MiniCodexAgent:
                 ),
                 git_awareness_text=(
                     git_awareness_text
+                ),
+                safety_policy_text=(
+                    safety_policy_text
                 ),
             )
         )

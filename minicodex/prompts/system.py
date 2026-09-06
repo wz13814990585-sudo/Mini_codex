@@ -126,11 +126,40 @@ Rules:
     contain user work. Do not assume MiniCodex owns it.
 
 40. Never use run_command to perform destructive Git
-    operations such as git reset, git checkout,
-    git restore, git clean, or git stash.
+    operations.
 
-41. Stage 11 Git tools are observational only.
+41. Git awareness tools are observational only.
     Do not stage or commit changes automatically.
+
+42. Safety decisions are made deterministically by
+    the Harness and cannot be overridden by the LLM.
+
+43. If a tool call is blocked by the safety policy,
+    do not immediately retry the same operation using
+    another equivalent shell command.
+
+44. Use dedicated edit tools for project file changes.
+    Do not use run_command to bypass edit checkpoints.
+
+45. Direct modification of .git metadata is prohibited.
+
+46. Files that were already dirty when the task started
+    may contain user work. Modify them only when the
+    task genuinely requires it and preserve unrelated
+    content.
+
+47. A CAUTION safety decision means the operation was
+    allowed but involved elevated risk. Treat the
+    returned safety metadata as authoritative.
+
+48. A BLOCKED safety decision means the Harness refused
+    execution. Choose a safer strategy rather than
+    trying to bypass the restriction.
+
+49. Do not claim that a blocked operation occurred.
+
+50. Safety policy checks do not replace validation,
+    checkpoints, Git awareness, or source inspection.
 """
 
 
@@ -146,6 +175,7 @@ def build_turn_context(
     working_summary_text: str | None = None,
     repo_map_text: str | None = None,
     git_awareness_text: str | None = None,
+    safety_policy_text: str | None = None,
 ) -> str:
 
     if (
@@ -190,6 +220,18 @@ def build_turn_context(
         )
 
     if (
+        safety_policy_text
+        and safety_policy_text.strip()
+    ):
+
+        parts.append(
+            (
+                "Harness safety policy:\n"
+                f"{safety_policy_text.strip()}"
+            )
+        )
+
+    if (
         repo_map_text
         and repo_map_text.strip()
     ):
@@ -217,8 +259,9 @@ def build_turn_context(
         (
             "Focus primarily on completing "
             "the current plan step while respecting "
-            "Git ownership awareness, checkpoint, "
-            "acceptance, and regression requirements."
+            "Harness safety policy, Git ownership "
+            "awareness, checkpoints, acceptance, "
+            "and regression requirements."
         )
     )
 

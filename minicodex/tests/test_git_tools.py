@@ -81,6 +81,11 @@ def make_repo(
     return path
 
 
+# =============================================================
+# Git Status Tool
+# =============================================================
+
+
 def test_git_status_tool(
     tmp_path,
 ):
@@ -145,6 +150,18 @@ def test_git_status_tool(
         ]
     )
 
+    assert (
+        "demo.py"
+        in result.data[
+            "agent_current_changed_files"
+        ]
+    )
+
+
+# =============================================================
+# Git Diff Tool
+# =============================================================
+
 
 def test_git_diff_tool(
     tmp_path,
@@ -188,6 +205,69 @@ def test_git_diff_tool(
         "+value = 3"
         in result.llm_content
     )
+
+
+# =============================================================
+# Untracked Git Diff Tool
+# =============================================================
+
+
+def test_git_diff_tool_shows_untracked_file(
+    tmp_path,
+):
+
+    make_repo(
+        tmp_path
+    )
+
+    (
+        tmp_path
+        / "feature.py"
+    ).write_text(
+        (
+            "def new_feature():\n"
+            "    return 42\n"
+        ),
+        encoding="utf-8",
+    )
+
+    inspector = (
+        GitRepositoryInspector(
+            tmp_path
+        )
+    )
+
+    tool = (
+        GitDiffTool(
+            inspector
+        )
+    )
+
+    result = (
+        tool.execute(
+            path="feature.py"
+        )
+    )
+
+    assert (
+        result.success
+        is True
+    )
+
+    assert (
+        "new file mode"
+        in result.llm_content
+    )
+
+    assert (
+        "+def new_feature():"
+        in result.llm_content
+    )
+
+
+# =============================================================
+# Workspace Guard
+# =============================================================
 
 
 def test_git_diff_rejects_outside_workspace(
