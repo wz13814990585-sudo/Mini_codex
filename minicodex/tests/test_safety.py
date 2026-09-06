@@ -113,7 +113,7 @@ def build_policy(
 
 
 # =============================================================
-# Safe Tool
+# SAFE Tool
 # =============================================================
 
 
@@ -131,7 +131,9 @@ def test_read_tool_is_safe(
         policy.assess(
             "read_file",
             {
-                "path": "demo.py",
+                "path": (
+                    "demo.py"
+                ),
             },
         )
     )
@@ -148,7 +150,7 @@ def test_read_tool_is_safe(
 
 
 # =============================================================
-# Safe Workspace Edit
+# SAFE Edit
 # =============================================================
 
 
@@ -269,7 +271,9 @@ def test_git_metadata_edit_is_blocked(
 
     assert (
         decision.rule
-        == "git_metadata_protection"
+        == (
+            "git_metadata_protection"
+        )
     )
 
 
@@ -330,7 +334,7 @@ def test_preexisting_dirty_file_is_caution(
 
 
 # =============================================================
-# Destructive Shell Commands
+# rm
 # =============================================================
 
 
@@ -366,6 +370,43 @@ def test_rm_command_is_blocked(
     )
 
 
+def test_absolute_rm_command_is_blocked(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "/bin/rm -rf build"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is False
+    )
+
+    assert (
+        decision.rule
+        == "destructive_rm"
+    )
+
+
+# =============================================================
+# Git Mutation
+# =============================================================
+
+
 def test_git_reset_is_blocked(
     tmp_path,
 ):
@@ -382,6 +423,39 @@ def test_git_reset_is_blocked(
             {
                 "command": (
                     "git reset --hard HEAD"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is False
+    )
+
+    assert (
+        decision.rule
+        == "git_mutation"
+    )
+
+
+def test_absolute_git_reset_is_blocked(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "/usr/bin/git reset "
+                    "--hard HEAD"
                 ),
             },
         )
@@ -425,6 +499,43 @@ def test_git_clean_is_blocked(
     )
 
 
+def test_git_branch_delete_is_blocked(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "git branch -D feature"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is False
+    )
+
+    assert (
+        decision.rule
+        == "git_reference_mutation"
+    )
+
+
+# =============================================================
+# Shell Redirection
+# =============================================================
+
+
 def test_shell_file_redirection_is_blocked(
     tmp_path,
 ):
@@ -441,6 +552,41 @@ def test_shell_file_redirection_is_blocked(
             {
                 "command": (
                     "echo hello > demo.txt"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is False
+    )
+
+    assert (
+        decision.rule
+        == (
+            "checkpoint_bypass_redirection"
+        )
+    )
+
+
+def test_stderr_file_redirection_is_blocked(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "python demo.py "
+                    "2>error.log"
                 ),
             },
         )
@@ -476,6 +622,90 @@ def test_dev_null_redirection_is_allowed(
                 "command": (
                     "python demo.py "
                     "2>/dev/null"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is True
+    )
+
+
+def test_stderr_to_stdout_fd_redirect_is_allowed(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "python demo.py "
+                    "2>&1"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is True
+    )
+
+
+def test_stdout_to_stderr_fd_redirect_is_allowed(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "python demo.py "
+                    "1>&2"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is True
+    )
+
+
+def test_dev_null_and_fd_redirect_are_allowed(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "python demo.py "
+                    ">/dev/null 2>&1"
                 ),
             },
         )
@@ -524,8 +754,36 @@ def test_git_status_command_is_safe(
     )
 
 
+def test_absolute_git_status_is_safe(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "/usr/bin/git "
+                    "status --short"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is True
+    )
+
+
 # =============================================================
-# Caution
+# Network
 # =============================================================
 
 
@@ -544,7 +802,8 @@ def test_network_command_is_caution(
             "run_command",
             {
                 "command": (
-                    "curl https://example.com"
+                    "curl "
+                    "https://example.com"
                 ),
             },
         )
@@ -566,6 +825,49 @@ def test_network_command_is_caution(
     )
 
 
+def test_absolute_curl_is_caution(
+    tmp_path,
+):
+
+    policy = (
+        SafetyPolicy(
+            workspace=tmp_path
+        )
+    )
+
+    decision = (
+        policy.assess(
+            "run_command",
+            {
+                "command": (
+                    "/usr/bin/curl "
+                    "https://example.com"
+                ),
+            },
+        )
+    )
+
+    assert (
+        decision.allowed
+        is True
+    )
+
+    assert (
+        decision.level
+        == SafetyLevel.CAUTION
+    )
+
+    assert (
+        decision.rule
+        == "network_access"
+    )
+
+
+# =============================================================
+# Dependency Install
+# =============================================================
+
+
 def test_package_install_is_caution(
     tmp_path,
 ):
@@ -581,7 +883,8 @@ def test_package_install_is_caution(
             "run_command",
             {
                 "command": (
-                    "python -m pip install requests"
+                    "python -m pip "
+                    "install requests"
                 ),
             },
         )

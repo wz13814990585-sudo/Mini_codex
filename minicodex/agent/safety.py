@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import re
+import shlex
 
 
 # =============================================================
@@ -13,7 +14,10 @@ import re
 # =============================================================
 
 
-class SafetyLevel(str, Enum):
+class SafetyLevel(
+    str,
+    Enum,
+):
 
     SAFE = "safe"
 
@@ -27,7 +31,9 @@ class SafetyLevel(str, Enum):
 # =============================================================
 
 
-@dataclass(frozen=True)
+@dataclass(
+    frozen=True
+)
 class SafetyDecision:
 
     level: SafetyLevel
@@ -97,10 +103,9 @@ class SafetyPolicy:
 
     Safety decisions belong to the Harness, not the LLM.
 
-    Stage 12 is NOT a full security sandbox.
+    Stage 12 is NOT a full OS sandbox.
 
-    It protects against deterministic, recognizable unsafe
-    operations at the tool-call boundary.
+    It protects the deterministic tool-call boundary.
 
     Full process isolation belongs to the later Sandbox stage.
     """
@@ -113,167 +118,64 @@ class SafetyPolicy:
     }
 
     # =========================================================
-    # Always Blocked Commands
+    # Executable Name Groups
     # =========================================================
 
-    BLOCKED_COMMAND_PATTERNS = (
-        (
-            "destructive_rm",
-            re.compile(
-                r"(^|[;&|]\s*)rm(?:\s|$)",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "privilege_escalation",
-            re.compile(
-                r"(^|[;&|]\s*)sudo(?:\s|$)",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "system_shutdown",
-            re.compile(
-                r"\b("
-                r"shutdown|"
-                r"reboot|"
-                r"poweroff|"
-                r"halt"
-                r")\b",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "disk_operation",
-            re.compile(
-                r"\b("
-                r"mkfs(?:\.\w+)?|"
-                r"fdisk|"
-                r"parted"
-                r")\b",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "raw_disk_write",
-            re.compile(
-                r"\bdd\b.*\bof\s*=",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "ownership_change",
-            re.compile(
-                r"(^|[;&|]\s*)("
-                r"chmod|"
-                r"chown|"
-                r"chgrp"
-                r")(?:\s|$)",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "process_termination",
-            re.compile(
-                r"(^|[;&|]\s*)("
-                r"kill|"
-                r"killall|"
-                r"pkill"
-                r")(?:\s|$)",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "direct_file_mutation",
-            re.compile(
-                r"(^|[;&|]\s*)("
-                r"mv|"
-                r"cp|"
-                r"touch|"
-                r"truncate|"
-                r"mkdir|"
-                r"rmdir|"
-                r"ln"
-                r")(?:\s|$)",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "sed_in_place",
-            re.compile(
-                r"\bsed\s+[^;&|]*"
-                r"(?:-i|--in-place)",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "perl_in_place",
-            re.compile(
-                r"\bperl\s+[^;&|]*"
-                r"-[A-Za-z]*i[A-Za-z]*",
-                re.IGNORECASE,
-            ),
-        ),
-        (
-            "tee_write",
-            re.compile(
-                r"(^|[|;&]\s*)tee(?:\s|$)",
-                re.IGNORECASE,
-            ),
-        ),
-    )
+    BLOCKED_EXECUTABLES = {
+        "rm": "destructive_rm",
+        "sudo": "privilege_escalation",
+        "shutdown": "system_shutdown",
+        "reboot": "system_shutdown",
+        "poweroff": "system_shutdown",
+        "halt": "system_shutdown",
+        "mkfs": "disk_operation",
+        "fdisk": "disk_operation",
+        "parted": "disk_operation",
+        "chmod": "ownership_change",
+        "chown": "ownership_change",
+        "chgrp": "ownership_change",
+        "kill": "process_termination",
+        "killall": "process_termination",
+        "pkill": "process_termination",
+        "mv": "direct_file_mutation",
+        "cp": "direct_file_mutation",
+        "touch": "direct_file_mutation",
+        "truncate": "direct_file_mutation",
+        "mkdir": "direct_file_mutation",
+        "rmdir": "direct_file_mutation",
+        "ln": "direct_file_mutation",
+        "tee": "tee_write",
+    }
+
+    NETWORK_EXECUTABLES = {
+        "curl",
+        "wget",
+    }
 
     # =========================================================
     # Git Mutation
     # =========================================================
 
-    GIT_MUTATION_PATTERN = re.compile(
-        r"\bgit\s+"
-        r"(?:"
-        r"-[A-Za-z0-9._=-]+\s+"
-        r")*"
-        r"("
-        r"add|"
-        r"commit|"
-        r"reset|"
-        r"clean|"
-        r"checkout|"
-        r"restore|"
-        r"stash|"
-        r"switch|"
-        r"merge|"
-        r"rebase|"
-        r"cherry-pick|"
-        r"revert|"
-        r"push|"
-        r"pull"
-        r")\b",
-        re.IGNORECASE,
-    )
-
-    GIT_BRANCH_MUTATION_PATTERN = re.compile(
-        r"\bgit\s+branch\s+"
-        r"(?:-[dDmM]|--delete|--move)\b",
-        re.IGNORECASE,
-    )
-
-    GIT_TAG_MUTATION_PATTERN = re.compile(
-        r"\bgit\s+tag\s+"
-        r"(?:-d|--delete)\b",
-        re.IGNORECASE,
-    )
+    GIT_MUTATING_SUBCOMMANDS = {
+        "add",
+        "commit",
+        "reset",
+        "clean",
+        "checkout",
+        "restore",
+        "stash",
+        "switch",
+        "merge",
+        "rebase",
+        "cherry-pick",
+        "revert",
+        "push",
+        "pull",
+    }
 
     # =========================================================
-    # Caution Commands
+    # Package Installation
     # =========================================================
-
-    NETWORK_PATTERN = re.compile(
-        r"(^|[;&|]\s*)("
-        r"curl|"
-        r"wget"
-        r")(?:\s|$)",
-        re.IGNORECASE,
-    )
 
     PACKAGE_INSTALL_PATTERN = re.compile(
         r"\b("
@@ -285,6 +187,27 @@ class SafetyPolicy:
         r"brew\s+install|"
         r"apt(?:-get)?\s+install"
         r")\b",
+        re.IGNORECASE,
+    )
+
+    # =========================================================
+    # Other Mutating Patterns
+    # =========================================================
+
+    SED_IN_PLACE_PATTERN = re.compile(
+        r"\bsed\s+[^;&|]*"
+        r"(?:-i|--in-place)",
+        re.IGNORECASE,
+    )
+
+    PERL_IN_PLACE_PATTERN = re.compile(
+        r"\bperl\s+[^;&|]*"
+        r"-[A-Za-z]*i[A-Za-z]*",
+        re.IGNORECASE,
+    )
+
+    RAW_DISK_WRITE_PATTERN = re.compile(
+        r"\bdd\b.*\bof\s*=",
         re.IGNORECASE,
     )
 
@@ -311,7 +234,7 @@ class SafetyPolicy:
         )
 
     # =========================================================
-    # Main Assessment
+    # Public Assessment
     # =========================================================
 
     def assess(
@@ -319,10 +242,6 @@ class SafetyPolicy:
         tool_name: str,
         arguments: dict,
     ) -> SafetyDecision:
-
-        # =====================================================
-        # Shell Command
-        # =====================================================
 
         if (
             tool_name
@@ -336,10 +255,6 @@ class SafetyPolicy:
                 )
             )
 
-        # =====================================================
-        # Filesystem Edit
-        # =====================================================
-
         if (
             tool_name
             in self.EDIT_TOOL_NAMES
@@ -351,10 +266,6 @@ class SafetyPolicy:
                     arguments=arguments,
                 )
             )
-
-        # =====================================================
-        # Other Tools
-        # =====================================================
 
         return SafetyDecision(
             level=(
@@ -389,8 +300,6 @@ class SafetyPolicy:
             )
         )
 
-        # CheckpointExecutor remains responsible for the
-        # explicit-path precondition itself.
         if (
             path_value
             is None
@@ -407,8 +316,8 @@ class SafetyPolicy:
                 reason=(
                     "No path was available for "
                     "safety classification. "
-                    "The downstream checkpoint "
-                    "precondition will validate it."
+                    "Downstream edit validation "
+                    "will handle the call."
                 ),
                 rule=(
                     "defer_missing_path"
@@ -472,9 +381,8 @@ class SafetyPolicy:
                 ),
                 allowed=False,
                 reason=(
-                    "Direct modification of "
-                    "Git internal metadata is "
-                    "not allowed."
+                    "Direct modification of Git "
+                    "internal metadata is not allowed."
                 ),
                 rule=(
                     "git_metadata_protection"
@@ -514,7 +422,7 @@ class SafetyPolicy:
             )
 
         # =====================================================
-        # Current Merge Conflict
+        # Merge Conflict
         # =====================================================
 
         current_conflicts = (
@@ -532,9 +440,8 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "The target file currently has "
-                    "a Git conflict and requires "
-                    "extra care."
+                    "The target file currently "
+                    "has a Git conflict."
                 ),
                 rule=(
                     "git_conflict"
@@ -542,10 +449,6 @@ class SafetyPolicy:
                 tool_name=tool_name,
                 path=normalized,
             )
-
-        # =====================================================
-        # Normal Workspace Edit
-        # =====================================================
 
         return SafetyDecision(
             level=(
@@ -594,10 +497,8 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "No command was available for "
-                    "classification. Downstream "
-                    "argument validation will "
-                    "handle the call."
+                    "No command was available "
+                    "for safety classification."
                 ),
                 rule=(
                     "defer_missing_command"
@@ -612,10 +513,6 @@ class SafetyPolicy:
             .strip()
         )
 
-        # =====================================================
-        # Empty Command
-        # =====================================================
-
         if not command:
 
             return SafetyDecision(
@@ -624,8 +521,8 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "Empty command contains no "
-                    "recognized destructive action."
+                    "Empty command contains "
+                    "no operation."
                 ),
                 rule=(
                     "empty_command"
@@ -635,71 +532,7 @@ class SafetyPolicy:
             )
 
         # =====================================================
-        # Destructive Git Mutation
-        # =====================================================
-
-        git_match = (
-            self.GIT_MUTATION_PATTERN
-            .search(
-                command
-            )
-        )
-
-        if git_match:
-
-            return SafetyDecision(
-                level=(
-                    SafetyLevel.BLOCKED
-                ),
-                allowed=False,
-                reason=(
-                    "Mutating Git operations are "
-                    "blocked through run_command. "
-                    "Stage 11 Git access is "
-                    "observational only."
-                ),
-                rule=(
-                    "git_mutation"
-                ),
-                tool_name=tool_name,
-                command=command,
-            )
-
-        if (
-            self.GIT_BRANCH_MUTATION_PATTERN
-            .search(
-                command
-            )
-            or (
-                self.GIT_TAG_MUTATION_PATTERN
-                .search(
-                    command
-                )
-            )
-        ):
-
-            return SafetyDecision(
-                level=(
-                    SafetyLevel.BLOCKED
-                ),
-                allowed=False,
-                reason=(
-                    "Destructive Git reference "
-                    "mutation is blocked."
-                ),
-                rule=(
-                    "git_reference_mutation"
-                ),
-                tool_name=tool_name,
-                command=command,
-            )
-
-        # =====================================================
-        # Direct Shell Redirection
-        #
-        # This can bypass CheckpointingToolExecutor.
-        # Permit redirects only when they clearly target
-        # /dev/null.
+        # Shell Redirection Guard
         # =====================================================
 
         if (
@@ -715,8 +548,8 @@ class SafetyPolicy:
                 allowed=False,
                 reason=(
                     "Shell output redirection may "
-                    "write files outside the edit/"
-                    "checkpoint pipeline."
+                    "write files outside the "
+                    "checkpointed edit pipeline."
                 ),
                 rule=(
                     "checkpoint_bypass_redirection"
@@ -726,62 +559,170 @@ class SafetyPolicy:
             )
 
         # =====================================================
-        # Other Explicitly Blocked Patterns
-        # =====================================================
-
-        for (
-            rule,
-            pattern,
-        ) in self.BLOCKED_COMMAND_PATTERNS:
-
-            if pattern.search(
-                command
-            ):
-
-                return SafetyDecision(
-                    level=(
-                        SafetyLevel.BLOCKED
-                    ),
-                    allowed=False,
-                    reason=(
-                        "Command matched a "
-                        "deterministically blocked "
-                        f"safety rule: {rule}."
-                    ),
-                    rule=rule,
-                    tool_name=tool_name,
-                    command=command,
-                )
-
-        # =====================================================
-        # Network
+        # Explicit Known Mutations
         # =====================================================
 
         if (
-            self.NETWORK_PATTERN
+            self.RAW_DISK_WRITE_PATTERN
             .search(
                 command
             )
         ):
 
-            return SafetyDecision(
-                level=(
-                    SafetyLevel.CAUTION
-                ),
-                allowed=True,
-                reason=(
-                    "Command performs external "
-                    "network access."
-                ),
-                rule=(
-                    "network_access"
-                ),
-                tool_name=tool_name,
-                command=command,
+            return (
+                self._blocked_command(
+                    tool_name=tool_name,
+                    command=command,
+                    rule=(
+                        "raw_disk_write"
+                    ),
+                )
+            )
+
+        if (
+            self.SED_IN_PLACE_PATTERN
+            .search(
+                command
+            )
+        ):
+
+            return (
+                self._blocked_command(
+                    tool_name=tool_name,
+                    command=command,
+                    rule=(
+                        "sed_in_place"
+                    ),
+                )
+            )
+
+        if (
+            self.PERL_IN_PLACE_PATTERN
+            .search(
+                command
+            )
+        ):
+
+            return (
+                self._blocked_command(
+                    tool_name=tool_name,
+                    command=command,
+                    rule=(
+                        "perl_in_place"
+                    ),
+                )
             )
 
         # =====================================================
-        # Package Installation
+        # Parse Shell Segments
+        #
+        # This is intentionally not a full shell parser.
+        # It gives deterministic awareness of ordinary command
+        # segments while normalizing:
+        #
+        #     /bin/rm    → rm
+        #     /usr/bin/git → git
+        # =====================================================
+
+        segments = (
+            self._command_segments(
+                command
+            )
+        )
+
+        for tokens in segments:
+
+            if not tokens:
+
+                continue
+
+            executable = (
+                self._executable_name(
+                    tokens[
+                        0
+                    ]
+                )
+            )
+
+            # =================================================
+            # Blocked Executables
+            # =================================================
+
+            blocked_rule = (
+                self.BLOCKED_EXECUTABLES
+                .get(
+                    executable
+                )
+            )
+
+            if (
+                blocked_rule
+                is not None
+            ):
+
+                return (
+                    self._blocked_command(
+                        tool_name=tool_name,
+                        command=command,
+                        rule=(
+                            blocked_rule
+                        ),
+                    )
+                )
+
+            # =================================================
+            # Git
+            # =================================================
+
+            if (
+                executable
+                == "git"
+            ):
+
+                git_decision = (
+                    self._assess_git_tokens(
+                        tool_name=tool_name,
+                        command=command,
+                        tokens=tokens,
+                    )
+                )
+
+                if (
+                    git_decision
+                    is not None
+                ):
+
+                    return (
+                        git_decision
+                    )
+
+            # =================================================
+            # Network
+            # =================================================
+
+            if (
+                executable
+                in self.NETWORK_EXECUTABLES
+            ):
+
+                return SafetyDecision(
+                    level=(
+                        SafetyLevel.CAUTION
+                    ),
+                    allowed=True,
+                    reason=(
+                        "Command performs external "
+                        "network access."
+                    ),
+                    rule=(
+                        "network_access"
+                    ),
+                    tool_name=tool_name,
+                    command=command,
+                )
+
+        # =====================================================
+        # Dependency Installation
         # =====================================================
 
         if (
@@ -807,10 +748,6 @@ class SafetyPolicy:
                 command=command,
             )
 
-        # =====================================================
-        # Default Command
-        # =====================================================
-
         return SafetyDecision(
             level=(
                 SafetyLevel.SAFE
@@ -828,38 +765,453 @@ class SafetyPolicy:
         )
 
     # =========================================================
-    # Unsafe Redirection
+    # Git Assessment
+    # =========================================================
+
+    def _assess_git_tokens(
+        self,
+        *,
+        tool_name: str,
+        command: str,
+        tokens: list[str],
+    ) -> SafetyDecision | None:
+
+        if (
+            len(
+                tokens
+            )
+            < 2
+        ):
+
+            return None
+
+        index = 1
+
+        # Skip common global Git options.
+        while (
+            index
+            < len(
+                tokens
+            )
+        ):
+
+            token = (
+                tokens[
+                    index
+                ]
+            )
+
+            if (
+                token
+                == "-C"
+            ):
+
+                index += 2
+
+                continue
+
+            if (
+                token.startswith(
+                    "--git-dir="
+                )
+                or token.startswith(
+                    "--work-tree="
+                )
+                or token.startswith(
+                    "--namespace="
+                )
+            ):
+
+                index += 1
+
+                continue
+
+            if (
+                token.startswith(
+                    "-"
+                )
+            ):
+
+                index += 1
+
+                continue
+
+            break
+
+        if (
+            index
+            >= len(
+                tokens
+            )
+        ):
+
+            return None
+
+        subcommand = (
+            tokens[
+                index
+            ]
+            .lower()
+        )
+
+        if (
+            subcommand
+            in self.GIT_MUTATING_SUBCOMMANDS
+        ):
+
+            return SafetyDecision(
+                level=(
+                    SafetyLevel.BLOCKED
+                ),
+                allowed=False,
+                reason=(
+                    "Mutating Git operations are "
+                    "blocked through run_command."
+                ),
+                rule=(
+                    "git_mutation"
+                ),
+                tool_name=tool_name,
+                command=command,
+            )
+
+        # =====================================================
+        # git branch destructive modes
+        # =====================================================
+
+        if (
+            subcommand
+            == "branch"
+        ):
+
+            remaining = (
+                tokens[
+                    index + 1:
+                ]
+            )
+
+            destructive = {
+                "-d",
+                "-D",
+                "-m",
+                "-M",
+                "--delete",
+                "--move",
+            }
+
+            if any(
+                token in destructive
+                for token
+                in remaining
+            ):
+
+                return SafetyDecision(
+                    level=(
+                        SafetyLevel.BLOCKED
+                    ),
+                    allowed=False,
+                    reason=(
+                        "Destructive Git branch "
+                        "mutation is blocked."
+                    ),
+                    rule=(
+                        "git_reference_mutation"
+                    ),
+                    tool_name=tool_name,
+                    command=command,
+                )
+
+        # =====================================================
+        # git tag deletion
+        # =====================================================
+
+        if (
+            subcommand
+            == "tag"
+        ):
+
+            remaining = (
+                tokens[
+                    index + 1:
+                ]
+            )
+
+            if any(
+                token
+                in {
+                    "-d",
+                    "--delete",
+                }
+                for token
+                in remaining
+            ):
+
+                return SafetyDecision(
+                    level=(
+                        SafetyLevel.BLOCKED
+                    ),
+                    allowed=False,
+                    reason=(
+                        "Destructive Git tag "
+                        "mutation is blocked."
+                    ),
+                    rule=(
+                        "git_reference_mutation"
+                    ),
+                    tool_name=tool_name,
+                    command=command,
+                )
+
+        return None
+
+    # =========================================================
+    # Command Segments
+    # =========================================================
+
+    def _command_segments(
+        self,
+        command: str,
+    ) -> list[
+        list[str]
+    ]:
+
+        # Split ordinary compound commands:
+        #
+        #   a && b
+        #   a ; b
+        #   a | b
+        #
+        # This is conservative and intentionally not a complete
+        # shell grammar.
+        raw_segments = re.split(
+            r"(?:&&|\|\||[;|])",
+            command,
+        )
+
+        segments = []
+
+        for raw_segment in (
+            raw_segments
+        ):
+
+            text = (
+                raw_segment
+                .strip()
+            )
+
+            if not text:
+
+                continue
+
+            try:
+
+                tokens = (
+                    shlex.split(
+                        text
+                    )
+                )
+
+            except ValueError:
+
+                # If shell parsing is malformed, do not crash
+                # the safety layer. Fallback to whitespace.
+                tokens = (
+                    text.split()
+                )
+
+            if tokens:
+
+                segments.append(
+                    tokens
+                )
+
+        return segments
+
+    # =========================================================
+    # Executable Normalization
+    # =========================================================
+
+    @staticmethod
+    def _executable_name(
+        executable: str,
+    ) -> str:
+
+        return (
+            Path(
+                executable
+            )
+            .name
+            .lower()
+        )
+
+    # =========================================================
+    # Blocked Command Helper
+    # =========================================================
+
+    @staticmethod
+    def _blocked_command(
+        *,
+        tool_name: str,
+        command: str,
+        rule: str,
+    ) -> SafetyDecision:
+
+        return SafetyDecision(
+            level=(
+                SafetyLevel.BLOCKED
+            ),
+            allowed=False,
+            reason=(
+                "Command matched a "
+                "deterministically blocked "
+                f"safety rule: {rule}."
+            ),
+            rule=rule,
+            tool_name=tool_name,
+            command=command,
+        )
+
+    # =========================================================
+    # Unsafe Shell Redirection
     # =========================================================
 
     @staticmethod
     def _contains_unsafe_redirection(
         command: str,
     ) -> bool:
+        """
+        Detect shell output writes that bypass checkpoint tools.
 
-        # Find shell output redirections:
-        #
-        #   > file
-        #   >> file
-        #   2> file
-        #
-        # Input redirection (<) is not considered a write.
-        matches = re.finditer(
-            r"(?:\d*)>{1,2}\s*"
-            r"([^\s;&|]+)",
-            command,
+        Block:
+
+            > file
+            >> file
+            2> error.log
+
+        Allow:
+
+            >/dev/null
+            2>/dev/null
+            2>&1
+            1>&2
+        """
+
+        index = 0
+
+        length = len(
+            command
         )
 
-        for match in matches:
+        while (
+            index
+            < length
+        ):
+
+            char = (
+                command[
+                    index
+                ]
+            )
+
+            if (
+                char
+                != ">"
+            ):
+
+                index += 1
+
+                continue
+
+            # =================================================
+            # File-descriptor duplication:
+            #
+            # 2>&1
+            # 1>&2
+            #
+            # This does NOT write a filesystem path.
+            # =================================================
+
+            next_index = (
+                index
+                + 1
+            )
+
+            if (
+                next_index
+                < length
+                and command[
+                    next_index
+                ]
+                == ">"
+            ):
+
+                next_index += 1
+
+            while (
+                next_index
+                < length
+                and command[
+                    next_index
+                ].isspace()
+            ):
+
+                next_index += 1
+
+            if (
+                next_index
+                < length
+                and command[
+                    next_index
+                ]
+                == "&"
+            ):
+
+                index = (
+                    next_index
+                    + 1
+                )
+
+                continue
+
+            # =================================================
+            # Extract Redirect Target
+            # =================================================
+
+            target_start = (
+                next_index
+            )
+
+            while (
+                next_index
+                < length
+                and not command[
+                    next_index
+                ].isspace()
+                and command[
+                    next_index
+                ]
+                not in {
+                    ";",
+                    "|",
+                    "&",
+                }
+            ):
+
+                next_index += 1
 
             target = (
-                match
-                .group(
-                    1
-                )
+                command[
+                    target_start:
+                    next_index
+                ]
                 .strip(
                     "\"'"
                 )
             )
+
+            if not target:
+
+                return True
 
             if (
                 target
@@ -867,6 +1219,10 @@ class SafetyPolicy:
             ):
 
                 return True
+
+            index = (
+                next_index
+            )
 
         return False
 
@@ -931,7 +1287,7 @@ class SafetyPolicy:
         )
 
     # =========================================================
-    # Path Normalization
+    # Workspace Path
     # =========================================================
 
     def _normalize_workspace_path(
@@ -966,7 +1322,7 @@ class SafetyPolicy:
         )
 
     # =========================================================
-    # Render Current Policy
+    # Render
     # =========================================================
 
     def render(
