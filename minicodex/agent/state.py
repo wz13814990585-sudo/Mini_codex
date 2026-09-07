@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 from enum import Enum
 
 
@@ -14,6 +15,9 @@ class PlanStep:
     id: int
     description: str
     status: StepStatus = StepStatus.PENDING
+    acceptance_criteria: list[
+        dict[str, Any]
+    ] = field(default_factory=list)
 
     # 当前 Plan Step 遇到的工具调用失败次数
     attempts: int = 0
@@ -23,6 +27,52 @@ class PlanStep:
 
     def reset_attempts(self) -> None:
         self.attempts = 0
+
+    @classmethod
+    def from_payload(
+        cls,
+        *,
+        step_id: int,
+        payload,
+    ) -> "PlanStep":
+        if isinstance(payload, str):
+            return cls(
+                id=step_id,
+                description=payload,
+            )
+
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "Plan step must be a string or object."
+            )
+
+        description = str(
+            payload.get("description", "")
+        ).strip()
+        if not description:
+            raise ValueError(
+                "Plan step description is required."
+            )
+
+        raw_criteria = payload.get(
+            "acceptance_criteria",
+            [],
+        )
+        criteria = (
+            [
+                dict(item)
+                for item in raw_criteria
+                if isinstance(item, dict)
+            ]
+            if isinstance(raw_criteria, list)
+            else []
+        )
+
+        return cls(
+            id=step_id,
+            description=description,
+            acceptance_criteria=criteria,
+        )
 
 
 @dataclass

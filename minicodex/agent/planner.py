@@ -61,11 +61,24 @@ Return exactly this JSON format:
 {{
     "goal": "short goal",
     "steps": [
-        "step 1",
-        "step 2",
-        "step 3"
+        {{
+            "description": "step 1",
+            "acceptance_criteria": [
+                {{"type": "file_exists", "path": "relative/path"}},
+                {{"type": "contains_all", "path": "relative/path", "texts": ["required marker"]}}
+            ]
+        }},
+        {{
+            "description": "semantic-only step 2",
+            "acceptance_criteria": []
+        }}
     ]
 }}
+
+Only use machine criteria that are definitely testable. Supported
+criterion types are file_exists, contains_text, contains_all,
+static_web_validation, and metric_at_least. Use an empty list when
+completion requires semantic judgment.
 """,
             },
         ]
@@ -135,11 +148,11 @@ Return exactly this JSON format:
         )
 
         steps = [
-            PlanStep(
-                id=index,
-                description=description,
+            PlanStep.from_payload(
+                step_id=index,
+                payload=payload,
             )
-            for index, description
+            for index, payload
             in enumerate(
                 data["steps"][
                     :max_plan_steps

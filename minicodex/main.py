@@ -40,6 +40,9 @@ from .tools.run_tests import RunTestsTool
 from .tools.install_python_package import (
     InstallPythonPackageTool,
 )
+from .tools.validate_static_web import (
+    ValidateStaticWebTool,
+)
 from .tools.complete_plan_step import CompletePlanStepTool
 from .tools.replan import ReplanTool
 from .tools.git_status import GitStatusTool
@@ -216,6 +219,14 @@ def main():
         InstallPythonPackageTool(
             workspace=workspace,
             timeout=120,
+            sandbox=sandbox,
+        )
+    )
+
+    registry.register(
+        ValidateStaticWebTool(
+            workspace=workspace,
+            timeout=30,
             sandbox=sandbox,
         )
     )

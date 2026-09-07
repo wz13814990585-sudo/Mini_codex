@@ -74,6 +74,11 @@ Rules:
      non-destructive check. Ordinary exploratory commands must
      keep the default diagnostic purpose.
 
+16b. For a static single-file HTML/CSS/JavaScript task, prefer
+     validate_static_web over shell extraction or temporary files.
+     Use its optional minimum counts only for requirements that
+     must exist as static HTML elements or attributes.
+
 17. Full regression validation must use
     run_tests(path='.', purpose='regression').
 

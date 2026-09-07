@@ -728,6 +728,23 @@ class WorkingMemory:
         # Validation
         # =====================================================
 
+        elif tool_name == "validate_static_web":
+            outcome = self._normalize_text(
+                data.get("outcome")
+            ) or "inconclusive"
+            validation_path = path or "unknown"
+            self.upsert(
+                key=f"validation:acceptance:{validation_path}",
+                kind=MemoryKind.VALIDATION,
+                value=(
+                    f"Latest static web acceptance validation "
+                    f"for {validation_path}: {outcome}."
+                ),
+                source_tool=tool_name,
+                path=path or None,
+                metadata=dict(data),
+            )
+
         elif (
             tool_name
             == "run_tests"

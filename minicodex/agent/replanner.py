@@ -105,10 +105,16 @@ Return exactly:
 {{
     "goal": "updated goal",
     "steps": [
-        "next step 1",
-        "next step 2"
+        {{
+            "description": "next step 1",
+            "acceptance_criteria": []
+        }}
     ]
 }}
+
+Each acceptance_criteria list may use only file_exists,
+contains_text, contains_all, static_web_validation, or
+metric_at_least. Use [] for semantic-only steps.
 """,
             },
         ]
@@ -190,11 +196,13 @@ Return exactly:
         }
 
         revised_steps = [
-            description
-            for description
+            payload
+            for payload
             in data["steps"]
             if (
-                description
+                self._description(
+                    payload
+                )
                 .strip()
                 .casefold()
                 not in completed_descriptions
@@ -218,11 +226,11 @@ Return exactly:
         )
 
         new_steps = [
-            PlanStep(
-                id=index,
-                description=description,
+            PlanStep.from_payload(
+                step_id=index,
+                payload=payload,
             )
-            for index, description
+            for index, payload
             in enumerate(
                 revised_steps,
                 start=next_step_id,
@@ -236,3 +244,15 @@ Return exactly:
                 completed_history
             ),
         )
+
+    @staticmethod
+    def _description(payload) -> str:
+        if isinstance(payload, str):
+            return payload
+
+        if isinstance(payload, dict):
+            return str(
+                payload.get("description", "")
+            )
+
+        return ""

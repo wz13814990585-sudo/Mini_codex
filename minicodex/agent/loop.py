@@ -191,6 +191,10 @@ def run_agent_loop(
 
             if current_plan_step:
 
+                agent.no_progress_policy.start_step(
+                    current_plan_step.id
+                )
+
                 print(
                     f"\n[Current Plan Step] "
                     f"{current_plan_step.id}. "
@@ -786,6 +790,63 @@ def run_agent_loop(
             )
 
             # =================================================
+            # Deterministic Recovery Restriction
+            # =================================================
+
+            restriction_reason = (
+                agent.no_progress_policy
+                .restriction_reason(
+                    tool_name,
+                    arguments,
+                )
+            )
+
+            if restriction_reason is not None:
+                result = ToolResult(
+                    success=False,
+                    summary=(
+                        f"Tool call '{tool_name}' was blocked "
+                        "while no-progress recovery is active."
+                    ),
+                    data={
+                        "tool_name": tool_name,
+                        "failure_type": (
+                            "no_progress_restriction"
+                        ),
+                    },
+                    error=restriction_reason,
+                )
+
+                if current_plan_step:
+                    current_plan_step.increment_attempt()
+
+                observation_text = result.to_llm_text()
+                print("\n[No-Progress Tool Restriction]")
+                print(f"\n[Observation]\n{observation_text}")
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": observation_text,
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": restriction_reason,
+                    }
+                )
+                append_skipped_tool_results(
+                    messages,
+                    response.tool_calls[
+                        tool_index + 1:
+                    ],
+                    "no-progress recovery restricted reconnaissance",
+                )
+                restart_agent_loop = True
+                break
+
+            # =================================================
             # 2. Duplicate Tool Policy
             # =================================================
 
@@ -958,6 +1019,77 @@ def run_agent_loop(
                         f"{checkpoint_id}"
                     )
 
+                reconciliation = (
+                    agent.reconcile_plan_progress()
+                )
+                reconciled_steps = reconciliation[
+                    "completed"
+                ]
+
+                if reconciled_steps:
+                    print("\n[Plan Reconciliation]")
+                    print(
+                        "Machine criteria completed steps: "
+                        + ", ".join(
+                            str(item["step_id"])
+                            for item in reconciled_steps
+                        )
+                    )
+                    append_skipped_tool_results(
+                        messages,
+                        response.tool_calls[
+                            tool_index + 1:
+                        ],
+                        (
+                            "machine-checkable plan criteria "
+                            "advanced the active plan"
+                        ),
+                    )
+                    restart_agent_loop = True
+                    break
+
+            progress_decision = (
+                agent.no_progress_policy
+                .observe_tool_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=result,
+                    step_id=(
+                        current_plan_step.id
+                        if current_plan_step
+                        else None
+                    ),
+                    context_critical=(
+                        agent.context_budget
+                        .pressure.value
+                        == "critical"
+                    ),
+                )
+            )
+
+            if progress_decision.stuck:
+                recovery_instruction = (
+                    agent.no_progress_policy
+                    .RECOVERY_INSTRUCTION
+                )
+                print("\n[No-Progress Recovery]")
+                print(progress_decision.reason)
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": recovery_instruction,
+                    }
+                )
+                append_skipped_tool_results(
+                    messages,
+                    response.tool_calls[
+                        tool_index + 1:
+                    ],
+                    "deterministic no-progress recovery started",
+                )
+                restart_agent_loop = True
+                break
+
             # =================================================
             # Complete Plan Step
             # =================================================
@@ -1040,6 +1172,7 @@ def run_agent_loop(
 
             if (
                 tool_name == "run_tests"
+                or tool_name == "validate_static_web"
                 or (
                     tool_name == "run_command"
                     and str(
@@ -1071,6 +1204,13 @@ def run_agent_loop(
                     evidence
                     is not None
                 ):
+
+                    reconciliation = (
+                        agent.reconcile_plan_progress()
+                    )
+                    reconciled_steps = reconciliation[
+                        "completed"
+                    ]
 
                     print(
                         "\n[Validation Evidence]"
@@ -1113,6 +1253,18 @@ def run_agent_loop(
                         )
                     )
 
+                    if reconciled_steps:
+                        print("\n[Plan Reconciliation]")
+                        print(
+                            "Validation-backed criteria completed "
+                            "steps: "
+                            + ", ".join(
+                                str(item["step_id"])
+                                for item in reconciled_steps
+                            )
+                        )
+                        restart_agent_loop = True
+
                     if (
                         early_stop
                         or restart_agent_loop
@@ -1130,57 +1282,6 @@ def run_agent_loop(
                         )
 
                         break
-
-            # =================================================
-            # Inspection-Only Drift
-            # =================================================
-
-            if (
-                agent._step_likely_requires_edit(
-                    current_plan_step
-                )
-                and
-                agent.progress
-                .consume_inspection_nudge()
-            ):
-
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "You have performed several "
-                            "inspection-only actions without "
-                            "changing or validating the current "
-                            "revision. Use the evidence already "
-                            "collected. If the current step is "
-                            "already implemented, run one focused "
-                            "acceptance check and complete it. "
-                            "Otherwise make the smallest required "
-                            "edit. Do not continue broad searching."
-                        ),
-                    }
-                )
-
-                print(
-                    "\n[Inspection Nudge] "
-                    "Switching from broad inspection to a "
-                    "focused edit or acceptance check."
-                )
-
-                restart_agent_loop = True
-
-                append_skipped_tool_results(
-                    messages,
-                    response.tool_calls[
-                        tool_index + 1:
-                    ],
-                    (
-                        "inspection-only drift triggered "
-                        "a strategy nudge"
-                    ),
-                )
-
-                break
 
             # =================================================
             # General Action Stall Detection
@@ -2213,6 +2314,16 @@ def rollback_regressed_edit(
     # =========================================================
 
     agent.recovery.mark_progress()
+
+    no_progress_policy = getattr(
+        agent,
+        "no_progress_policy",
+        None,
+    )
+    if no_progress_policy is not None:
+        no_progress_policy.mark_progress(
+            "rollback changed workspace revision"
+        )
 
     # =========================================================
     # Tell LLM What Happened

@@ -1,3 +1,4 @@
+import json
 import re
 
 from .checkpoint import (
@@ -21,6 +22,12 @@ from .metrics import (
 )
 from .progress import (
     ProgressController,
+)
+from .progress_policy import (
+    NoProgressPolicy,
+)
+from .plan_progress import (
+    PlanProgressReconciler,
 )
 from .recovery import (
     RecoveryController,
@@ -66,6 +73,7 @@ class MiniCodexAgent:
         max_step_attempts: int = 5,
         max_context_tokens: int = 64000,
         status_interval_seconds: float = 15.0,
+        max_no_progress_steps: int = 5,
     ):
 
         self.llm = llm
@@ -294,6 +302,18 @@ class MiniCodexAgent:
             )
         )
 
+        self.no_progress_policy = NoProgressPolicy(
+            max_no_progress_steps=(
+                max_no_progress_steps
+            )
+        )
+
+        self.plan_progress_reconciler = (
+            PlanProgressReconciler(
+                workspace=self.workspace
+            )
+        )
+
         # =====================================================
         # Recovery
         # =====================================================
@@ -379,6 +399,8 @@ class MiniCodexAgent:
         self.progress.reset(
             new_task=True
         )
+
+        self.no_progress_policy.reset()
 
         self.validation_pipeline.reset()
 
@@ -489,6 +511,59 @@ class MiniCodexAgent:
     # Complete Plan Step
     # =========================================================
 
+    def reconcile_plan_progress(
+        self,
+    ) -> dict:
+        """Complete only sequential steps with proven predicates."""
+
+        completed = []
+        evaluations = []
+
+        while self.active_plan is not None:
+            step = self.active_plan.get_current_step()
+            if step is None:
+                break
+
+            evaluation = (
+                self.plan_progress_reconciler
+                .evaluate_step(
+                    step,
+                    validation_state=(
+                        self.validation_pipeline.state
+                    ),
+                )
+            )
+            evaluations.append(
+                {
+                    "step_id": step.id,
+                    "machine_checkable": (
+                        evaluation.machine_checkable
+                    ),
+                    "satisfied": evaluation.satisfied,
+                }
+            )
+
+            if not evaluation.satisfied:
+                break
+
+            result = self.complete_plan_step()
+            if not result.get("completed"):
+                break
+
+            completed.append(
+                {
+                    "step_id": result["step_id"],
+                    "step_description": result[
+                        "step_description"
+                    ],
+                }
+            )
+
+        return {
+            "completed": completed,
+            "evaluations": evaluations,
+        }
+
     def complete_plan_step(
         self,
     ) -> dict:
@@ -527,6 +602,10 @@ class MiniCodexAgent:
             }
 
         self.recovery.mark_progress()
+
+        self.no_progress_policy.mark_progress(
+            "plan step completed"
+        )
 
         self.progress.reset()
 
@@ -648,6 +727,10 @@ class MiniCodexAgent:
         )
 
         self.progress.reset()
+
+        self.no_progress_policy.mark_progress(
+            "plan changed"
+        )
 
         print(
             "\n[Replanned]"
@@ -892,11 +975,30 @@ class MiniCodexAgent:
                 f"{step.id}. "
                 f"[{step.status.value}] "
                 f"{step.description} "
-                f"(failures="
+                f"(criteria="
+                f"{self._criteria_text(step)}, "
+                f"failures="
                 f"{step.attempts})"
             )
             for step
             in plan.all_steps()
+        )
+
+    @staticmethod
+    def _criteria_text(step) -> str:
+        criteria = getattr(
+            step,
+            "acceptance_criteria",
+            [],
+        )
+
+        if not criteria:
+            return "semantic-only"
+
+        return json.dumps(
+            criteria,
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
     # =========================================================

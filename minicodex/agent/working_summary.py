@@ -353,6 +353,16 @@ class WorkingSummary:
 
             return
 
+        if tool_name == "validate_static_web":
+            outcome = str(
+                result.data.get("outcome", "inconclusive")
+            )
+            self.add(
+                f"Static web validation for {path or 'unknown path'} "
+                f"was {outcome}."
+            )
+            return
+
         # =====================================================
         # Tests
         # =====================================================

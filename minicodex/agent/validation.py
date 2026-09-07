@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from ..tools.results import ToolResult
@@ -112,6 +112,10 @@ class ValidationEvidence:
     path: str | None = None
 
     summary: str = ""
+
+    details: dict = field(
+        default_factory=dict
+    )
 
     @property
     def validation_passed(
@@ -276,7 +280,14 @@ class ValidationPipeline:
         result: ToolResult,
     ) -> ValidationEvidence | None:
 
-        if tool_name == "run_command":
+        if tool_name == "validate_static_web":
+
+            evidence = self._from_static_web(
+                arguments=arguments,
+                result=result,
+            )
+
+        elif tool_name == "run_command":
 
             if (
                 str(
@@ -309,6 +320,62 @@ class ValidationPipeline:
         )
 
         return evidence
+
+    def _from_static_web(
+        self,
+        *,
+        arguments: dict,
+        result: ToolResult,
+    ) -> ValidationEvidence:
+        outcome_value = str(
+            result.data.get(
+                "outcome",
+                "inconclusive",
+            )
+        ).strip().lower()
+        outcome = {
+            "passed": ValidationOutcome.PASSED,
+            "failed": ValidationOutcome.FAILED,
+        }.get(
+            outcome_value,
+            ValidationOutcome.INCONCLUSIVE,
+        )
+        errors = result.data.get("errors", [])
+        failure_count = (
+            len(errors)
+            if isinstance(errors, list)
+            else 1
+        )
+
+        if not result.success:
+            outcome = ValidationOutcome.INCONCLUSIVE
+            failure_count = 0
+
+        return ValidationEvidence(
+            tool_name="validate_static_web",
+            execution_succeeded=result.success,
+            outcome=outcome,
+            scope=ValidationScope.TARGETED,
+            purpose=ValidationPurpose.ACCEPTANCE,
+            edit_revision=self.state.edit_revision,
+            failed=(
+                failure_count
+                if outcome == ValidationOutcome.FAILED
+                else 0
+            ),
+            failed_count=(
+                failure_count
+                if outcome == ValidationOutcome.FAILED
+                else (
+                    0
+                    if outcome == ValidationOutcome.PASSED
+                    else None
+                )
+            ),
+            path=str(arguments.get("path", "")).strip(),
+            summary=result.summary,
+            details=dict(result.data),
+        )
 
     def _from_run_command(
         self,

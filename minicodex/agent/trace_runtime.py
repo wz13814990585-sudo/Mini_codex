@@ -448,7 +448,10 @@ class TracingToolExecutor:
 
         if (
             prepared.tool_name
-            == "run_tests"
+            in {
+                "run_tests",
+                "validate_static_web",
+            }
         ):
 
             self._safe_emit(
@@ -464,10 +467,16 @@ class TracingToolExecutor:
                         )
                     ),
                     "purpose": (
-                        prepared.arguments
-                        .get(
-                            "purpose"
+                        prepared.arguments.get("purpose")
+                        or (
+                            "acceptance"
+                            if prepared.tool_name
+                            == "validate_static_web"
+                            else None
                         )
+                    ),
+                    "outcome": result_data.get(
+                        "outcome"
                     ),
                     "passed": (
                         result_data

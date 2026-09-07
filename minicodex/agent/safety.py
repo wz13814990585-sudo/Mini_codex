@@ -1109,6 +1109,7 @@ class SafetyPolicy:
         """
 
         index = 0
+        quote: str | None = None
 
         length = len(
             command
@@ -1124,6 +1125,122 @@ class SafetyPolicy:
                     index
                 ]
             )
+
+            # Shell metacharacters inside ordinary quoted
+            # arguments are data, not redirection operators.
+            # Keep command substitutions conservative because
+            # their contents are parsed by a nested shell.
+            if quote is not None:
+
+                if (
+                    quote == '"'
+                    and char == "\\"
+                ):
+                    index += 2
+                    continue
+
+                if char == quote:
+                    quote = None
+                    index += 1
+                    continue
+
+                if (
+                    quote == '"'
+                    and command.startswith(
+                        "$(",
+                        index,
+                    )
+                ):
+                    inner, end = (
+                        SafetyPolicy
+                        ._extract_command_substitution(
+                            command,
+                            index + 2,
+                        )
+                    )
+
+                    if (
+                        inner is None
+                        or SafetyPolicy
+                        ._contains_unsafe_redirection(
+                            inner
+                        )
+                    ):
+                        return True
+
+                    index = end
+                    continue
+
+                if quote == '"' and char == "`":
+                    inner, end = (
+                        SafetyPolicy
+                        ._extract_backtick_command(
+                            command,
+                            index + 1,
+                        )
+                    )
+                    if (
+                        inner is None
+                        or SafetyPolicy
+                        ._contains_unsafe_redirection(
+                            inner
+                        )
+                    ):
+                        return True
+                    index = end
+                    continue
+
+                index += 1
+                continue
+
+            if char in {"'", '"'}:
+                quote = char
+                index += 1
+                continue
+
+            if char == "\\":
+                index += 2
+                continue
+
+            if command.startswith("$(", index):
+                inner, end = (
+                    SafetyPolicy
+                    ._extract_command_substitution(
+                        command,
+                        index + 2,
+                    )
+                )
+
+                if (
+                    inner is None
+                    or SafetyPolicy
+                    ._contains_unsafe_redirection(
+                        inner
+                    )
+                ):
+                    return True
+
+                index = end
+                continue
+
+            if char == "`":
+                inner, end = (
+                    SafetyPolicy
+                    ._extract_backtick_command(
+                        command,
+                        index + 1,
+                    )
+                )
+                if (
+                    inner is None
+                    or SafetyPolicy
+                    ._contains_unsafe_redirection(
+                        inner
+                    )
+                ):
+                    return True
+                index = end
+                continue
 
             if (
                 char
@@ -1237,6 +1354,71 @@ class SafetyPolicy:
             )
 
         return False
+
+    @staticmethod
+    def _extract_command_substitution(
+        command: str,
+        content_start: int,
+    ) -> tuple[str | None, int]:
+        """Return the body and end index of a basic ``$(...)``."""
+
+        depth = 1
+        index = content_start
+        quote: str | None = None
+
+        while index < len(command):
+            char = command[index]
+
+            if quote is not None:
+                if quote == '"' and char == "\\":
+                    index += 2
+                    continue
+                if char == quote:
+                    quote = None
+                index += 1
+                continue
+
+            if char in {"'", '"'}:
+                quote = char
+            elif char == "\\":
+                index += 2
+                continue
+            elif command.startswith("$(", index):
+                depth += 1
+                index += 2
+                continue
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return (
+                        command[content_start:index],
+                        index + 1,
+                    )
+
+            index += 1
+
+        return None, len(command)
+
+    @staticmethod
+    def _extract_backtick_command(
+        command: str,
+        content_start: int,
+    ) -> tuple[str | None, int]:
+        index = content_start
+
+        while index < len(command):
+            char = command[index]
+            if char == "\\":
+                index += 2
+                continue
+            if char == "`":
+                return (
+                    command[content_start:index],
+                    index + 1,
+                )
+            index += 1
+
+        return None, len(command)
 
     # =========================================================
     # Git Awareness Helpers
