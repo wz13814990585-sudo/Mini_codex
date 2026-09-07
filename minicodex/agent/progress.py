@@ -68,16 +68,16 @@ class ProgressController:
     def __init__(
         self,
         max_same_tool_repeats: int = 2,
-        progress_window: int = 6,
+        progress_window: int | None = None,
         max_validation_no_progress: int = 2,
     ):
 
+        # ``progress_window`` is accepted for constructor compatibility only.
+        # Generic stall detection now belongs exclusively to ActionController.
+        del progress_window
+
         self.max_same_tool_repeats = (
             max_same_tool_repeats
-        )
-
-        self.progress_window = (
-            progress_window
         )
 
         self.max_validation_no_progress = (
@@ -97,16 +97,6 @@ class ProgressController:
         self._tool_signature_counts: dict[
             tuple[str, str], int
         ] = {}
-
-        self.inspection_streak = 0
-
-        # =====================================================
-        # Action History
-        # =====================================================
-
-        self.recent_actions: list[
-            str
-        ] = []
 
         # =====================================================
         # Last Observed Validation
@@ -157,10 +147,6 @@ class ProgressController:
 
         self._tool_signature_counts.clear()
 
-        self.inspection_streak = 0
-
-        self.recent_actions.clear()
-
         self.last_validation_failed_count = None
 
         self.last_validation_key = None
@@ -179,9 +165,6 @@ class ProgressController:
         self.last_tool_signature = None
         self.same_tool_repeat_count = 0
         self._tool_signature_counts.clear()
-        self.inspection_streak = 0
-        self.recent_actions.clear()
-
     # =========================================================
     # Duplicate Tool Detection
     # =========================================================
@@ -248,117 +231,6 @@ class ProgressController:
         return (
             True,
             None,
-        )
-
-    # =========================================================
-    # Record Action
-    # =========================================================
-
-    def record_action(
-        self,
-        tool_name: str,
-    ) -> None:
-
-        self.recent_actions.append(
-            tool_name
-        )
-
-        inspection_tools = {
-            "read_file",
-            "search_code",
-            "search_symbol",
-            "list_files",
-            "git_status",
-            "git_diff",
-        }
-
-        if tool_name in inspection_tools:
-            self.inspection_streak += 1
-        else:
-            self.inspection_streak = 0
-
-        self.recent_actions = (
-            self.recent_actions[
-                -self.progress_window:
-            ]
-        )
-
-    def consume_inspection_nudge(
-        self,
-    ) -> bool:
-        """Return true once after inspection-only drift."""
-
-        if self.inspection_streak < self.progress_window:
-            return False
-
-        self.inspection_streak = 0
-
-        return True
-
-    # =========================================================
-    # Action Stall Detection
-    # =========================================================
-
-    def is_action_stalled(
-        self,
-    ) -> bool:
-
-        if (
-            len(
-                self.recent_actions
-            )
-            < self.progress_window
-        ):
-
-            return False
-
-        recent = (
-            self.recent_actions[
-                -self.progress_window:
-            ]
-        )
-
-        edit_tools = {
-            "patch_file",
-            "replace_lines",
-            "replace_symbol",
-            "write_file",
-        }
-
-        validation_tools = {
-            "run_tests",
-            "run_command",
-        }
-
-        inspection_tools = {
-            "read_file",
-            "search_code",
-            "search_symbol",
-            "list_files",
-        }
-
-        has_edit = any(
-            action in edit_tools
-            for action
-            in recent
-        )
-
-        validation_count = sum(
-            action in validation_tools
-            for action
-            in recent
-        )
-
-        inspection_count = sum(
-            action in inspection_tools
-            for action
-            in recent
-        )
-
-        return (
-            not has_edit
-            and validation_count >= 2
-            and inspection_count >= 2
         )
 
     # =========================================================

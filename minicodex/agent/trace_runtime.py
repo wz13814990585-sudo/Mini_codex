@@ -888,6 +888,11 @@ def attach_runtime_tracing(
             recorder,
             TraceEventType.TASK_FINISHED,
             {
+                "execution_mode": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "execution_mode",
+                    None,
+                ),
                 "duration_seconds": (
                     time.perf_counter()
                     - started
@@ -929,6 +934,41 @@ def attach_runtime_tracing(
                 ),
                 "plan_completed": (
                     plan_completed
+                ),
+                "inspection_tool_count": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "inspection_tool_count",
+                    0,
+                ),
+                "edit_tool_count": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "edit_tool_count",
+                    0,
+                ),
+                "validation_tool_count": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "validation_tool_count",
+                    0,
+                ),
+                "calls_before_first_edit": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "calls_before_first_edit",
+                    None,
+                ),
+                "action_required_trigger_count": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "action_required_trigger_count",
+                    0,
+                ),
+                "final_outcome": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "final_outcome",
+                    None,
+                ),
+                "final_completion_reason": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "final_completion_reason",
+                    None,
                 ),
             },
         )

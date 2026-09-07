@@ -1,4 +1,11 @@
-"""Deterministic validation for static HTML with inline JavaScript."""
+"""Deterministic validation for static HTML with inline JavaScript.
+
+This validator proves structural HTML validity, inline JavaScript syntax,
+and configured static element requirements. It does not execute a browser,
+so it cannot prove keyboard interaction, DOM event behavior, animation, or
+runtime game logic. Those behaviors can later be supplied by a separate
+``validate_browser_app`` tool while using the same ValidationPipeline.
+"""
 
 from __future__ import annotations
 

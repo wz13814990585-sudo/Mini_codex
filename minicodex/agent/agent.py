@@ -10,10 +10,11 @@ from .checkpoint_executor import (
 from .context_budget import (
     ContextBudget,
 )
-from .convergence import (
-    ConvergenceController,
+from .action_controller import (
+    ActionController,
     TaskProgressState,
 )
+from .completion_policy import TaskCompletionPolicy
 from .execution_mode import ExecutionMode
 from .execution_policy import ExecutionPolicy, policy_for
 from .finalization import FinalizationController
@@ -25,13 +26,11 @@ from .loop import (
     run_agent_loop,
 )
 from .metrics import (
+    ExecutionMetrics,
     TokenMetrics,
 )
 from .progress import (
     ProgressController,
-)
-from .progress_policy import (
-    NoProgressPolicy,
 )
 from .plan_progress import (
     PlanProgressReconciler,
@@ -310,6 +309,7 @@ class MiniCodexAgent:
         self.regression_policy = regression_policy or RegressionPolicy()
         self.execution_route = None
         self.execution_policy: ExecutionPolicy | None = None
+        self.task_requires_validation = True
         self.plan_version = 0
         self.rollback_revision = 0
 
@@ -320,20 +320,16 @@ class MiniCodexAgent:
         self.progress = (
             ProgressController(
                 max_same_tool_repeats=2,
-                progress_window=6,
                 max_validation_no_progress=2,
             )
         )
 
-        self.no_progress_policy = NoProgressPolicy(
-            max_no_progress_steps=(
-                max_no_progress_steps
-            )
-        )
-
-        self.convergence = ConvergenceController()
+        self.action_controller = ActionController()
         self.finalization = FinalizationController()
         self.step_evidence = StepEvidenceStore()
+        self.completion_policy = TaskCompletionPolicy()
+        self.execution_metrics = ExecutionMetrics()
+        self.replan_count = 0
 
         self.plan_progress_reconciler = (
             PlanProgressReconciler(
@@ -411,7 +407,7 @@ class MiniCodexAgent:
         validation_state = self.validation_pipeline.state
         return TaskProgressState(
             edit_revision=validation_state.edit_revision,
-            completed_step_count=(
+            completed_plan_steps=(
                 len(plan.completed_history) if plan is not None else 0
             ),
             validation_version=getattr(
@@ -465,19 +461,20 @@ class MiniCodexAgent:
             user_input,
             policy=policy,
         )
-        planning_enabled = (
+        self.task_requires_validation = bool(
+            self.execution_route
+            and self.execution_route.requires_coding_action
+        )
+        # FAST is structurally planless. A legacy caller cannot force the
+        # Planner back into this mode with use_planning=True.
+        planning_enabled = bool(
             self.execution_policy.use_plan
-            if use_planning is None
-            else bool(use_planning)
+            and use_planning is not False
         )
         self.task_max_steps = min(
             self.configured_max_steps,
             self.execution_policy.max_steps,
         )
-        self.no_progress_policy.max_no_progress_steps = (
-            self.execution_policy.max_no_progress_steps
-        )
-
         print(
             f"\n[Execution Mode] {self.execution_policy.mode.value.upper()}"
         )
@@ -491,10 +488,6 @@ class MiniCodexAgent:
         self.progress.reset(
             new_task=True
         )
-
-        self.no_progress_policy.reset()
-
-        self.convergence.reset()
 
         self.finalization.reset()
 
@@ -510,7 +503,11 @@ class MiniCodexAgent:
 
         self.recovery.reset()
 
+        self.replan_count = 0
+
         self.token_metrics.reset()
+
+        self.execution_metrics.reset(self.execution_policy.mode.value)
 
         self.context_budget.reset()
 
@@ -528,7 +525,15 @@ class MiniCodexAgent:
 
         self._repo_map_initialized = False
         self._repo_map_revision = None
-        self._refresh_repo_map(force=True)
+        explicit_fast_target = bool(
+            self.execution_policy.mode == ExecutionMode.FAST
+            and self.execution_route is not None
+            and self.execution_route.target_paths
+        )
+        if explicit_fast_target:
+            self.repo_map_text = "Repository map omitted for explicit FAST target."
+        else:
+            self._refresh_repo_map(force=True)
 
         # =====================================================
         # Initial Plan
@@ -547,6 +552,9 @@ class MiniCodexAgent:
                         user_input,
                         max_agent_steps=(
                             self.task_max_steps
+                        ),
+                        max_plan_steps=(
+                            self.execution_policy.max_plan_steps
                         ),
                         token_metrics=(
                             self.token_metrics
@@ -581,7 +589,7 @@ class MiniCodexAgent:
         # Agent Loop
         # =====================================================
 
-        self.convergence.observe_state(self.task_progress_state())
+        self.action_controller.reset(self.task_progress_state())
 
         return (
             run_agent_loop(
@@ -597,11 +605,25 @@ class MiniCodexAgent:
         policy: ExecutionPolicy | None = None,
     ) -> ExecutionPolicy:
         if policy is not None:
-            self.execution_route = None
+            self.execution_route = self.task_router.route(user_input)
             return policy
 
         self.execution_route = self.task_router.route(user_input)
         return policy_for(self.execution_route.mode)
+
+    def get_tool_schemas(self) -> list[dict]:
+        """Expose only mode-relevant tools without mutating the Registry."""
+
+        schemas = self.registry.get_schemas()
+        policy = self.execution_policy
+        allowed = getattr(policy, "exposed_tool_names", None)
+        if allowed is None:
+            return schemas
+        return [
+            schema
+            for schema in schemas
+            if schema.get("function", {}).get("name") in allowed
+        ]
 
     # =========================================================
     # Repository Map Refresh
@@ -752,7 +774,7 @@ class MiniCodexAgent:
                             "criteria that are not yet satisfied."
                         ),
                     }
-            elif not self.step_evidence.has_fresh(
+            elif not self.step_evidence.has_sufficient(
                 step_id=current.id,
                 edit_revision=self.validation_pipeline.state.edit_revision,
             ):
@@ -765,7 +787,8 @@ class MiniCodexAgent:
                     ),
                     "message": (
                         "Semantic plan completion was rejected because no "
-                        "fresh evidence exists for the current revision."
+                        "sufficient fresh implementation/validation evidence "
+                        "exists for the current revision."
                     ),
                 }
 
@@ -786,10 +809,6 @@ class MiniCodexAgent:
             }
 
         self.recovery.mark_progress()
-
-        self.no_progress_policy.mark_progress(
-            "plan step completed"
-        )
 
         self.progress.reset()
 
@@ -848,6 +867,17 @@ class MiniCodexAgent:
                 "reason": reason,
                 "failure_reason": "Replanning is disabled by execution policy.",
                 "message": "Replanning is disabled in FAST mode.",
+            }
+
+        if (
+            self.execution_policy is not None
+            and self.replan_count >= self.execution_policy.max_replans
+        ):
+            return {
+                "replanned": False,
+                "reason": reason,
+                "failure_reason": "Replan budget exhausted.",
+                "message": "The execution policy replan budget is exhausted.",
             }
 
         if (
@@ -923,13 +953,11 @@ class MiniCodexAgent:
             new_plan
         )
 
+        self.replan_count += 1
+
         self.plan_version += 1
 
         self.progress.reset()
-
-        self.no_progress_policy.mark_progress(
-            "plan changed"
-        )
 
         print(
             "\n[Replanned]"
@@ -1068,16 +1096,21 @@ class MiniCodexAgent:
         # Fresh Repository Map
         # =====================================================
 
-        self._refresh_repo_map()
-
-        # =====================================================
-        # Fresh Git State
-        # =====================================================
-
         compact_context = bool(
             self.execution_policy
             and self.execution_policy.compact_context
         )
+        explicit_fast_target = bool(
+            compact_context
+            and self.execution_route is not None
+            and self.execution_route.target_paths
+        )
+        if not explicit_fast_target:
+            self._refresh_repo_map()
+
+        # =====================================================
+        # Fresh Git State
+        # =====================================================
 
         try:
             if compact_context:
@@ -1145,6 +1178,31 @@ class MiniCodexAgent:
         # =====================================================
         # Build Context
         # =====================================================
+
+        if compact_context:
+            validation = self.validation_pipeline.state
+            action_text = (
+                self.action_controller.INSTRUCTION
+                if self.action_controller.action_required
+                else "Inspect minimally, then edit or validate."
+            )
+            return "\n\n".join(
+                [
+                    f"User request: {self.active_user_request or ''}",
+                    "Execution mode: FAST (no plan).",
+                    f"Remaining agent steps: {remaining_agent_steps}",
+                    git_awareness_text,
+                    (
+                        "Validation state: "
+                        f"revision={validation.edit_revision}, "
+                        f"has_edit={validation.has_edit}, "
+                        f"acceptance_passed={validation.acceptance_passed}."
+                    ),
+                    self.working_summary.render()[-2000:],
+                    action_text,
+                    safety_policy_text,
+                ]
+            ).strip() + "\n"
 
         return (
             build_turn_context(

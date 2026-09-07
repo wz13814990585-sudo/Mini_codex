@@ -14,6 +14,7 @@ class TaskRoute:
     reason: str
     signals: tuple[str, ...] = ()
     target_paths: tuple[str, ...] = ()
+    requires_coding_action: bool = True
 
 
 class TaskRouter:
@@ -25,20 +26,31 @@ class TaskRouter:
         "architecture",
         "control plane",
         "harness",
+        "orchestration",
+        "state machine",
+        "runtime",
         "migration",
         "concurrency",
         "async runtime",
         "cancellation",
         "security",
+        "rollback architecture",
+        "validation architecture",
+        "memory architecture",
+        "multi-agent",
         "multi-module",
         "framework-level",
         "架构",
         "控制平面",
+        "编排",
+        "状态机",
+        "运行时",
         "迁移",
         "并发",
         "异步运行时",
         "安全",
         "多模块",
+        "多智能体",
     )
     _SMALL_ACTIONS = (
         "add a button",
@@ -55,12 +67,19 @@ class TaskRouter:
         "单个函数",
         "独立 html",
     )
+    _CODING_ACTION = re.compile(
+        r"\b(create|add|update|fix|refactor|redesign|implement|build|modify|"
+        r"change|remove|delete|write|improve)\b|"
+        r"(创建|新增|添加|更新|修复|重构|重新设计|实现|构建|修改|改动|删除|编写|优化|做一个)",
+        re.IGNORECASE,
+    )
 
     def route(self, user_request: str, repo_state=None) -> TaskRoute:
         text = str(user_request or "").strip()
         lowered = text.casefold()
         targets = tuple(dict.fromkeys(self._extract_paths(text)))
         signals: list[str] = []
+        requires_coding_action = bool(self._CODING_ACTION.search(text))
 
         complex_hits = [item for item in self._COMPLEX if item in lowered]
         if complex_hits:
@@ -70,6 +89,7 @@ class TaskRouter:
                 reason="Request contains cross-cutting or high-risk architecture signals.",
                 signals=tuple(signals),
                 target_paths=targets,
+                requires_coding_action=requires_coding_action,
             )
 
         fast_scope = any(
@@ -91,7 +111,6 @@ class TaskRouter:
                 for marker in ("try_code", "standalone", "single-file", "单文件")
             )
         )
-        one_explicit_target = len(targets) == 1
         small_action = any(item in lowered for item in self._SMALL_ACTIONS)
 
         if (
@@ -99,7 +118,6 @@ class TaskRouter:
             or html_game
             or small_game
             or small_action
-            or one_explicit_target
         ):
             if fast_scope:
                 signals.append("small-scope-path")
@@ -107,8 +125,6 @@ class TaskRouter:
                 signals.append("standalone-html-game")
             if small_game:
                 signals.append("small-game-scope")
-            if one_explicit_target:
-                signals.append("single-explicit-target")
             if small_action:
                 signals.append("small-local-action")
             return TaskRoute(
@@ -116,6 +132,7 @@ class TaskRouter:
                 reason="Request is clearly local and bounded to a small artifact.",
                 signals=tuple(signals),
                 target_paths=targets,
+                requires_coding_action=requires_coding_action,
             )
 
         return TaskRoute(
@@ -123,6 +140,7 @@ class TaskRouter:
             reason="No decisive fast-path or complex-task signal was found.",
             signals=("uncertain-medium-scope",),
             target_paths=targets,
+            requires_coding_action=requires_coding_action,
         )
 
     @classmethod

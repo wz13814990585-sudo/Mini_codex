@@ -22,6 +22,27 @@ class ExecutionPolicy:
     repo_map_refresh_policy: str
     finalization_threshold: int
     compact_context: bool
+    exposed_tool_names: frozenset[str] | None
+    max_replans: int
+
+
+FAST_TOOL_NAMES = frozenset(
+    {
+        "list_files",
+        "read_file",
+        "search_code",
+        "search_symbol",
+        "write_file",
+        "patch_file",
+        "replace_lines",
+        "replace_symbol",
+        "validate_static_web",
+        "run_tests",
+        "run_command",
+        "install_python_package",
+        "git_diff",
+    }
+)
 
 
 def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
@@ -29,7 +50,7 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
         return ExecutionPolicy(
             mode=mode,
             use_plan=False,
-            max_steps=6,
+            max_steps=8,
             max_plan_steps=0,
             max_inspection_calls=3,
             max_no_progress_steps=3,
@@ -41,6 +62,8 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
             repo_map_refresh_policy="task_start_and_after_edit",
             finalization_threshold=2,
             compact_context=True,
+            exposed_tool_names=FAST_TOOL_NAMES,
+            max_replans=0,
         )
 
     if mode == ExecutionMode.STANDARD:
@@ -49,7 +72,7 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
             use_plan=True,
             max_steps=12,
             max_plan_steps=4,
-            max_inspection_calls=6,
+            max_inspection_calls=4,
             max_no_progress_steps=4,
             require_acceptance=True,
             regression_requirement=RegressionRequirement.RELEVANT_ONLY,
@@ -59,6 +82,8 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
             repo_map_refresh_policy="revision_cached",
             finalization_threshold=3,
             compact_context=False,
+            exposed_tool_names=None,
+            max_replans=1,
         )
 
     return ExecutionPolicy(
@@ -66,15 +91,16 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
         use_plan=True,
         max_steps=24,
         max_plan_steps=6,
-        max_inspection_calls=None,
+        max_inspection_calls=6,
         max_no_progress_steps=5,
         require_acceptance=True,
         regression_requirement=RegressionRequirement.REQUIRED,
         enable_long_term_memory=True,
         enable_heavy_recovery=True,
         enable_replan=True,
-        repo_map_refresh_policy="every_turn",
+        repo_map_refresh_policy="revision_cached",
         finalization_threshold=3,
         compact_context=False,
+        exposed_tool_names=None,
+        max_replans=2,
     )
-

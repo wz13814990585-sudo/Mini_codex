@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from ..agent.agent import MiniCodexAgent
-from ..agent.convergence import ConvergenceController, TaskProgressState
+from ..agent.action_controller import ActionController, TaskProgressState
 from ..agent.execution_mode import ExecutionMode
 from ..agent.execution_policy import policy_for
 from ..agent.finalization import FinalizationController
@@ -13,26 +13,26 @@ from ..tools.registry import ToolRegistry
 def state(edit=0, validation=0):
     return TaskProgressState(
         edit_revision=edit,
-        completed_step_count=0,
+        completed_plan_steps=0,
         validation_version=validation,
         plan_version=0,
         rollback_revision=0,
     )
 
 
-def test_convergence_blocks_reconnaissance_but_allows_validation():
-    controller = ConvergenceController()
+def test_action_controller_blocks_reconnaissance_but_allows_validation():
+    controller = ActionController()
     policy = policy_for(ExecutionMode.FAST)
-    controller.observe_state(state())
+    controller.reset(state())
     for _ in range(policy.max_inspection_calls):
-        controller.record_tool("search_code")
+        controller.observe_action("search_code", state())
 
-    assert controller.restriction_reason("search_code", policy)
-    assert controller.restriction_reason("validate_static_web", policy) is None
+    assert controller.restriction_reason("search_code", {}, policy)
+    assert controller.restriction_reason("validate_static_web", {}, policy) is None
 
-    controller.observe_state(state(edit=1))
-    assert controller.active is False
-    assert controller.inspection_calls == 0
+    controller.observe_action("write_file", state(edit=1))
+    assert controller.action_required is False
+    assert controller.consecutive_inspections == 0
 
 
 def test_finalization_blocks_pointless_search_only_when_active():

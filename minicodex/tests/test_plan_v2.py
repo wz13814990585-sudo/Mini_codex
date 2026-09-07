@@ -61,7 +61,7 @@ def test_broad_plan_is_regenerated_once():
     assert len(plan.steps) == 2
 
 
-def test_process_only_plan_is_rejected_after_one_regeneration():
+def test_process_only_plan_uses_fallback_after_one_regeneration():
     process_plan = """{
       "goal": "inspect",
       "steps": [
@@ -71,10 +71,11 @@ def test_process_only_plan_is_rejected_after_one_regeneration():
     }"""
     llm = SequenceLLM([process_plan, process_plan])
 
-    with pytest.raises(ValueError, match="process-only"):
-        Planner(llm).create_plan("Fix behavior")
+    plan = Planner(llm).create_plan("Fix behavior")
 
     assert llm.calls == 2
+    assert len(plan.steps) == 2
+    assert "implementation outcome" in plan.steps[0].description.lower()
 
 
 def test_semantic_completion_requires_fresh_current_revision_evidence():
@@ -101,6 +102,16 @@ def test_semantic_completion_requires_fresh_current_revision_evidence():
         tool_name="read_file",
         arguments={"path": "app.py"},
         result=ToolResult(success=True, summary="Current source inspected"),
+    )
+
+    assert agent.complete_plan_step()["completed"] is False
+
+    agent.step_evidence.record(
+        step_id=1,
+        edit_revision=0,
+        tool_name="write_file",
+        arguments={"path": "app.py"},
+        result=ToolResult(success=True, summary="Implementation written"),
     )
 
     assert agent.complete_plan_step()["completed"] is True
@@ -273,4 +284,4 @@ def test_final_reconciliation_can_finish_stale_plan_bookkeeping(tmp_path):
     result = run_agent_loop(agent, "Finish existing work")
 
     assert agent.active_plan.is_completed() is True
-    assert "completed during final reconciliation" in result
+    assert "edited_and_validated" in result

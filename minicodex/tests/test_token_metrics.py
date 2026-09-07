@@ -206,11 +206,11 @@ def test_planner_records_token_usage():
     )
 
     assert plan.goal == "Fix calculator"
-    assert len(plan.steps) == 3
-    assert metrics.call_count == 1
-    assert metrics.total.prompt_tokens == 500
-    assert metrics.total.completion_tokens == 100
-    assert metrics.total.total_tokens == 600
+    assert len(plan.steps) == 1
+    assert metrics.call_count == 2
+    assert metrics.total.prompt_tokens == 1000
+    assert metrics.total.completion_tokens == 200
+    assert metrics.total.total_tokens == 1200
 
 
 def test_agent_loop_records_token_usage():

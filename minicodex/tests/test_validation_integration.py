@@ -293,10 +293,7 @@ def test_regression_pass_forces_acceptance_validation():
     early_stop = decision.early_stop
     restart = decision.restart
 
-    assert (
-        early_stop
-        is None
-    )
+    assert early_stop is None
 
     assert (
         restart

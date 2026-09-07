@@ -24,6 +24,13 @@ class CompletionStatus(
     READY = "ready"
 
 
+class TaskOutcome(str, Enum):
+    ALREADY_SATISFIED = "already_satisfied"
+    EDITED_AND_VALIDATED = "edited_and_validated"
+    BLOCKED = "blocked"
+    INCOMPLETE = "incomplete"
+
+
 @dataclass(frozen=True)
 class CompletionDecision:
     """
@@ -49,6 +56,8 @@ class CompletionDecision:
 
     reason: str
 
+    outcome: TaskOutcome = TaskOutcome.INCOMPLETE
+
     @property
     def can_complete(
         self,
@@ -67,9 +76,10 @@ class CompletionGate:
 
     Baseline evidence:
 
-    1. A meaningful edit exists.
-    2. Acceptance evidence exists for the current revision.
-    3. Regression evidence proportional to the active policy.
+    1. Acceptance proves the requested state for the current revision.
+    2. Regression evidence is proportional to the active policy.
+    3. An edit distinguishes edited completion from already-satisfied
+       completion; it is not itself mandatory.
 
     Full regression tests alone are intentionally insufficient because
     acceptance remains an independent requirement by default.
@@ -87,13 +97,17 @@ class CompletionGate:
         regression_requirement: RegressionRequirement = (
             RegressionRequirement.REQUIRED
         ),
+        allow_already_satisfied: bool = True,
     ) -> CompletionDecision:
 
         # =====================================================
         # No Edit
         # =====================================================
 
-        if not has_edit:
+        if not has_edit and not (
+            allow_already_satisfied
+            and (acceptance_passed or not require_acceptance)
+        ):
 
             return CompletionDecision(
                 status=(
@@ -104,13 +118,14 @@ class CompletionGate:
                     edit_revision
                 ),
                 has_edit=False,
-                acceptance_passed=False,
+                acceptance_passed=acceptance_passed,
                 full_validation_passed=(
                     full_validation_passed
                 ),
                 reason=(
                     "No successful edit has been "
-                    "recorded for this task."
+                    "recorded and acceptance has not proven that the "
+                    "requested state already exists."
                 ),
             )
 
@@ -128,7 +143,7 @@ class CompletionGate:
                 edit_revision=(
                     edit_revision
                 ),
-                has_edit=True,
+                has_edit=has_edit,
                 acceptance_passed=False,
                 full_validation_passed=(
                     full_validation_passed
@@ -144,12 +159,17 @@ class CompletionGate:
             return CompletionDecision(
                 status=CompletionStatus.READY,
                 edit_revision=edit_revision,
-                has_edit=True,
+                has_edit=has_edit,
                 acceptance_passed=acceptance_passed,
                 full_validation_passed=full_validation_passed,
                 reason=(
                     "Acceptance passed and full repository regression is "
                     "not applicable to this change scope."
+                ),
+                outcome=(
+                    TaskOutcome.EDITED_AND_VALIDATED
+                    if has_edit
+                    else TaskOutcome.ALREADY_SATISFIED
                 ),
             )
 
@@ -161,7 +181,7 @@ class CompletionGate:
                 return CompletionDecision(
                     status=CompletionStatus.NEEDS_RELEVANT_VALIDATION,
                     edit_revision=edit_revision,
-                    has_edit=True,
+                    has_edit=has_edit,
                     acceptance_passed=acceptance_passed,
                     full_validation_passed=full_validation_passed,
                     reason=(
@@ -172,12 +192,17 @@ class CompletionGate:
             return CompletionDecision(
                 status=CompletionStatus.READY,
                 edit_revision=edit_revision,
-                has_edit=True,
+                has_edit=has_edit,
                 acceptance_passed=acceptance_passed,
                 full_validation_passed=full_validation_passed,
                 reason=(
                     "The current edit revision has acceptance and relevant "
                     "regression evidence."
+                ),
+                outcome=(
+                    TaskOutcome.EDITED_AND_VALIDATED
+                    if has_edit
+                    else TaskOutcome.ALREADY_SATISFIED
                 ),
             )
 
@@ -195,7 +220,7 @@ class CompletionGate:
                 edit_revision=(
                     edit_revision
                 ),
-                has_edit=True,
+                has_edit=has_edit,
                 acceptance_passed=True,
                 full_validation_passed=False,
                 reason=(
@@ -216,12 +241,17 @@ class CompletionGate:
             edit_revision=(
                 edit_revision
             ),
-            has_edit=True,
+            has_edit=has_edit,
             acceptance_passed=True,
             full_validation_passed=True,
             reason=(
                 "The current edit revision has both "
                 "acceptance evidence and successful "
                 "full regression validation."
+            ),
+            outcome=(
+                TaskOutcome.EDITED_AND_VALIDATED
+                if has_edit
+                else TaskOutcome.ALREADY_SATISFIED
             ),
         )

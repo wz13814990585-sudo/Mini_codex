@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from ..agent.agent import MiniCodexAgent
+from ..agent.execution_mode import ExecutionMode
+from ..agent.execution_policy import policy_for
 from ..agent.loop import (
     acceptance_evidence_reminder,
     run_agent_loop,
@@ -142,7 +144,7 @@ def assert_batch_order(messages, ids):
     validate_tool_message_protocol(messages)
 
 
-def test_first_tool_no_progress_closes_remaining_before_recovery():
+def test_inspection_batch_stays_atomic_without_legacy_recovery():
     calls = [
         tool_call("A", "search_code", {"query": "setInterval"}),
         tool_call("B", "search_code", {"query": "restartBtn"}),
@@ -154,9 +156,8 @@ def test_first_tool_no_progress_closes_remaining_before_recovery():
     history = conversation_after_first_response(llm)
     assert_batch_order(history, ["A", "B"])
     assert "inspection result" in history[1]["content"]
-    assert "skipped" in history[2]["content"].lower()
-    assert history[3]["role"] == "user"
-    assert "no-progress recovery" in history[3]["content"].lower()
+    assert "inspection result" in history[2]["content"]
+    assert "skipped" not in history[2]["content"].lower()
     assert len(llm.histories) == 2
 
 
@@ -185,7 +186,8 @@ def test_no_progress_restriction_closes_batch_before_guidance():
         tool_call("B", "search_code", {"query": "b"}),
     ]
     agent, llm = make_agent(FakeMessage(tool_calls=calls))
-    agent.no_progress_policy.recovery_active = True
+    agent.execution_policy = policy_for(ExecutionMode.STANDARD)
+    agent.action_controller.action_required = True
 
     run_agent_loop(agent, "Inspect game")
 
@@ -225,7 +227,7 @@ def test_validation_transition_closes_batch_before_followup():
     assert "full regression" in history[3]["content"].lower()
 
 
-def test_progress_recovery_closes_batch_before_message():
+def test_action_required_closes_batch_before_message():
     calls = [
         tool_call("A", "search_code", {"query": "a"}),
         tool_call("B", "search_code", {"query": "b"}),
@@ -234,24 +236,15 @@ def test_progress_recovery_closes_batch_before_message():
         FakeMessage(tool_calls=calls),
         no_progress=20,
     )
-    agent.active_plan = AgentPlan(
-        goal="change",
-        steps=[PlanStep(id=1, description="Implement behavior")],
-    )
-    agent.progress.recent_actions = [
-        "run_tests",
-        "run_tests",
-        "read_file",
-        "search_code",
-        "git_status",
-    ]
+    agent.execution_policy = policy_for(ExecutionMode.STANDARD)
+    agent.action_controller.action_required = True
 
     run_agent_loop(agent, "Change behavior")
 
     history = conversation_after_first_response(llm)
     assert_batch_order(history, ["A", "B"])
     assert history[3]["role"] == "user"
-    assert "recovery" in history[3]["content"].lower()
+    assert "enough context" in history[3]["content"].lower()
 
 
 def test_protocol_validator_accepts_closed_batch():
@@ -301,7 +294,7 @@ def test_protocol_validator_rejects_duplicate_ids_and_responses():
         )
 
 
-def test_stuck_reconciles_machine_criteria_before_generic_recovery(tmp_path):
+def test_final_response_reconciles_machine_criteria(tmp_path):
     (tmp_path / "game.html").write_text("restartBtn", encoding="utf-8")
     calls = [
         tool_call("A", "search_code", {"query": "restartBtn"}),
@@ -332,7 +325,7 @@ def test_stuck_reconciles_machine_criteria_before_generic_recovery(tmp_path):
     assert_batch_order(history, ["A", "B"])
     assert agent.active_plan.is_completed() is True
     assert all(
-        "deterministic no-progress recovery" not in str(message.get("content", "")).lower()
+        "no-progress recovery" not in str(message.get("content", "")).lower()
         for message in history
     )
 
@@ -357,8 +350,8 @@ def test_semantic_step_is_not_completed_from_search_results():
     history = conversation_after_first_response(llm)
     assert step.status == StepStatus.IN_PROGRESS
     assert agent.active_plan.is_completed() is False
-    assert any(
-        "deterministic no-progress recovery" in str(message.get("content", "")).lower()
+    assert all(
+        "no-progress recovery" not in str(message.get("content", "")).lower()
         for message in history
     )
 
@@ -380,4 +373,3 @@ def test_html_acceptance_reminder_uses_static_web_validator():
     assert "validate_static_web" in reminder
     assert "try_code/index.html" in reminder
     assert "run_tests" not in reminder
-

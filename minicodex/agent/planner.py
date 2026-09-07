@@ -24,16 +24,14 @@ class Planner:
         self,
         user_request: str,
         max_agent_steps: int = 20,
+        max_plan_steps: int | None = None,
         token_metrics: TokenMetrics | None = None,
     ) -> AgentPlan:
 
-        max_plan_steps = max(
-            3,
-            min(
-                6,
-                max_agent_steps // 3 or 3,
-            ),
-        )
+        if max_plan_steps is None:
+            max_plan_steps = max(3, min(6, max_agent_steps // 3 or 3))
+        else:
+            max_plan_steps = max(1, min(6, int(max_plan_steps)))
 
         messages = [
             {
@@ -119,11 +117,33 @@ completion requires semantic judgment.
                 token_metrics=token_metrics,
             )
             quality = self.normalizer.validate(steps)
-            if quality.has_process_only_steps:
-                raise ValueError(
-                    "Planner returned process-only steps after one "
-                    "regeneration attempt."
-                )
+            if quality.issues:
+                invalid_ids = {
+                    issue.step_id
+                    for issue in quality.issues
+                    if issue.code
+                    in {
+                        "process_only",
+                        "repeated_verification",
+                        "broad_semantic",
+                    }
+                }
+                steps = [step for step in steps if step.id not in invalid_ids]
+                if not steps:
+                    steps = [
+                        PlanStep(
+                            id=1,
+                            description=(
+                                "Requested implementation outcome exists"
+                            ),
+                        ),
+                        PlanStep(
+                            id=2,
+                            description="Acceptance validation passes",
+                        ),
+                    ]
+                for index, step in enumerate(steps, start=1):
+                    step.id = index
 
         return AgentPlan(
             goal=data["goal"],

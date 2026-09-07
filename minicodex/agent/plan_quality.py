@@ -23,8 +23,8 @@ class PlanQualityReport:
             issue.code == "process_only"
             for issue in self.issues
         )
-        return process_count >= 2 or any(
-            issue.code == "broad_semantic"
+        return process_count >= 1 or any(
+            issue.code in {"broad_semantic", "too_many_steps", "repeated_verification"}
             for issue in self.issues
         )
 
@@ -46,14 +46,45 @@ class PlanQualityValidator:
     )
     _SEPARATORS = re.compile(r",|;|，|；|、|\band\b|以及|并且|同时")
     _PROCESS_ONLY = re.compile(
-        r"^\s*(inspect|read|search|review|check|verify|confirm)\b|"
-        r"^\s*(检查|读取|搜索|审查|查看|确认|再次验证)",
+        r"^\s*(inspect|read|search|review|check|verify|confirm|validate|test|run tests)\b|"
+        r"^\s*(检查|读取|搜索|审查|查看|确认|验证|测试|再次验证)",
         re.IGNORECASE,
     )
+    _VERIFICATION = re.compile(
+        r"\b(check|verify|confirm|validate|test)\b|检查|确认|验证|测试",
+        re.IGNORECASE,
+    )
+
+    def __init__(self, max_steps: int = 6):
+        self.max_steps = max(1, int(max_steps))
 
     def validate(self, steps: list) -> PlanQualityReport:
         issues: list[PlanQualityIssue] = []
         self.normalize(steps)
+
+        if len(steps) > self.max_steps:
+            issues.append(
+                PlanQualityIssue(
+                    step_id=steps[self.max_steps].id,
+                    code="too_many_steps",
+                    message=f"Plan exceeds the {self.max_steps}-step limit.",
+                )
+            )
+
+        verification_steps = [
+            step
+            for step in steps
+            if self._VERIFICATION.search(str(getattr(step, "description", "")))
+            and not getattr(step, "acceptance_criteria", None)
+        ]
+        for step in verification_steps[1:]:
+            issues.append(
+                PlanQualityIssue(
+                    step_id=step.id,
+                    code="repeated_verification",
+                    message="Repeated verification belongs in one outcome milestone.",
+                )
+            )
 
         for step in steps:
             criteria = list(getattr(step, "acceptance_criteria", []) or [])

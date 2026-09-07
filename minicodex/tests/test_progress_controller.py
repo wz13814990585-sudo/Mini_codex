@@ -30,33 +30,6 @@ def test_interleaved_duplicate_calls_are_counted():
     assert "repeated" in reason
 
 
-def test_inspection_nudge_fires_once_per_window():
-    progress = ProgressController(
-        progress_window=3
-    )
-
-    progress.record_action("read_file")
-    progress.record_action("search_code")
-    assert progress.consume_inspection_nudge() is False
-
-    progress.record_action("search_symbol")
-    assert progress.consume_inspection_nudge() is True
-    assert progress.consume_inspection_nudge() is False
-
-
-def test_edit_resets_inspection_streak():
-    progress = ProgressController(
-        progress_window=3
-    )
-
-    progress.record_action("read_file")
-    progress.record_action("search_code")
-    progress.record_action("patch_file")
-    progress.record_action("read_file")
-
-    assert progress.consume_inspection_nudge() is False
-
-
 def test_meaningful_progress_resets_duplicate_phase():
     progress = ProgressController(
         max_same_tool_repeats=1
