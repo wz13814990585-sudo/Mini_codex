@@ -1,6 +1,8 @@
 import json
 
 from .metrics import TokenMetrics
+from .message_protocol import validate_tool_message_protocol
+from .plan_quality import PlanNormalizer
 from .state import (
     AgentPlan,
     PlanStep,
@@ -13,8 +15,10 @@ class Replanner:
     def __init__(
         self,
         llm,
+        normalizer: PlanNormalizer | None = None,
     ):
         self.llm = llm
+        self.normalizer = normalizer or PlanNormalizer()
 
     # =========================================================
     # Replan
@@ -122,6 +126,8 @@ metric_at_least. Use [] for semantic-only steps.
         # =====================================================
         # LLM Call
         # =====================================================
+
+        validate_tool_message_protocol(messages)
 
         llm_response = self.llm.chat(
             messages=messages,
@@ -236,6 +242,8 @@ metric_at_least. Use [] for semantic-only steps.
                 start=next_step_id,
             )
         ]
+
+        self.normalizer.normalize(new_steps)
 
         return AgentPlan(
             goal=data["goal"],

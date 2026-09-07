@@ -1,8 +1,10 @@
 """Agent execution loop."""
 
+import re
 import threading
 import time
 
+from .control_decision import ControlDecision
 from .completion import (
     CompletionGate,
     CompletionStatus,
@@ -12,6 +14,10 @@ from .context import (
 )
 from .progress import (
     ValidationStatus,
+)
+from .message_protocol import (
+    close_tool_batch_before_control_transition,
+    validate_tool_message_protocol,
 )
 from .state import (
     StepStatus,
@@ -60,6 +66,10 @@ def _chat_with_heartbeat(
     tools: list,
 ):
     """Keep the synchronous CLI visibly alive during slow LLM calls."""
+
+    # Provider protocol corruption is a Harness bug. Detect it locally
+    # before making a network request that would otherwise fail with 400.
+    validate_tool_message_protocol(messages)
 
     interval = max(
         0.0,
@@ -597,16 +607,13 @@ def run_agent_loop(
                         )
                     ):
 
-                        reminder = (
-                            "The current edit revision "
-                            "cannot complete yet because "
-                            "acceptance evidence is missing. "
-                            "Run a specific relevant test "
-                            "that demonstrates the user's "
-                            "requested behavior using "
-                            "run_tests("
-                            "path=<specific_test>, "
-                            "purpose='acceptance')."
+                        reminder = acceptance_evidence_reminder(
+                            agent,
+                            prefix=(
+                                "The current edit revision cannot "
+                                "complete yet because acceptance "
+                                "evidence is missing. "
+                            ),
                         )
 
                     # =========================================
@@ -830,18 +837,13 @@ def run_agent_loop(
                         "content": observation_text,
                     }
                 )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": restriction_reason,
-                    }
-                )
-                append_skipped_tool_results(
+                close_tool_batch_before_control_transition(
                     messages,
                     response.tool_calls[
                         tool_index + 1:
                     ],
                     "no-progress recovery restricted reconnaissance",
+                    followup_user_message=restriction_reason,
                 )
                 restart_agent_loop = True
                 break
@@ -1035,7 +1037,7 @@ def run_agent_loop(
                             for item in reconciled_steps
                         )
                     )
-                    append_skipped_tool_results(
+                    close_tool_batch_before_control_transition(
                         messages,
                         response.tool_calls[
                             tool_index + 1:
@@ -1068,24 +1070,44 @@ def run_agent_loop(
             )
 
             if progress_decision.stuck:
+                # The current implementation may already satisfy one or
+                # more explicit predicates. Advance those steps before
+                # falling back to generic stuck recovery.
+                reconciliation = agent.reconcile_plan_progress()
+                reconciled_steps = reconciliation["completed"]
+
+                if reconciled_steps:
+                    print("\n[Plan Reconciliation Before Recovery]")
+                    print(
+                        "Machine criteria completed steps: "
+                        + ", ".join(
+                            str(item["step_id"])
+                            for item in reconciled_steps
+                        )
+                    )
+                    close_tool_batch_before_control_transition(
+                        messages,
+                        response.tool_calls[tool_index + 1:],
+                        (
+                            "machine-checkable plan criteria advanced "
+                            "the active plan before stuck recovery"
+                        ),
+                    )
+                    restart_agent_loop = True
+                    break
+
                 recovery_instruction = (
-                    agent.no_progress_policy
-                    .RECOVERY_INSTRUCTION
+                    agent.no_progress_policy.RECOVERY_INSTRUCTION
                 )
                 print("\n[No-Progress Recovery]")
                 print(progress_decision.reason)
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": recovery_instruction,
-                    }
-                )
-                append_skipped_tool_results(
+                close_tool_batch_before_control_transition(
                     messages,
                     response.tool_calls[
                         tool_index + 1:
                     ],
                     "deterministic no-progress recovery started",
+                    followup_user_message=recovery_instruction,
                 )
                 restart_agent_loop = True
                 break
@@ -1108,7 +1130,7 @@ def run_agent_loop(
 
                 if completed:
 
-                    append_skipped_tool_results(
+                    close_tool_batch_before_control_transition(
                         messages,
                         response.tool_calls[
                             tool_index + 1:
@@ -1146,7 +1168,7 @@ def run_agent_loop(
 
                 if replanned:
 
-                    append_skipped_tool_results(
+                    close_tool_batch_before_control_transition(
                         messages,
                         response.tool_calls[
                             tool_index + 1:
@@ -1236,22 +1258,15 @@ def run_agent_loop(
                         f"{evidence.outcome.value}"
                     )
 
-                    (
-                        early_stop,
-                        restart_agent_loop,
-                    ) = (
+                    control_decision = (
                         apply_validation_evidence(
-                            agent=(
-                                agent
-                            ),
-                            evidence=(
-                                evidence
-                            ),
-                            messages=(
-                                messages
-                            ),
+                            agent=agent,
+                            evidence=evidence,
                         )
                     )
+
+                    early_stop = control_decision.early_stop
+                    restart_agent_loop = control_decision.restart
 
                     if reconciled_steps:
                         print("\n[Plan Reconciliation]")
@@ -1269,15 +1284,18 @@ def run_agent_loop(
                         early_stop
                         or restart_agent_loop
                     ):
-
-                        append_skipped_tool_results(
+                        close_tool_batch_before_control_transition(
                             messages,
                             response.tool_calls[
                                 tool_index + 1:
                             ],
-                            (
-                                "validation changed "
-                                "agent loop control flow"
+                            control_decision.skipped_reason
+                            or (
+                                "validation changed agent loop "
+                                "control flow"
+                            ),
+                            followup_user_message=(
+                                control_decision.followup_message
                             ),
                         )
 
@@ -1328,7 +1346,7 @@ def run_agent_loop(
 
                 if not should_continue:
 
-                    append_skipped_tool_results(
+                    close_tool_batch_before_control_transition(
                         messages,
                         response.tool_calls[
                             tool_index + 1:
@@ -1345,18 +1363,7 @@ def run_agent_loop(
                         "could not be made."
                     )
 
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            recovery_message
-                        ),
-                    }
-                )
-
-                restart_agent_loop = True
-
-                append_skipped_tool_results(
+                close_tool_batch_before_control_transition(
                     messages,
                     response.tool_calls[
                         tool_index + 1:
@@ -1365,7 +1372,10 @@ def run_agent_loop(
                         "progress recovery "
                         "restarted the loop"
                     ),
+                    followup_user_message=recovery_message,
                 )
+
+                restart_agent_loop = True
 
                 break
 
@@ -1502,6 +1512,78 @@ def active_plan_incomplete(
     )
 
 
+def acceptance_evidence_reminder(
+    agent,
+    *,
+    prefix: str = (
+        "Regression validation is not enough to prove that the "
+        "user's requested behavior works. "
+    ),
+) -> str:
+    """Choose acceptance guidance from registered tools and artifacts."""
+
+    registry = getattr(agent, "registry", None)
+    registered = set(getattr(registry, "_tools", {}) or {})
+    candidate_paths: list[str] = []
+
+    awareness = getattr(agent, "git_awareness", None)
+    if awareness is not None:
+        try:
+            candidate_paths.extend(
+                awareness.task_state().agent_touched_files
+            )
+        except Exception:
+            pass
+
+    plan = getattr(agent, "active_plan", None)
+    if plan is not None:
+        for step in plan.all_steps():
+            for criterion in getattr(step, "acceptance_criteria", []) or []:
+                path = str(criterion.get("path", "")).strip()
+                if path:
+                    candidate_paths.append(path)
+
+    request = str(getattr(agent, "active_user_request", "") or "")
+    candidate_paths.extend(
+        re.findall(r"[\w./\\-]+\.html\b", request, flags=re.IGNORECASE)
+    )
+    html_path = next(
+        (path for path in candidate_paths if path.lower().endswith(".html")),
+        None,
+    )
+
+    if html_path and "validate_static_web" in registered:
+        return (
+            prefix
+            + "Obtain targeted acceptance evidence for the CURRENT edit "
+            "revision with "
+            f"validate_static_web(path={html_path!r})."
+        )
+
+    if "run_tests" in registered:
+        return (
+            prefix
+            + "Obtain acceptance evidence for the CURRENT edit revision "
+            "with a specific relevant test using "
+            "run_tests(path=<specific_test>, purpose='acceptance'). Do "
+            "not use the full suite itself as acceptance evidence."
+        )
+
+    if "run_command" in registered:
+        return (
+            prefix
+            + "Run a specific command that demonstrates the requested "
+            "behavior using run_command(command=<acceptance_command>, "
+            "purpose='acceptance')."
+        )
+
+    return (
+        prefix
+        + "Obtain explicit acceptance evidence for the CURRENT edit "
+        "revision using an available targeted validator."
+    )
+
+
 # =============================================================
 # Completion Gate
 # =============================================================
@@ -1613,14 +1695,15 @@ def can_finish_edit_task(
 def apply_validation_evidence(
     agent,
     evidence: ValidationEvidence,
-    messages: list,
-) -> tuple[
-    str | None,
-    bool,
-]:
+    messages: list | None = None,
+) -> ControlDecision:
 
     """
-    Convert ValidationEvidence into Agent-level control flow.
+    Convert ValidationEvidence into an Agent-level control decision.
+
+    ``messages`` is accepted for source compatibility but is deliberately
+    never mutated. Only the orchestration loop may commit provider-history
+    transitions.
 
     ValidationPipeline:
         What does this result mean?
@@ -1725,18 +1808,9 @@ def apply_validation_evidence(
 
         rollback_control = (
             rollback_regressed_edit(
-                agent=(
-                    agent
-                ),
-                evidence=(
-                    evidence
-                ),
-                validation_progress=(
-                    validation_progress
-                ),
-                messages=(
-                    messages
-                ),
+                agent=agent,
+                evidence=evidence,
+                validation_progress=validation_progress,
             )
         )
 
@@ -1812,10 +1886,7 @@ def apply_validation_evidence(
             f"{completion.status.value}"
         )
 
-        return (
-            None,
-            False,
-        )
+        return ControlDecision()
 
     # =========================================================
     # Need Acceptance
@@ -1829,28 +1900,12 @@ def apply_validation_evidence(
         )
     ):
 
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Regression validation is not enough "
-                    "to prove that the user's requested "
-                    "behavior works. Obtain acceptance "
-                    "evidence for the CURRENT edit revision "
-                    "by running a specific relevant test "
-                    "with "
-                    "run_tests("
-                    "path=<specific_test>, "
-                    "purpose='acceptance'). "
-                    "Do not use the full suite itself "
-                    "as acceptance evidence."
-                ),
-            }
-        )
-
-        return (
-            None,
-            True,
+        return ControlDecision(
+            restart=True,
+            followup_message=acceptance_evidence_reminder(agent),
+            skipped_reason=(
+                "validation requires acceptance evidence"
+            ),
         )
 
     # =========================================================
@@ -1865,25 +1920,17 @@ def apply_validation_evidence(
         )
     ):
 
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Acceptance validation passed for "
-                    "the current edit revision. "
-                    "Now run the full regression suite "
-                    "with "
-                    "run_tests("
-                    "path='.', "
-                    "purpose='regression') "
-                    "before claiming task completion."
-                ),
-            }
-        )
-
-        return (
-            None,
-            True,
+        return ControlDecision(
+            restart=True,
+            followup_message=(
+                "Acceptance validation passed for the current edit "
+                "revision. Now run the full regression suite with "
+                "run_tests(path='.', purpose='regression') before "
+                "claiming task completion."
+            ),
+            skipped_reason=(
+                "validation requires full regression evidence"
+            ),
         )
 
     # =========================================================
@@ -1898,23 +1945,15 @@ def apply_validation_evidence(
         )
     ):
 
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Validation was inconclusive. "
-                    "Do not treat it as either a code "
-                    "failure or successful validation. "
-                    "Inspect why validation could not "
-                    "produce reliable evidence and "
-                    "obtain new evidence."
-                ),
-            }
-        )
-
-        return (
-            None,
-            True,
+        return ControlDecision(
+            restart=True,
+            followup_message=(
+                "Validation was inconclusive. Do not treat it as "
+                "either a code failure or successful validation. "
+                "Inspect why validation could not produce reliable "
+                "evidence and obtain new evidence."
+            ),
+            skipped_reason="validation was inconclusive",
         )
 
     # =========================================================
@@ -1936,10 +1975,7 @@ def apply_validation_evidence(
         )
     ):
 
-        return (
-            None,
-            False,
-        )
+        return ControlDecision()
 
     # =========================================================
     # No Stall
@@ -1950,10 +1986,7 @@ def apply_validation_evidence(
         .stalled
     ):
 
-        return (
-            None,
-            False,
-        )
+        return ControlDecision()
 
     # =========================================================
     # Recovery Escalation
@@ -1990,26 +2023,17 @@ def apply_validation_evidence(
 
     if not should_continue:
 
-        return (
-            (
+        return ControlDecision(
+            early_stop=(
                 "Agent stopped because "
                 "validation remained stalled."
             ),
-            False,
         )
 
-    messages.append(
-        {
-            "role": "user",
-            "content": (
-                recovery_message
-            ),
-        }
-    )
-
-    return (
-        None,
-        True,
+    return ControlDecision(
+        restart=True,
+        followup_message=recovery_message,
+        skipped_reason="validation recovery restarted the loop",
     )
 
 
@@ -2023,11 +2047,8 @@ def rollback_regressed_edit(
     agent,
     evidence: ValidationEvidence,
     validation_progress,
-    messages: list,
-) -> tuple[
-    str | None,
-    bool,
-] | None:
+    messages: list | None = None,
+) -> ControlDecision | None:
 
     """
     Roll back the CURRENT edit revision when the SAME
@@ -2268,24 +2289,16 @@ def rollback_regressed_edit(
             rollback_result.to_llm_text()
         )
 
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Validation became worse after the "
-                    "current edit, so the Harness attempted "
-                    "an automatic rollback, but rollback "
-                    "was blocked or failed. "
-                    f"{rollback_result.to_llm_text()} "
-                    "Inspect the current physical workspace "
-                    "before making another modification."
-                ),
-            }
-        )
-
-        return (
-            None,
-            True,
+        return ControlDecision(
+            restart=True,
+            followup_message=(
+                "Validation became worse after the current edit, so "
+                "the Harness attempted an automatic rollback, but "
+                "rollback was blocked or failed. "
+                f"{rollback_result.to_llm_text()} Inspect the current "
+                "physical workspace before making another modification."
+            ),
+            skipped_reason="automatic rollback failed",
         )
 
     # =========================================================
@@ -2326,27 +2339,18 @@ def rollback_regressed_edit(
         )
 
     # =========================================================
-    # Tell LLM What Happened
+    # Describe What Happened To The Loop
     # =========================================================
 
-    messages.append(
-        {
-            "role": "user",
-            "content": (
-                "The Harness detected that the latest "
-                "comparable validation became worse across "
-                "an edit revision and automatically rolled "
-                "back the responsible edit. "
-                f"Checkpoint "
-                f"{checkpoint.checkpoint_id} was restored. "
-                f"The restored workspace is now revision "
-                f"{rollback_revision}. "
-                "All previous validation evidence is stale. "
-                "Inspect the restored source and choose a "
-                "materially different repair strategy. "
-                "Do not immediately repeat the reverted edit."
-            ),
-        }
+    followup_message = (
+        "The Harness detected that the latest comparable validation "
+        "became worse across an edit revision and automatically rolled "
+        "back the responsible edit. "
+        f"Checkpoint {checkpoint.checkpoint_id} was restored. "
+        f"The restored workspace is now revision {rollback_revision}. "
+        "All previous validation evidence is stale. Inspect the restored "
+        "source and choose a materially different repair strategy. Do "
+        "not immediately repeat the reverted edit."
     )
 
     print(
@@ -2367,46 +2371,11 @@ def rollback_regressed_edit(
         )
     )
 
-    return (
-        None,
-        True,
+    return ControlDecision(
+        restart=True,
+        followup_message=followup_message,
+        skipped_reason="automatic rollback changed the workspace revision",
     )
-
-
-# =============================================================
-# Tool Call History Integrity
-# =============================================================
-
-
-def append_skipped_tool_results(
-    messages: list,
-    tool_calls,
-    reason: str,
-) -> None:
-
-    """
-    Provider tool-call protocols expect every assistant tool
-    call to receive a corresponding tool response.
-
-    When plan, validation or recovery state changes midway
-    through a tool batch, later tool calls are intentionally
-    skipped.
-    """
-
-    for tool_call in tool_calls:
-
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": (
-                    tool_call.id
-                ),
-                "content": (
-                    "Tool call skipped because "
-                    f"{reason}."
-                ),
-            }
-        )
 
 
 # =============================================================

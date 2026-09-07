@@ -206,16 +206,12 @@ def test_regressed_validation_rolls_back_latest_edit(
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=messages,
     )
+    early_stop, restart = decision
 
     assert (
         early_stop
@@ -264,16 +260,14 @@ def test_regressed_validation_rolls_back_latest_edit(
     )
 
     assert (
-        len(messages)
-        == 1
+        messages
+        == []
     )
 
     assert (
         "automatically rolled back"
         in (
-            messages[0][
-                "content"
-            ]
+            decision.followup_message
             .lower()
         )
     )

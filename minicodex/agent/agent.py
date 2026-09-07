@@ -993,6 +993,15 @@ class MiniCodexAgent:
         )
 
         if not criteria:
+            if getattr(
+                step,
+                "requires_semantic_completion",
+                False,
+            ):
+                return (
+                    "semantic-only; broad step requires "
+                    "explicit completion"
+                )
             return "semantic-only"
 
         return json.dumps(
@@ -1026,3 +1035,12 @@ class MiniCodexAgent:
                 f"(failures="
                 f"{step.attempts})"
             )
+
+            for warning in getattr(
+                step,
+                "quality_warnings",
+                [],
+            ):
+                print(
+                    f"   [Plan Quality] {warning}"
+                )

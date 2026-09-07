@@ -285,16 +285,12 @@ def test_regression_pass_forces_acceptance_validation():
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=evidence,
+        messages=messages,
     )
+    early_stop, restart = decision
 
     assert (
         early_stop
@@ -307,14 +303,12 @@ def test_regression_pass_forces_acceptance_validation():
     )
 
     assert (
-        len(messages)
-        == 1
+        messages
+        == []
     )
 
     message = (
-        messages[0][
-            "content"
-        ]
+        decision.followup_message
         .lower()
     )
 
@@ -323,10 +317,7 @@ def test_regression_pass_forces_acceptance_validation():
         in message
     )
 
-    assert (
-        "purpose='acceptance'"
-        in message
-    )
+    assert "current edit revision" in message
 
     assert (
         can_complete_edit_task(
@@ -437,16 +428,12 @@ def test_acceptance_pass_forces_full_regression():
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=evidence,
+        messages=messages,
     )
+    early_stop, restart = decision
 
     assert (
         early_stop
@@ -459,14 +446,12 @@ def test_acceptance_pass_forces_full_regression():
     )
 
     assert (
-        len(messages)
-        == 1
+        messages
+        == []
     )
 
     message = (
-        messages[0][
-            "content"
-        ]
+        decision.followup_message
         .lower()
     )
 
@@ -814,16 +799,12 @@ def test_failed_validation_does_not_restart_when_not_stalled():
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=evidence,
+        messages=messages,
     )
+    early_stop, restart = decision
 
     assert (
         early_stop
@@ -999,16 +980,12 @@ def test_inconclusive_validation_forces_investigation():
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=evidence,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=evidence,
+        messages=messages,
     )
+    early_stop, restart = decision
 
     assert (
         early_stop
@@ -1021,16 +998,14 @@ def test_inconclusive_validation_forces_investigation():
     )
 
     assert (
-        len(messages)
-        == 1
+        messages
+        == []
     )
 
     assert (
         "inconclusive"
         in (
-            messages[0][
-                "content"
-            ]
+            decision.followup_message
             .lower()
         )
     )

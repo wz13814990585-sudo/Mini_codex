@@ -18,6 +18,8 @@ class PlanStep:
     acceptance_criteria: list[
         dict[str, Any]
     ] = field(default_factory=list)
+    requires_semantic_completion: bool = False
+    quality_warnings: list[str] = field(default_factory=list)
 
     # 当前 Plan Step 遇到的工具调用失败次数
     attempts: int = 0

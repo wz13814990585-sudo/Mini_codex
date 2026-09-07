@@ -1,6 +1,8 @@
 import json
 
 from .metrics import TokenMetrics
+from .message_protocol import validate_tool_message_protocol
+from .plan_quality import PlanNormalizer
 from .state import AgentPlan, PlanStep
 
 
@@ -9,8 +11,10 @@ class Planner:
     def __init__(
         self,
         llm,
+        normalizer: PlanNormalizer | None = None,
     ):
         self.llm = llm
+        self.normalizer = normalizer or PlanNormalizer()
 
     # =========================================================
     # Create Plan
@@ -87,6 +91,8 @@ completion requires semantic judgment.
         # LLM Call
         # =====================================================
 
+        validate_tool_message_protocol(messages)
+
         llm_response = self.llm.chat(
             messages=messages,
             tools=None,
@@ -160,6 +166,8 @@ completion requires semantic judgment.
                 start=1,
             )
         ]
+
+        self.normalizer.normalize(steps)
 
         return AgentPlan(
             goal=data["goal"],
