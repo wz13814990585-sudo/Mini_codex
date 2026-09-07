@@ -387,7 +387,6 @@ def main():
         result = (
             agent.run(
                 user_input,
-                use_planning=True,
             )
         )
 

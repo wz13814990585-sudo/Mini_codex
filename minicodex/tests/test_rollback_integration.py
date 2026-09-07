@@ -211,7 +211,8 @@ def test_regressed_validation_rolls_back_latest_edit(
         evidence=second,
         messages=messages,
     )
-    early_stop, restart = decision
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -365,16 +366,13 @@ def test_improved_validation_does_not_rollback(
         )
     )
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=[],
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=[],
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -491,16 +489,13 @@ def test_different_validation_targets_do_not_trigger_rollback(
         )
     )
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=regression,
-            messages=[],
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=regression,
+        messages=[],
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -642,16 +637,13 @@ def test_same_revision_regression_does_not_trigger_rollback(
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=messages,
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop

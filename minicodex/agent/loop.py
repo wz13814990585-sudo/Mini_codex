@@ -19,6 +19,8 @@ from .message_protocol import (
     close_tool_batch_before_control_transition,
     validate_tool_message_protocol,
 )
+from .execution_mode import ExecutionMode
+from .regression_policy import RegressionRequirement
 from .state import (
     StepStatus,
 )
@@ -172,18 +174,22 @@ def run_agent_loop(
         }
     ]
 
+    task_max_steps = int(
+        getattr(agent, "task_max_steps", agent.max_steps)
+    )
+
     # =========================================================
     # Main Step Budget
     # =========================================================
 
     for agent_step in range(
-        agent.max_steps
+        task_max_steps
     ):
 
         print(
             f"\n[Agent Step "
             f"{agent_step + 1}/"
-            f"{agent.max_steps}]"
+            f"{task_max_steps}]"
         )
 
         current_plan_step = None
@@ -287,9 +293,32 @@ def run_agent_loop(
         # =====================================================
 
         remaining_agent_steps = (
-            agent.max_steps
+            task_max_steps
             - agent_step
         )
+
+        finalization = getattr(agent, "finalization", None)
+        if (
+            finalization is not None
+            and getattr(agent, "execution_policy", None) is not None
+            and remaining_agent_steps < task_max_steps
+            and finalization.enter_if_needed(
+                remaining_agent_steps,
+                agent.execution_policy,
+            )
+        ):
+            print("\n[Finalization Mode]")
+            if agent.active_plan is not None:
+                reconciliation = agent.reconcile_plan_progress()
+                if reconciliation["completed"]:
+                    current_plan_step = agent.active_plan.start_current_step()
+                    print(
+                        "Final reconciliation completed steps: "
+                        + ", ".join(
+                            str(item["step_id"])
+                            for item in reconciliation["completed"]
+                        )
+                    )
 
         # =====================================================
         # Context Budget Policy
@@ -497,7 +526,7 @@ def run_agent_loop(
                 )
 
                 remaining_budget = (
-                    agent.max_steps
+                    task_max_steps
                     - agent_step
                     - 1
                 )
@@ -572,7 +601,7 @@ def run_agent_loop(
             ):
 
                 remaining_budget = (
-                    agent.max_steps
+                    task_max_steps
                     - agent_step
                     - 1
                 )
@@ -635,6 +664,18 @@ def run_agent_loop(
                             "run_tests("
                             "path='.', "
                             "purpose='regression')."
+                        )
+
+                    elif (
+                        completion.status
+                        == CompletionStatus.NEEDS_RELEVANT_VALIDATION
+                    ):
+
+                        reminder = (
+                            "Acceptance evidence exists, but relevant "
+                            "regression validation is missing. Run a focused "
+                            "test for the changed area using run_tests("
+                            "path=<relevant_test>, purpose='regression')."
                         )
 
                     else:
@@ -800,25 +841,49 @@ def run_agent_loop(
             # Deterministic Recovery Restriction
             # =================================================
 
-            restriction_reason = (
-                agent.no_progress_policy
-                .restriction_reason(
-                    tool_name,
-                    arguments,
+            restriction_type = "no_progress_restriction"
+            restriction_reason = None
+            finalization = getattr(agent, "finalization", None)
+            if finalization is not None:
+                restriction_reason = finalization.restriction_reason(
+                    tool_name
                 )
-            )
+                if restriction_reason:
+                    restriction_type = "finalization_restriction"
+
+            convergence = getattr(agent, "convergence", None)
+            policy = getattr(agent, "execution_policy", None)
+            if (
+                restriction_reason is None
+                and convergence is not None
+                and policy is not None
+            ):
+                restriction_reason = convergence.restriction_reason(
+                    tool_name,
+                    policy,
+                )
+                if restriction_reason:
+                    restriction_type = "convergence_restriction"
+
+            if restriction_reason is None:
+                restriction_reason = (
+                    agent.no_progress_policy.restriction_reason(
+                        tool_name,
+                        arguments,
+                    )
+                )
 
             if restriction_reason is not None:
                 result = ToolResult(
                     success=False,
                     summary=(
                         f"Tool call '{tool_name}' was blocked "
-                        "while no-progress recovery is active."
+                        "by the active execution control policy."
                     ),
                     data={
                         "tool_name": tool_name,
                         "failure_type": (
-                            "no_progress_restriction"
+                            restriction_type
                         ),
                     },
                     error=restriction_reason,
@@ -828,7 +893,7 @@ def run_agent_loop(
                     current_plan_step.increment_attempt()
 
                 observation_text = result.to_llm_text()
-                print("\n[No-Progress Tool Restriction]")
+                print("\n[Tool Restriction]")
                 print(f"\n[Observation]\n{observation_text}")
                 messages.append(
                     {
@@ -842,7 +907,7 @@ def run_agent_loop(
                     response.tool_calls[
                         tool_index + 1:
                     ],
-                    "no-progress recovery restricted reconnaissance",
+                    "execution policy restricted reconnaissance",
                     followup_user_message=restriction_reason,
                 )
                 restart_agent_loop = True
@@ -972,6 +1037,28 @@ def run_agent_loop(
                 tool_name
             )
 
+            convergence = getattr(agent, "convergence", None)
+            if convergence is not None:
+                convergence.record_tool(tool_name)
+
+            if (
+                tool_name not in EDIT_TOOL_NAMES
+                and hasattr(agent, "step_evidence")
+            ):
+                agent.step_evidence.record(
+                    step_id=(
+                        current_plan_step.id
+                        if current_plan_step
+                        else None
+                    ),
+                    edit_revision=(
+                        agent.validation_pipeline.state.edit_revision
+                    ),
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=result,
+                )
+
             # =================================================
             # Successful Edit
             #
@@ -1000,6 +1087,19 @@ def run_agent_loop(
                 print(
                     "\n[Edit Applied]"
                 )
+
+                if hasattr(agent, "step_evidence"):
+                    agent.step_evidence.record(
+                        step_id=(
+                            current_plan_step.id
+                            if current_plan_step
+                            else None
+                        ),
+                        edit_revision=revision,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        result=result,
+                    )
 
                 agent.progress.mark_meaningful_progress()
 
@@ -1050,6 +1150,12 @@ def run_agent_loop(
                     restart_agent_loop = True
                     break
 
+            if convergence is not None and hasattr(
+                agent,
+                "task_progress_state",
+            ):
+                convergence.observe_state(agent.task_progress_state())
+
             progress_decision = (
                 agent.no_progress_policy
                 .observe_tool_result(
@@ -1070,6 +1176,8 @@ def run_agent_loop(
             )
 
             if progress_decision.stuck:
+                if convergence is not None:
+                    convergence.active = True
                 # The current implementation may already satisfy one or
                 # more explicit predicates. Advance those steps before
                 # falling back to generic stuck recovery.
@@ -1226,6 +1334,14 @@ def run_agent_loop(
                     evidence
                     is not None
                 ):
+
+                    if convergence is not None and hasattr(
+                        agent,
+                        "task_progress_state",
+                    ):
+                        convergence.observe_state(
+                            agent.task_progress_state()
+                        )
 
                     reconciliation = (
                         agent.reconcile_plan_progress()
@@ -1416,18 +1532,36 @@ def run_agent_loop(
             return summarize_agent_stop(
                 agent,
                 (
-                    "Task completed: "
-                    "the current edit revision "
-                    "has acceptance evidence "
-                    "and full regression evidence, "
-                    "and the implementation plan "
-                    "is complete."
+                    "Task completed under the active execution policy: "
+                    f"{completion.reason}"
                 ),
             )
 
     # =========================================================
     # Agent Budget Exhausted
     # =========================================================
+
+    if getattr(agent, "active_plan", None) is not None:
+        reconciliation = agent.reconcile_plan_progress()
+        if reconciliation["completed"]:
+            print("\n[Final Reconciliation]")
+            print(
+                "Completed steps before budget stop: "
+                + ", ".join(
+                    str(item["step_id"])
+                    for item in reconciliation["completed"]
+                )
+            )
+
+    completion = evaluate_completion(agent)
+    if completion.can_complete and not active_plan_incomplete(agent):
+        return summarize_agent_stop(
+            agent,
+            (
+                "Task completed during final reconciliation: "
+                f"{completion.reason}"
+            ),
+        )
 
     return summarize_agent_stop(
         agent,
@@ -1499,6 +1633,13 @@ def active_plan_incomplete(
     Return True when an active implementation plan still
     contains unfinished steps.
     """
+
+    policy = getattr(agent, "execution_policy", None)
+    if (
+        policy is not None
+        and getattr(policy, "mode", None) == ExecutionMode.FAST
+    ):
+        return False
 
     plan = getattr(
         agent,
@@ -1618,6 +1759,13 @@ def evaluate_completion(
         pipeline.state
     )
 
+    policy = getattr(agent, "execution_policy", None)
+    require_acceptance = getattr(policy, "require_acceptance", True)
+    if hasattr(agent, "current_regression_requirement"):
+        regression_requirement = agent.current_regression_requirement()
+    else:
+        regression_requirement = RegressionRequirement.REQUIRED
+
     return (
         COMPLETION_GATE
         .evaluate(
@@ -1633,6 +1781,11 @@ def evaluate_completion(
             full_validation_passed=(
                 state.full_passed
             ),
+            relevant_validation_passed=(
+                state.targeted_passed
+            ),
+            require_acceptance=require_acceptance,
+            regression_requirement=regression_requirement,
         )
     )
 
@@ -1836,6 +1989,28 @@ def apply_validation_evidence(
             "\n[Meaningful Progress Detected]"
         )
 
+    completion = evaluate_completion(agent)
+    if completion.can_complete:
+        print("\n[Completion Gate]")
+        print(f"Status: {completion.status.value}")
+        return ControlDecision()
+
+    if (
+        completion.status == CompletionStatus.NEEDS_RELEVANT_VALIDATION
+        and completion.acceptance_passed
+    ):
+        return ControlDecision(
+            restart=True,
+            followup_message=(
+                "Acceptance validation passed for the current edit "
+                "revision. Run focused regression tests for the changed "
+                "area with run_tests(path=<relevant_test>, "
+                "purpose='regression'). A full repository suite is not "
+                "required by the current execution policy."
+            ),
+            skipped_reason="relevant regression evidence is required",
+        )
+
     # =========================================================
     # Validation Pipeline Decision
     # =========================================================
@@ -1997,6 +2172,18 @@ def apply_validation_evidence(
         "without meaningful improvement. "
         f"{validation_progress.message}"
     )
+
+    execution_policy = getattr(agent, "execution_policy", None)
+    if (
+        execution_policy is not None
+        and not execution_policy.enable_heavy_recovery
+    ):
+        return ControlDecision(
+            early_stop=(
+                "FAST mode stopped with an explicit blocker because "
+                "targeted validation remained stalled."
+            )
+        )
 
     (
         recovery_message,
@@ -2316,6 +2503,9 @@ def rollback_regressed_edit(
         .record_edit()
     )
 
+    if hasattr(agent, "rollback_revision"):
+        agent.rollback_revision += 1
+
     # =========================================================
     # Old Validation Trends Are Stale
     # =========================================================
@@ -2500,6 +2690,22 @@ def summarize_agent_stop(
                 f"{state.full_passed}."
             )
         )
+
+        lines.append(
+            (
+                "Relevant regression evidence: "
+                f"{state.targeted_passed}."
+            )
+        )
+
+        policy = getattr(agent, "execution_policy", None)
+        if policy is not None:
+            lines.append(f"Execution mode: {policy.mode.value}.")
+            if hasattr(agent, "current_regression_requirement"):
+                lines.append(
+                    "Regression requirement: "
+                    f"{agent.current_regression_requirement().value}."
+                )
 
         if (
             evidence

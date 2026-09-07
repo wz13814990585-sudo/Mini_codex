@@ -52,5 +52,8 @@ class CompletePlanStepTool(BaseTool):
                         "step_description"
                     )
                 ),
+                "failure_type": callback_result.get(
+                    "failure_type"
+                ),
             },
         )

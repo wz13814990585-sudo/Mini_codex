@@ -260,8 +260,9 @@ class AsyncAgentTask:
         task_id: str,
         agent,
         user_input: str,
-        use_planning: bool,
+        use_planning: bool | None,
         token: CancellationToken,
+        policy=None,
         poll_interval: float = 0.05,
     ):
 
@@ -280,6 +281,8 @@ class AsyncAgentTask:
         self.use_planning = (
             use_planning
         )
+
+        self.policy = policy
 
         self.token = (
             token
@@ -693,15 +696,10 @@ class AsyncAgentTask:
 
             self.token.raise_if_cancelled()
 
-            output = (
-                self.agent
-                .run(
-                    self.user_input,
-                    use_planning=(
-                        self.use_planning
-                    ),
-                )
-            )
+            run_kwargs = {"use_planning": self.use_planning}
+            if self.policy is not None:
+                run_kwargs["policy"] = self.policy
+            output = self.agent.run(self.user_input, **run_kwargs)
 
             self.token.raise_if_cancelled()
 
@@ -1001,7 +999,8 @@ class AsyncAgentRunner:
         self,
         user_input: str,
         *,
-        use_planning: bool = True,
+        use_planning: bool | None = None,
+        policy=None,
     ) -> AsyncAgentTask:
 
         with self._lock:
@@ -1043,6 +1042,7 @@ class AsyncAgentRunner:
                     use_planning=(
                         use_planning
                     ),
+                    policy=policy,
                     token=(
                         token
                     ),
@@ -1068,7 +1068,8 @@ class AsyncAgentRunner:
         self,
         user_input: str,
         *,
-        use_planning: bool = True,
+        use_planning: bool | None = None,
+        policy=None,
     ) -> AsyncTaskResult:
 
         task = (
@@ -1077,6 +1078,7 @@ class AsyncAgentRunner:
                 use_planning=(
                     use_planning
                 ),
+                policy=policy,
             )
         )
 

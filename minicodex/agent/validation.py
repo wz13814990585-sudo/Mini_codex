@@ -201,6 +201,8 @@ class ValidationState:
         | None
     ) = None
 
+    evidence_sequence: int = 0
+
     def reset(
         self,
     ) -> None:
@@ -216,6 +218,8 @@ class ValidationState:
         self.full_passed = False
 
         self.latest_evidence = None
+
+        self.evidence_sequence = 0
 
 
 # =============================================================
@@ -454,6 +458,8 @@ class ValidationPipeline:
         self.state.latest_evidence = (
             evidence
         )
+
+        self.state.evidence_sequence += 1
 
         passed = (
             evidence.outcome

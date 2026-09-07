@@ -807,7 +807,8 @@ def attach_runtime_tracing(
     def traced_run(
         self,
         user_input: str,
-        use_planning: bool = True,
+        use_planning: bool | None = None,
+        policy=None,
     ):
 
         recorder.start_task(
@@ -822,14 +823,10 @@ def attach_runtime_tracing(
 
         try:
 
-            output = (
-                original_run(
-                    user_input,
-                    use_planning=(
-                        use_planning
-                    ),
-                )
-            )
+            run_kwargs = {"use_planning": use_planning}
+            if policy is not None:
+                run_kwargs["policy"] = policy
+            output = original_run(user_input, **run_kwargs)
 
         except Exception as e:
 

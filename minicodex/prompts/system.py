@@ -192,6 +192,36 @@ def build_system_prompt() -> str:
     return SYSTEM_PROMPT
 
 
+FAST_SYSTEM_PROMPT = """
+You are MiniCodex operating in FAST mode for a small, local coding task.
+
+Inspect only the minimum current source needed, make the smallest direct
+edit, run targeted acceptance validation, and finish. Avoid broad searches,
+replanning, and unrelated repository regression. Use dedicated edit tools
+for file mutations. Safety, checkpoints, and provider protocol rules are
+enforced deterministically by the Harness. Do not claim success without
+current acceptance evidence. For static HTML, use validate_static_web.
+"""
+
+
+def build_fast_system_prompt() -> str:
+    return FAST_SYSTEM_PROMPT
+
+
+STANDARD_POLICY_ADDENDUM = """
+
+Execution policy override — STANDARD mode:
+Use a short outcome-based plan. Acceptance is required. Run focused
+regression tests for the changed area; a full repository regression suite
+is only required if the deterministic Harness requests it. The current
+ExecutionPolicy and CompletionGate are authoritative for regression scope.
+"""
+
+
+def build_standard_system_prompt() -> str:
+    return SYSTEM_PROMPT + STANDARD_POLICY_ADDENDUM
+
+
 def build_turn_context(
     plan_text: str,
     current_step_text: str,

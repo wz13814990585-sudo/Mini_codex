@@ -125,8 +125,22 @@ def attach_long_term_memory(
     def memory_run(
         self,
         user_input: str,
-        use_planning: bool = True,
+        use_planning: bool | None = None,
+        policy=None,
     ):
+
+        effective_policy = policy
+        if effective_policy is None and hasattr(
+            self,
+            "resolve_execution_policy",
+        ):
+            effective_policy = self.resolve_execution_policy(user_input)
+
+        memory_enabled = getattr(
+            effective_policy,
+            "enable_long_term_memory",
+            True,
+        )
 
         # =====================================================
         # Retrieve Before Current Task
@@ -137,10 +151,10 @@ def attach_long_term_memory(
             self._retrieved_long_term_memory = (
                 store.retrieve(
                     user_input,
-                    limit=(
-                        retrieval_limit
-                    ),
+                    limit=retrieval_limit,
                 )
+                if memory_enabled
+                else []
             )
 
         except Exception:
@@ -152,14 +166,10 @@ def attach_long_term_memory(
 
         try:
 
-            output = (
-                original_run(
-                    user_input,
-                    use_planning=(
-                        use_planning
-                    ),
-                )
-            )
+            run_kwargs = {"use_planning": use_planning}
+            if policy is not None:
+                run_kwargs["policy"] = policy
+            output = original_run(user_input, **run_kwargs)
 
         except Exception as e:
 

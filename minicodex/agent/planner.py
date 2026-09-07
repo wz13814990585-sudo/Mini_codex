@@ -87,89 +87,74 @@ completion requires semantic judgment.
             },
         ]
 
-        # =====================================================
-        # LLM Call
-        # =====================================================
-
-        validate_tool_message_protocol(messages)
-
-        llm_response = self.llm.chat(
+        data, steps, raw_content = self._request_plan(
             messages=messages,
-            tools=None,
+            max_plan_steps=max_plan_steps,
+            token_metrics=token_metrics,
         )
+        quality = self.normalizer.validate(steps)
 
-        # =====================================================
-        # Token Metrics
-        # =====================================================
-
-        if token_metrics is not None:
-
-            token_metrics.record(
-                llm_response.usage
+        if quality.should_regenerate:
+            details = "; ".join(
+                f"step {issue.step_id}: {issue.message}"
+                for issue in quality.issues
             )
-
-        # =====================================================
-        # Extract Provider Message
-        # =====================================================
-
-        response = (
-            llm_response.message
-        )
-
-        raw_content = (
-            response.content
-            or ""
-        ).strip()
-
-        # =====================================================
-        # Remove Optional Markdown Fence
-        # =====================================================
-
-        if raw_content.startswith(
-            "```"
-        ):
-
-            raw_content = (
-                raw_content.strip("`")
+            messages.extend(
+                [
+                    {"role": "assistant", "content": raw_content},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Regenerate the plan once. Replace process-only "
+                            "steps with concrete outcomes and split broad "
+                            "semantic steps into smaller independently "
+                            f"verifiable outcomes. Problems: {details}"
+                        ),
+                    },
+                ]
             )
-
-            if raw_content.startswith(
-                "json"
-            ):
-
-                raw_content = (
-                    raw_content[4:]
+            data, steps, _ = self._request_plan(
+                messages=messages,
+                max_plan_steps=max_plan_steps,
+                token_metrics=token_metrics,
+            )
+            quality = self.normalizer.validate(steps)
+            if quality.has_process_only_steps:
+                raise ValueError(
+                    "Planner returned process-only steps after one "
+                    "regeneration attempt."
                 )
-
-            raw_content = (
-                raw_content.strip()
-            )
-
-        # =====================================================
-        # Parse Plan
-        # =====================================================
-
-        data = json.loads(
-            raw_content
-        )
-
-        steps = [
-            PlanStep.from_payload(
-                step_id=index,
-                payload=payload,
-            )
-            for index, payload
-            in enumerate(
-                data["steps"][
-                    :max_plan_steps
-                ],
-                start=1,
-            )
-        ]
-
-        self.normalizer.normalize(steps)
 
         return AgentPlan(
             goal=data["goal"],
             steps=steps,
         )
+
+    def _request_plan(
+        self,
+        *,
+        messages: list,
+        max_plan_steps: int,
+        token_metrics: TokenMetrics | None,
+    ) -> tuple[dict, list[PlanStep], str]:
+        validate_tool_message_protocol(messages)
+        llm_response = self.llm.chat(messages=messages, tools=None)
+        if token_metrics is not None:
+            token_metrics.record(llm_response.usage)
+
+        raw_content = str(llm_response.message.content or "").strip()
+        if raw_content.startswith("```"):
+            raw_content = raw_content.strip("`")
+            if raw_content.startswith("json"):
+                raw_content = raw_content[4:]
+            raw_content = raw_content.strip()
+
+        data = json.loads(raw_content)
+        steps = [
+            PlanStep.from_payload(step_id=index, payload=payload)
+            for index, payload in enumerate(
+                data["steps"][:max_plan_steps],
+                start=1,
+            )
+        ]
+        return data, steps, raw_content

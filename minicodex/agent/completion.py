@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from .regression_policy import RegressionRequirement
+
 
 class CompletionStatus(
     str,
@@ -16,6 +18,8 @@ class CompletionStatus(
     NEEDS_FULL_VALIDATION = (
         "needs_full_validation"
     )
+
+    NEEDS_RELEVANT_VALIDATION = "needs_relevant_validation"
 
     READY = "ready"
 
@@ -61,15 +65,14 @@ class CompletionGate:
     Final deterministic gate before an editing task may
     be considered complete.
 
-    Required evidence:
+    Baseline evidence:
 
     1. A meaningful edit exists.
     2. Acceptance evidence exists for the current revision.
-    3. Full regression validation passed for the current
-       revision.
+    3. Regression evidence proportional to the active policy.
 
-    Full regression tests alone are intentionally
-    insufficient.
+    Full regression tests alone are intentionally insufficient because
+    acceptance remains an independent requirement by default.
     """
 
     def evaluate(
@@ -79,6 +82,11 @@ class CompletionGate:
         has_edit: bool,
         acceptance_passed: bool,
         full_validation_passed: bool,
+        relevant_validation_passed: bool = False,
+        require_acceptance: bool = True,
+        regression_requirement: RegressionRequirement = (
+            RegressionRequirement.REQUIRED
+        ),
     ) -> CompletionDecision:
 
         # =====================================================
@@ -110,7 +118,7 @@ class CompletionGate:
         # Missing Acceptance Evidence
         # =====================================================
 
-        if not acceptance_passed:
+        if require_acceptance and not acceptance_passed:
 
             return CompletionDecision(
                 status=(
@@ -129,6 +137,47 @@ class CompletionGate:
                     "The current edit revision does not "
                     "have acceptance evidence showing "
                     "that the requested behavior works."
+                ),
+            )
+
+        if regression_requirement == RegressionRequirement.NOT_APPLICABLE:
+            return CompletionDecision(
+                status=CompletionStatus.READY,
+                edit_revision=edit_revision,
+                has_edit=True,
+                acceptance_passed=acceptance_passed,
+                full_validation_passed=full_validation_passed,
+                reason=(
+                    "Acceptance passed and full repository regression is "
+                    "not applicable to this change scope."
+                ),
+            )
+
+        if regression_requirement in {
+            RegressionRequirement.RELEVANT_ONLY,
+            RegressionRequirement.UNKNOWN,
+        }:
+            if not (relevant_validation_passed or full_validation_passed):
+                return CompletionDecision(
+                    status=CompletionStatus.NEEDS_RELEVANT_VALIDATION,
+                    edit_revision=edit_revision,
+                    has_edit=True,
+                    acceptance_passed=acceptance_passed,
+                    full_validation_passed=full_validation_passed,
+                    reason=(
+                        "Acceptance passed, but relevant regression "
+                        "evidence is still required for this change scope."
+                    ),
+                )
+            return CompletionDecision(
+                status=CompletionStatus.READY,
+                edit_revision=edit_revision,
+                has_edit=True,
+                acceptance_passed=acceptance_passed,
+                full_validation_passed=full_validation_passed,
+                reason=(
+                    "The current edit revision has acceptance and relevant "
+                    "regression evidence."
                 ),
             )
 

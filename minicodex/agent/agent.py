@@ -10,6 +10,13 @@ from .checkpoint_executor import (
 from .context_budget import (
     ContextBudget,
 )
+from .convergence import (
+    ConvergenceController,
+    TaskProgressState,
+)
+from .execution_mode import ExecutionMode
+from .execution_policy import ExecutionPolicy, policy_for
+from .finalization import FinalizationController
 from .git_awareness import (
     GitAwareness,
     GitRepositoryInspector,
@@ -35,6 +42,7 @@ from .recovery import (
 from .rollback import (
     RollbackEngine,
 )
+from .regression_policy import RegressionPolicy
 from .safety import (
     SafetyPolicy,
 )
@@ -44,6 +52,8 @@ from .safety_executor import (
 from .state import (
     AgentPlan,
 )
+from .step_evidence import StepEvidenceStore
+from .task_router import TaskRouter
 from .tool_executor import (
     ToolExecutor,
 )
@@ -55,6 +65,8 @@ from .working_summary import (
 )
 
 from ..prompts.system import (
+    build_fast_system_prompt,
+    build_standard_system_prompt,
     build_system_prompt,
     build_turn_context,
 )
@@ -74,6 +86,8 @@ class MiniCodexAgent:
         max_context_tokens: int = 64000,
         status_interval_seconds: float = 15.0,
         max_no_progress_steps: int = 5,
+        task_router: TaskRouter | None = None,
+        regression_policy: RegressionPolicy | None = None,
     ):
 
         self.llm = llm
@@ -271,6 +285,8 @@ class MiniCodexAgent:
         self.max_steps = (
             max_steps
         )
+        self.configured_max_steps = max(1, int(max_steps))
+        self.task_max_steps = self.configured_max_steps
 
         self.max_step_attempts = (
             max_step_attempts
@@ -290,6 +306,13 @@ class MiniCodexAgent:
             | None
         ) = None
 
+        self.task_router = task_router or TaskRouter()
+        self.regression_policy = regression_policy or RegressionPolicy()
+        self.execution_route = None
+        self.execution_policy: ExecutionPolicy | None = None
+        self.plan_version = 0
+        self.rollback_revision = 0
+
         # =====================================================
         # Progress
         # =====================================================
@@ -308,6 +331,10 @@ class MiniCodexAgent:
             )
         )
 
+        self.convergence = ConvergenceController()
+        self.finalization = FinalizationController()
+        self.step_evidence = StepEvidenceStore()
+
         self.plan_progress_reconciler = (
             PlanProgressReconciler(
                 workspace=self.workspace
@@ -323,6 +350,9 @@ class MiniCodexAgent:
                 max_recovery_level=3
             )
         )
+
+        self._repo_map_revision: int | None = None
+        self._repo_map_initialized = False
 
     # =========================================================
     # Workspace Resolution
@@ -376,6 +406,44 @@ class MiniCodexAgent:
             + 1
         )
 
+    def task_progress_state(self) -> TaskProgressState:
+        plan = self.active_plan
+        validation_state = self.validation_pipeline.state
+        return TaskProgressState(
+            edit_revision=validation_state.edit_revision,
+            completed_step_count=(
+                len(plan.completed_history) if plan is not None else 0
+            ),
+            validation_version=getattr(
+                validation_state,
+                "evidence_sequence",
+                0,
+            ),
+            plan_version=self.plan_version,
+            rollback_revision=self.rollback_revision,
+        )
+
+    def current_regression_requirement(self):
+        policy = self.execution_policy
+        if policy is None:
+            from .regression_policy import RegressionRequirement
+
+            return RegressionRequirement.REQUIRED
+
+        touched = ()
+        try:
+            touched = self.git_awareness.task_state().agent_touched_files
+        except Exception:
+            pass
+        if not touched and self.execution_route is not None:
+            touched = self.execution_route.target_paths
+
+        return self.regression_policy.requirement_for(
+            mode=policy.mode,
+            changed_paths=touched,
+            default=policy.regression_requirement,
+        )
+
     # =========================================================
     # Main Entry
     # =========================================================
@@ -383,7 +451,8 @@ class MiniCodexAgent:
     def run(
         self,
         user_input: str,
-        use_planning: bool = True,
+        use_planning: bool | None = None,
+        policy: ExecutionPolicy | None = None,
     ) -> str:
 
         self.active_user_request = (
@@ -391,6 +460,29 @@ class MiniCodexAgent:
         )
 
         self.active_plan = None
+
+        self.execution_policy = self.resolve_execution_policy(
+            user_input,
+            policy=policy,
+        )
+        planning_enabled = (
+            self.execution_policy.use_plan
+            if use_planning is None
+            else bool(use_planning)
+        )
+        self.task_max_steps = min(
+            self.configured_max_steps,
+            self.execution_policy.max_steps,
+        )
+        self.no_progress_policy.max_no_progress_steps = (
+            self.execution_policy.max_no_progress_steps
+        )
+
+        print(
+            f"\n[Execution Mode] {self.execution_policy.mode.value.upper()}"
+        )
+        if self.execution_route is not None:
+            print(f"[Routing] {self.execution_route.reason}")
 
         # =====================================================
         # Reset Task State
@@ -401,6 +493,16 @@ class MiniCodexAgent:
         )
 
         self.no_progress_policy.reset()
+
+        self.convergence.reset()
+
+        self.finalization.reset()
+
+        self.step_evidence.reset()
+
+        self.plan_version = 0
+
+        self.rollback_revision = 0
 
         self.validation_pipeline.reset()
 
@@ -424,14 +526,16 @@ class MiniCodexAgent:
         # Initial Repository Map
         # =====================================================
 
-        self._refresh_repo_map()
+        self._repo_map_initialized = False
+        self._repo_map_revision = None
+        self._refresh_repo_map(force=True)
 
         # =====================================================
         # Initial Plan
         # =====================================================
 
         if (
-            use_planning
+            planning_enabled
             and self.planner
         ):
 
@@ -442,7 +546,7 @@ class MiniCodexAgent:
                     .create_plan(
                         user_input,
                         max_agent_steps=(
-                            self.max_steps
+                            self.task_max_steps
                         ),
                         token_metrics=(
                             self.token_metrics
@@ -453,6 +557,17 @@ class MiniCodexAgent:
                 self._print_plan(
                     self.active_plan
                 )
+
+                initial = self.reconcile_plan_progress()
+                if initial["completed"]:
+                    print("\n[Initial Plan Reconciliation]")
+                    print(
+                        "Already-satisfied steps: "
+                        + ", ".join(
+                            str(item["step_id"])
+                            for item in initial["completed"]
+                        )
+                    )
 
             except Exception as e:
 
@@ -466,6 +581,8 @@ class MiniCodexAgent:
         # Agent Loop
         # =====================================================
 
+        self.convergence.observe_state(self.task_progress_state())
+
         return (
             run_agent_loop(
                 self,
@@ -473,12 +590,27 @@ class MiniCodexAgent:
             )
         )
 
+    def resolve_execution_policy(
+        self,
+        user_input: str,
+        *,
+        policy: ExecutionPolicy | None = None,
+    ) -> ExecutionPolicy:
+        if policy is not None:
+            self.execution_route = None
+            return policy
+
+        self.execution_route = self.task_router.route(user_input)
+        return policy_for(self.execution_route.mode)
+
     # =========================================================
     # Repository Map Refresh
     # =========================================================
 
     def _refresh_repo_map(
         self,
+        *,
+        force: bool = False,
     ) -> None:
 
         if (
@@ -492,12 +624,30 @@ class MiniCodexAgent:
 
             return
 
+        policy = self.execution_policy
+        current_revision = self.validation_pipeline.state.edit_revision
+        refresh_policy = getattr(
+            policy,
+            "repo_map_refresh_policy",
+            "every_turn",
+        )
+
+        if (
+            not force
+            and self._repo_map_initialized
+            and refresh_policy != "every_turn"
+            and self._repo_map_revision == current_revision
+        ):
+            return
+
         try:
 
             self.repo_map_text = (
                 self.repo_map
                 .build()
             )
+            self._repo_map_initialized = True
+            self._repo_map_revision = current_revision
 
         except Exception as e:
 
@@ -582,10 +732,44 @@ class MiniCodexAgent:
                 ),
             }
 
-        step = (
-            self.active_plan
-            .complete_current_step()
-        )
+        current = self.active_plan.get_current_step()
+
+        if current is not None and self.execution_policy is not None:
+            criteria = list(current.acceptance_criteria or [])
+            if criteria:
+                evaluation = self.plan_progress_reconciler.evaluate_step(
+                    current,
+                    validation_state=self.validation_pipeline.state,
+                )
+                if not evaluation.satisfied:
+                    return {
+                        "completed": False,
+                        "step_id": current.id,
+                        "step_description": current.description,
+                        "failure_type": "plan_step_criteria_not_satisfied",
+                        "message": (
+                            "The current plan step has machine-checkable "
+                            "criteria that are not yet satisfied."
+                        ),
+                    }
+            elif not self.step_evidence.has_fresh(
+                step_id=current.id,
+                edit_revision=self.validation_pipeline.state.edit_revision,
+            ):
+                return {
+                    "completed": False,
+                    "step_id": current.id,
+                    "step_description": current.description,
+                    "failure_type": (
+                        "semantic_step_completion_without_fresh_evidence"
+                    ),
+                    "message": (
+                        "Semantic plan completion was rejected because no "
+                        "fresh evidence exists for the current revision."
+                    ),
+                }
+
+        step = self.active_plan.complete_current_step()
 
         if (
             step
@@ -608,6 +792,8 @@ class MiniCodexAgent:
         )
 
         self.progress.reset()
+
+        self.plan_version += 1
 
         self._print_plan(
             self.active_plan
@@ -651,6 +837,17 @@ class MiniCodexAgent:
                 "message": (
                     "No active plan to revise."
                 ),
+            }
+
+        if (
+            self.execution_policy is not None
+            and not self.execution_policy.enable_replan
+        ):
+            return {
+                "replanned": False,
+                "reason": reason,
+                "failure_reason": "Replanning is disabled by execution policy.",
+                "message": "Replanning is disabled in FAST mode.",
             }
 
         if (
@@ -725,6 +922,8 @@ class MiniCodexAgent:
         self.active_plan = (
             new_plan
         )
+
+        self.plan_version += 1
 
         self.progress.reset()
 
@@ -838,9 +1037,17 @@ class MiniCodexAgent:
         **kwargs,
     ) -> str:
 
-        return (
-            build_system_prompt()
-        )
+        if (
+            self.execution_policy is not None
+            and self.execution_policy.compact_context
+        ):
+            return build_fast_system_prompt()
+        if (
+            self.execution_policy is not None
+            and self.execution_policy.mode == ExecutionMode.STANDARD
+        ):
+            return build_standard_system_prompt()
+        return build_system_prompt()
 
     # =========================================================
     # Dynamic Turn Context
@@ -867,21 +1074,26 @@ class MiniCodexAgent:
         # Fresh Git State
         # =====================================================
 
+        compact_context = bool(
+            self.execution_policy
+            and self.execution_policy.compact_context
+        )
+
         try:
-
-            self.git_awareness.refresh()
-
-            git_awareness_text = (
-                self.git_awareness
-                .render()
-            )
-
+            if compact_context:
+                task_state = self.git_awareness.task_state()
+                touched = task_state.agent_touched_files
+                git_awareness_text = (
+                    "Agent-touched files: "
+                    + (", ".join(touched) if touched else "none yet")
+                )
+            else:
+                self.git_awareness.refresh()
+                git_awareness_text = self.git_awareness.render()
         except Exception as e:
-
             git_awareness_text = (
                 "Git awareness unavailable: "
-                f"{type(e).__name__}: "
-                f"{e}"
+                f"{type(e).__name__}: {e}"
             )
 
         # =====================================================
@@ -889,12 +1101,12 @@ class MiniCodexAgent:
         # =====================================================
 
         try:
-
             safety_policy_text = (
-                self.safety_policy
-                .render()
+                "Use dedicated edit tools for file mutations. Unsafe "
+                "destructive shell operations may be blocked."
+                if compact_context
+                else self.safety_policy.render()
             )
-
         except Exception as e:
 
             safety_policy_text = (
@@ -950,7 +1162,9 @@ class MiniCodexAgent:
                     .render()
                 ),
                 repo_map_text=(
-                    self.repo_map_text
+                    self.repo_map_text[:2000]
+                    if compact_context
+                    else self.repo_map_text
                 ),
                 git_awareness_text=(
                     git_awareness_text

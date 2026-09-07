@@ -290,7 +290,8 @@ def test_regression_pass_forces_acceptance_validation():
         evidence=evidence,
         messages=messages,
     )
-    early_stop, restart = decision
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -433,7 +434,8 @@ def test_acceptance_pass_forces_full_regression():
         evidence=evidence,
         messages=messages,
     )
-    early_stop, restart = decision
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -557,16 +559,13 @@ def test_acceptance_then_full_regression_opens_completion_gate():
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=regression,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=regression,
+        messages=messages,
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -804,7 +803,8 @@ def test_failed_validation_does_not_restart_when_not_stalled():
         evidence=evidence,
         messages=messages,
     )
-    early_stop, restart = decision
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -901,16 +901,13 @@ def test_validation_improvement_marks_recovery_progress():
         )
     )
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=[],
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=[],
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -985,7 +982,8 @@ def test_inconclusive_validation_forces_investigation():
         evidence=evidence,
         messages=messages,
     )
-    early_stop, restart = decision
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
