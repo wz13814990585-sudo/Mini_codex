@@ -34,7 +34,9 @@ class TaskState:
     mode: ExecutionMode | None = None
     phase: AgentPhase = AgentPhase.INSPECTING
     user_request: str = ""
+    final_response_mode: str = "task_report"
     target_paths: tuple[str, ...] = field(default_factory=tuple)
+    relevant_paths: tuple[str, ...] = field(default_factory=tuple)
     edit_revision: int = 0
     validation_revision: int = 0
     rollback_revision: int = 0
@@ -64,7 +66,6 @@ class TaskState:
 
         return (
             self.edit_revision,
-            self.validation_revision,
             self.rollback_revision,
             self.plan_revision,
             self.completed_plan_steps,
@@ -92,7 +93,7 @@ class TaskState:
             if validation_outcome == ValidationOutcome.FAILED:
                 self.phase = AgentPhase.FIXING
             elif validation_outcome == ValidationOutcome.PASSED:
-                self.phase = AgentPhase.FINALIZING
+                self.phase = AgentPhase.VALIDATING
             else:
                 self.phase = AgentPhase.VALIDATING
         elif tool_name in {
@@ -126,6 +127,7 @@ class TaskState:
         if outcome == TaskOutcome.BLOCKED:
             self.phase = AgentPhase.BLOCKED
         elif outcome in {
+            TaskOutcome.INFORMATIONAL_ANSWER,
             TaskOutcome.ALREADY_SATISFIED,
             TaskOutcome.EDITED_AND_VALIDATED,
         }:

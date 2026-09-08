@@ -1,6 +1,6 @@
 from ..agent.agent import MiniCodexAgent
 from ..agent.completion import CompletionStatus
-from ..agent.loop import evaluate_completion
+from ..agent.orchestration.validation_orchestrator import evaluate_completion
 from ..agent.loop import run_agent_loop
 from ..agent.plan_progress import PlanProgressReconciler
 from ..agent.state import AgentPlan, PlanStep

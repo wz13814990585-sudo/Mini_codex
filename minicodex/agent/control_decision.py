@@ -1,12 +1,5 @@
-"""Side-effect-free control decisions returned by policy helpers."""
+"""Compatibility export for orchestration control decisions."""
 
-from dataclasses import dataclass
+from .orchestration.control_decision import ControlDecision
 
-
-@dataclass(frozen=True)
-class ControlDecision:
-    restart: bool = False
-    early_stop: str | None = None
-    followup_message: str | None = None
-    skipped_reason: str | None = None
-
+__all__ = ["ControlDecision"]

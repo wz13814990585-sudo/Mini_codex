@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .task_state import AgentPhase, TaskState
+from .progress import ProgressKind, ProgressSignal
 
 
 class ActionController:
@@ -50,7 +51,11 @@ class ActionController:
         self.current_mode = None
         self.remaining_budget: int | None = None
         self.phase = getattr(state, "phase", AgentPhase.INSPECTING)
-        self.target_paths = tuple(getattr(state, "target_paths", ()) or ())
+        self.target_paths = tuple(
+            getattr(state, "relevant_paths", ())
+            or getattr(state, "target_paths", ())
+            or ()
+        )
 
     def update_context(
         self,
@@ -71,18 +76,28 @@ class ActionController:
         self.current_mode = getattr(policy, "mode", None)
         self.remaining_budget = max(0, int(remaining_budget))
         self.phase = state.phase
-        self.target_paths = state.target_paths
+        self.target_paths = state.relevant_paths or state.target_paths
 
-    def observe_action(self, tool_name: str, state: TaskState) -> bool:
-        """Record one completed tool action and return state-change truth."""
+    def observe_action(
+        self,
+        tool_name: str,
+        state: TaskState,
+        signal: ProgressSignal | None = None,
+    ) -> bool:
+        """Record one action and return whether it genuinely advanced work."""
 
         current_key = state.progress_key()
         changed = self.last_progress_key is not None and current_key != self.last_progress_key
+        if signal is None:
+            signal = ProgressSignal(
+                ProgressKind.ADVANCED if changed else ProgressKind.OBSERVATION,
+                "Monotonic task state advanced." if changed else "No monotonic task state advanced.",
+            )
         self.last_state = state
         self.last_progress_key = current_key
         self.has_edit = state.edit_revision > 0
 
-        if changed:
+        if signal.kind == ProgressKind.ADVANCED:
             self.consecutive_inspections = 0
             self.consecutive_no_state_change = 0
             self.action_required = False
@@ -149,7 +164,7 @@ class ActionController:
                 path = str((arguments or {}).get("path", "") or "").strip()
                 if path not in self.target_paths:
                     return (
-                        "FIXING permits one targeted read of the requested source "
+                        "FIXING permits one targeted read of a relevant failure path "
                         f"({', '.join(self.target_paths)}), not {path or 'an unspecified path'}."
                     )
 

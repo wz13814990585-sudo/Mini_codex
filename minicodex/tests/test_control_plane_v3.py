@@ -43,7 +43,7 @@ def test_action_controller_bounds_inspection_and_keeps_action_tools_open():
     ) is None
 
 
-def test_edit_and_validation_state_changes_reset_action_pressure():
+def test_edit_resets_pressure_but_validation_revision_alone_does_not():
     controller = ActionController()
     policy = policy_for(ExecutionMode.FAST)
     controller.reset(state())
@@ -57,8 +57,8 @@ def test_edit_and_validation_state_changes_reset_action_pressure():
     controller.observe_action("read_file", state(edit=1))
     assert controller.observe_action(
         "validate_static_web", state(edit=1, validation=1)
-    ) is True
-    assert controller.consecutive_no_state_change == 0
+    ) is False
+    assert controller.consecutive_no_state_change == 2
 
 
 def test_repeated_observation_is_not_meaningful_progress():

@@ -6,6 +6,8 @@ from .base import BaseTool
 from .edit_verifier import EditVerifier
 from .paths import resolve_workspace_path
 from .results import ToolResult
+from ..agent.edit_failure import EditFailureType
+from ..agent.reason_codes import ReasonCode
 
 
 class PatchFileTool(
@@ -114,6 +116,8 @@ class PatchFileTool(
                     "changed": False,
                     "edit_kind": "exact_patch",
                     "failure_type": "stale_context",
+                    "edit_failure_type": EditFailureType.STALE_CONTEXT.value,
+                    "reason_code": ReasonCode.STALE_CONTEXT.value,
                     "retry_action": "read_target_region_then_retry_once",
                 },
                 error="old_text was not found in the current file.",
@@ -128,7 +132,9 @@ class PatchFileTool(
                     "checkpoint_id": None,
                     "changed": False,
                     "edit_kind": "exact_patch",
-                    "failure_type": "ambiguous_context",
+                    "failure_type": "ambiguous_match",
+                    "edit_failure_type": EditFailureType.AMBIGUOUS_MATCH.value,
+                    "reason_code": ReasonCode.AMBIGUOUS_MATCH.value,
                     "match_count": count,
                     "retry_action": "read_target_region_then_use_more_specific_context",
                 },

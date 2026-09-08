@@ -2,6 +2,7 @@ import pytest
 
 from ..tools.run_tests import (
     RunTestsTool,
+    extract_failure_paths,
 )
 
 
@@ -244,3 +245,34 @@ def test_failing_pytest_still_returns_tool_result(
         ]
         == 1
     )
+
+    assert result.data["failure_paths"] == ["tests/test_failure.py"]
+
+
+def test_failure_paths_include_repo_local_traceback_sources(tmp_path):
+    test_path = tmp_path / "tests/test_example.py"
+    source_path = tmp_path / "pkg/example.py"
+    test_path.parent.mkdir(parents=True)
+    source_path.parent.mkdir(parents=True)
+    test_path.write_text("", encoding="utf-8")
+    source_path.write_text("", encoding="utf-8")
+
+    paths = extract_failure_paths(
+        stdout=(
+            "pkg/example.py:12: ValueError\n"
+            "FAILED tests/test_example.py::test_example - ValueError\n"
+        ),
+        stderr="/outside/not_relevant.py:3: ignored",
+        workspace=tmp_path,
+    )
+
+    assert paths == ["tests/test_example.py", "pkg/example.py"]
+
+
+def test_acceptance_rejects_source_module_as_test_target(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg/example.py").write_text("value = 1\n", encoding="utf-8")
+    tool = RunTestsTool(workspace=tmp_path)
+
+    with pytest.raises(ValueError, match="source module"):
+        tool.execute(path="pkg/example.py", purpose="acceptance")

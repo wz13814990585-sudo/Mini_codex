@@ -5,6 +5,8 @@ from ..agent.completion import (
 )
 from ..agent.loop import (
     EDIT_TOOL_NAMES,
+)
+from ..agent.orchestration.validation_orchestrator import (
     apply_validation_evidence,
     can_complete_edit_task,
     evaluate_completion,

@@ -9,6 +9,7 @@ from .tool_executor import (
     PreparedToolCall,
     ToolExecution,
 )
+from .reason_codes import ReasonCode
 
 from ..tools.results import (
     ToolResult,
@@ -136,6 +137,7 @@ class SafetyToolExecutor:
                         "failure_type": (
                             "safety_policy_failure"
                         ),
+                        "reason_code": ReasonCode.UNSAFE_COMMAND.value,
                         "safety": {
                             "level": (
                                 "blocked"
@@ -241,6 +243,7 @@ class SafetyToolExecutor:
                     "failure_type": (
                         "safety_blocked"
                     ),
+                    "reason_code": ReasonCode.UNSAFE_COMMAND.value,
                     "safety": (
                         decision
                         .to_dict()

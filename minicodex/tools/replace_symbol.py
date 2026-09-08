@@ -10,6 +10,8 @@ from ..agent.symbol_index import (
     Symbol,
     SymbolIndex,
 )
+from ..agent.edit_failure import EditFailureType
+from ..agent.reason_codes import ReasonCode
 
 
 class ReplaceSymbolTool(
@@ -228,6 +230,8 @@ class ReplaceSymbolTool(
                         "changed": False,
                         "edit_kind": "symbol",
                         "failure_type": "stale_context",
+                        "edit_failure_type": EditFailureType.STALE_CONTEXT.value,
+                        "reason_code": ReasonCode.STALE_CONTEXT.value,
                         "retry_action": "read_target_region_then_retry_once",
                     },
                     error="The current symbol no longer matches expected_text.",

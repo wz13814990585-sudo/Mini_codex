@@ -58,3 +58,25 @@ def test_uncertain_task_routes_standard_not_complex():
 
     assert route.mode == ExecutionMode.STANDARD
     assert "uncertain" in route.signals[0]
+
+
+def test_runtime_word_alone_does_not_force_complex_mode():
+    route = TaskRouter().route("Fix runtime error in helper.py")
+
+    assert route.mode == ExecutionMode.STANDARD
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "How can I add a button to app.py?",
+        "Explain how to refactor app.py",
+        "分析一下 app.py 为什么无法运行",
+    ],
+)
+def test_informational_questions_do_not_require_coding_action(prompt):
+    assert TaskRouter().route(prompt).requires_coding_action is False
+
+
+def test_explicit_change_request_requires_coding_action():
+    assert TaskRouter().route("Please fix app.py now").requires_coding_action is True

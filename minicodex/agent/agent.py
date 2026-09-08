@@ -23,8 +23,15 @@ from .git_awareness import (
     GitAwareness,
     GitRepositoryInspector,
 )
-from .loop import (
+from .orchestration.loop import (
     run_agent_loop,
+)
+from .orchestration import (
+    CompletionHandler,
+    FinalResponseMode,
+    ToolBatchRunner,
+    TurnBuilder,
+    ValidationOrchestrator,
 )
 from .metrics import (
     ExecutionMetrics,
@@ -39,6 +46,7 @@ from .plan_progress import (
 from .recovery import (
     RecoveryController,
 )
+from .relevant_paths import RelevantPathResolver
 from .rollback import (
     RollbackEngine,
 )
@@ -326,6 +334,7 @@ class MiniCodexAgent:
                 max_validation_no_progress=2,
             )
         )
+        self.latest_progress_signal = None
 
         self.action_controller = ActionController()
         self.finalization = FinalizationController()
@@ -335,7 +344,13 @@ class MiniCodexAgent:
         self.task_state = TaskState()
         self.edit_retry = EditRetryPolicy()
         self.dependency_resolver = DependencyResolver(self.workspace)
-        self.validation_selector = ValidationSelector()
+        self.relevant_path_resolver = RelevantPathResolver(self.workspace)
+        self.validation_selector = ValidationSelector(self.workspace)
+        self.completion_handler = CompletionHandler()
+        self.turn_builder = TurnBuilder()
+        self.tool_batch_runner = ToolBatchRunner()
+        self.validation_orchestrator = ValidationOrchestrator()
+        self.final_response_mode = FinalResponseMode.TASK_REPORT
         self.replan_count = 0
 
         self.plan_progress_reconciler = (
@@ -420,8 +435,10 @@ class MiniCodexAgent:
         state = self.task_state
         state.mode = getattr(self.execution_policy, "mode", None)
         state.user_request = self.active_user_request or ""
+        state.final_response_mode = self.final_response_mode.value
         route = self.execution_route
         state.target_paths = tuple(getattr(route, "target_paths", ()) or ())
+        state.relevant_paths = self.relevant_path_resolver.resolve(self).paths
         state.edit_revision = validation_state.edit_revision
         state.validation_revision = getattr(validation_state, "evidence_sequence", 0)
         state.rollback_revision = self.rollback_revision
@@ -485,11 +502,13 @@ class MiniCodexAgent:
             self.execution_route
             and self.execution_route.requires_coding_action
         )
+        self.final_response_mode = self.completion_handler.response_mode(self)
         # FAST is structurally planless. A legacy caller cannot force the
         # Planner back into this mode with use_planning=True.
         planning_enabled = bool(
             self.execution_policy.use_plan
             and use_planning is not False
+            and self.task_requires_validation
         )
         self.task_max_steps = min(
             self.configured_max_steps,
@@ -508,6 +527,7 @@ class MiniCodexAgent:
         self.progress.reset(
             new_task=True
         )
+        self.latest_progress_signal = None
 
         self.finalization.reset()
 
@@ -531,10 +551,13 @@ class MiniCodexAgent:
 
         self.edit_retry.reset()
 
+        self.completion_handler.reset()
+
         self.task_state = TaskState(
             mode=self.execution_policy.mode,
             phase=AgentPhase.INSPECTING,
             user_request=user_input,
+            final_response_mode=self.final_response_mode.value,
             target_paths=tuple(
                 getattr(self.execution_route, "target_paths", ()) or ()
             ),

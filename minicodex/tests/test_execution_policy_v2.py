@@ -3,7 +3,10 @@ from types import SimpleNamespace
 from ..agent.completion import CompletionGate, CompletionStatus
 from ..agent.execution_mode import ExecutionMode
 from ..agent.execution_policy import policy_for
-from ..agent.loop import active_plan_incomplete, evaluate_completion
+from ..agent.orchestration.validation_orchestrator import (
+    active_plan_incomplete,
+    evaluate_completion,
+)
 from ..agent.regression_policy import (
     RegressionPolicy,
     RegressionRequirement,
@@ -103,4 +106,3 @@ def test_evaluate_completion_defaults_to_complex_compatibility():
     )
 
     assert evaluate_completion(agent).status == CompletionStatus.NEEDS_FULL_VALIDATION
-

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+from .test_target_resolver import TestTargetResolver
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,9 @@ class ValidationSelection:
 
 class ValidationSelector:
     """Recommend at most one validator; execution remains in the shared loop."""
+
+    def __init__(self, workspace: str | Path = ".") -> None:
+        self.test_target_resolver = TestTargetResolver(workspace)
 
     def select(
         self,
@@ -34,15 +40,16 @@ class ValidationSelector:
                 "validate_static_web", html, "acceptance",
                 "A bounded static web artifact has a dedicated validator.",
             )
-        python_target = next((path for path in target_paths if path.lower().endswith(".py")), None)
+        python_targets = tuple(path for path in target_paths if path.lower().endswith(".py"))
         if "run_tests" in registered_tools:
-            return ValidationSelection(
-                "run_tests", python_target, "acceptance",
-                "Python behavior should be demonstrated by a focused test.",
-            )
+            resolution = self.test_target_resolver.resolve(python_targets)
+            if resolution.acceptance_supported:
+                return ValidationSelection(
+                    "run_tests", resolution.selected_path, "acceptance", resolution.reason
+                )
         if "run_command" in registered_tools:
             return ValidationSelection(
                 "run_command", None, "acceptance",
-                "No dedicated artifact validator is available.",
+                "No focused pytest target exists; use a specific behavior command.",
             )
         return None

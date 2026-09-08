@@ -7,10 +7,8 @@ import pytest
 from ..agent.agent import MiniCodexAgent
 from ..agent.execution_mode import ExecutionMode
 from ..agent.execution_policy import policy_for
-from ..agent.loop import (
-    acceptance_evidence_reminder,
-    run_agent_loop,
-)
+from ..agent.loop import run_agent_loop
+from ..agent.orchestration.validation_orchestrator import acceptance_evidence_reminder
 from ..agent.message_protocol import (
     ToolMessageProtocolError,
     validate_tool_message_protocol,

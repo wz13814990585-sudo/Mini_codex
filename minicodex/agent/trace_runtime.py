@@ -390,6 +390,7 @@ class TracingToolExecutor:
                         "failure_type"
                     )
                 ),
+                "reason_code": result_data.get("reason_code"),
             },
         )
 
@@ -622,6 +623,7 @@ class TracingRollbackEngine:
                         "failure_type"
                     )
                 ),
+                "reason_code": result.data.get("reason_code"),
             },
         )
 
@@ -968,6 +970,11 @@ def attach_runtime_tracing(
                 "final_completion_reason": getattr(
                     getattr(self, "execution_metrics", None),
                     "final_completion_reason",
+                    None,
+                ),
+                "final_reason_code": getattr(
+                    getattr(self, "execution_metrics", None),
+                    "final_reason_code",
                     None,
                 ),
             },

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from ..agent.loop import (
+from ..agent.orchestration.validation_orchestrator import (
     active_plan_incomplete,
     can_finish_edit_task,
 )

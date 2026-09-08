@@ -138,7 +138,7 @@ def test_task_state_phase_machine_and_progress_key():
     state.transition_for_tool(
         "run_tests", success=True, validation_outcome=ValidationOutcome.PASSED
     )
-    assert state.phase == AgentPhase.FINALIZING
+    assert state.phase == AgentPhase.VALIDATING
 
 
 def test_v4_benchmark_catalog_has_required_mode_mix_and_budgets():

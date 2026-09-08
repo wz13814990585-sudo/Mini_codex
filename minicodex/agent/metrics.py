@@ -22,6 +22,7 @@ class ExecutionMetrics:
     total_prompt_tokens: int = 0
     final_outcome: str | None = None
     final_completion_reason: str | None = None
+    final_reason_code: str | None = None
 
     def reset(self, execution_mode: str | None = None) -> None:
         self.execution_mode = execution_mode
@@ -39,6 +40,7 @@ class ExecutionMetrics:
         self.total_prompt_tokens = 0
         self.final_outcome = None
         self.final_completion_reason = None
+        self.final_reason_code = None
 
     def record_tool(
         self,
@@ -69,9 +71,10 @@ class ExecutionMetrics:
         if tool_name == "replan":
             self.replan_count += 1
 
-    def finish(self, outcome: str, reason: str) -> None:
+    def finish(self, outcome: str, reason: str, reason_code=None) -> None:
         self.final_outcome = outcome
         self.final_completion_reason = reason
+        self.final_reason_code = getattr(reason_code, "value", reason_code)
 
     def observe_llm(self, *, call_count: int, total_prompt_tokens: int) -> None:
         self.llm_call_count = max(0, int(call_count))

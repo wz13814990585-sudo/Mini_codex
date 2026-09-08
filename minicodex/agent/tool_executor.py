@@ -5,6 +5,11 @@ import json
 from dataclasses import dataclass
 
 from ..tools.results import ToolResult
+from .edit_failure import (
+    EditFailureType,
+    classify_edit_exception,
+    reason_for_edit_failure,
+)
 
 
 @dataclass
@@ -173,6 +178,8 @@ class ToolExecutor:
             )
 
         except Exception as e:
+            edit_failure = classify_edit_exception(prepared.tool_name, e)
+            reason_code = reason_for_edit_failure(edit_failure)
             result = ToolResult(
                 success=False,
                 summary=(
@@ -183,7 +190,15 @@ class ToolExecutor:
                     "tool_name": (
                         prepared.tool_name
                     ),
-                    "failure_type": "execution",
+                    "failure_type": (
+                        edit_failure.value
+                        if edit_failure != EditFailureType.UNKNOWN
+                        else "execution"
+                    ),
+                    "edit_failure_type": edit_failure.value,
+                    "reason_code": getattr(reason_code, "value", None),
+                    "path": prepared.arguments.get("path"),
+                    "symbol": prepared.arguments.get("symbol"),
                 },
                 error=(
                     f"{type(e).__name__}: {e}"

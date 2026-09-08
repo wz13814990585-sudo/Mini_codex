@@ -146,6 +146,8 @@ class EvaluationResult:
 
     final_completion_reason: str | None = None
 
+    final_reason_code: str | None = None
+
     duration_seconds: float = 0.0
 
     error: str | None = None

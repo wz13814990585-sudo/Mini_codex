@@ -1,21 +1,5 @@
-"""Shared workspace path validation for filesystem tools."""
+"""Compatibility import for the centralized path guard."""
 
-from pathlib import Path
+from ..utils.paths import resolve_workspace_path
 
-
-def resolve_workspace_path(
-    workspace: Path,
-    path: str,
-) -> Path:
-    """Resolve a user path and reject access outside the workspace."""
-    resolved_workspace = workspace.resolve()
-    resolved_path = (resolved_workspace / path).resolve()
-
-    try:
-        resolved_path.relative_to(resolved_workspace)
-    except ValueError as exc:
-        raise ValueError(
-            "Access outside the workspace is not allowed."
-        ) from exc
-
-    return resolved_path
+__all__ = ["resolve_workspace_path"]

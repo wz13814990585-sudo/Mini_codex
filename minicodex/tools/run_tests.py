@@ -9,6 +9,7 @@ from ..agent.sandbox import (
 
 from .base import BaseTool
 from .results import ToolResult
+from ..agent.test_target_resolver import TestTargetResolver
 
 
 MAX_FAILURE_DETAIL_LINES = 40
@@ -174,6 +175,15 @@ class RunTestsTool(
                 )
             )
 
+        if (
+            normalized_purpose == "acceptance"
+            and not TestTargetResolver.is_test_path(normalized_path)
+        ):
+            raise ValueError(
+                "Acceptance validation must target an actual test file or "
+                "pytest node id; a source module is not acceptance evidence."
+            )
+
         if not (
             normalized_path
         ):
@@ -332,6 +342,7 @@ class RunTestsTool(
                     sandbox_result
                     .stderr
                 ),
+                workspace=self.workspace,
             )
         )
 
@@ -452,6 +463,7 @@ def parse_pytest_output(
     exit_code: int,
     stdout: str,
     stderr: str,
+    workspace: str | Path | None = None,
 ) -> dict:
 
     passed = (
@@ -520,6 +532,12 @@ def parse_pytest_output(
         if line.strip()
     ]
 
+    failure_paths = extract_failure_paths(
+        stdout=stdout,
+        stderr=stderr,
+        workspace=workspace,
+    )
+
     return {
         "exit_code": (
             exit_code
@@ -548,6 +566,7 @@ def parse_pytest_output(
         "failure_details": (
             failure_details
         ),
+        "failure_paths": failure_paths,
         "stderr": (
             stderr_lines[
                 :20
@@ -559,6 +578,51 @@ def parse_pytest_output(
         ),
         "timed_out": False,
     }
+
+
+def extract_failure_paths(
+    *,
+    stdout: str,
+    stderr: str,
+    workspace: str | Path | None = None,
+) -> list[str]:
+    """Conservatively extract repo-local paths from pytest diagnostics."""
+
+    candidates: list[str] = []
+    for line in stdout.splitlines():
+        if line.startswith("FAILED ") or line.startswith("ERROR "):
+            token = line.split(maxsplit=1)[1].split("::", 1)[0].strip()
+            candidates.append(token)
+
+    traceback_pattern = re.compile(
+        r"(?<![\w.-])((?:[A-Za-z]:)?[\w./\\-]+\.py):\d+(?::\d+)?"
+    )
+    for text in (stdout, stderr):
+        candidates.extend(match.group(1) for match in traceback_pattern.finditer(text))
+
+    root = Path(workspace).resolve() if workspace is not None else None
+    normalized: list[str] = []
+    for raw in candidates:
+        path_text = raw.replace("\\", "/").strip("'\"()[]")
+        if not path_text:
+            continue
+        candidate = Path(path_text)
+        if root is not None:
+            try:
+                resolved = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+                relative = resolved.relative_to(root)
+            except (ValueError, OSError):
+                continue
+            if not resolved.is_file():
+                continue
+            path_text = relative.as_posix()
+        elif candidate.is_absolute() or ".." in candidate.parts:
+            continue
+        else:
+            path_text = candidate.as_posix()
+        if path_text not in normalized:
+            normalized.append(path_text)
+    return normalized
 
 
 # =============================================================

@@ -16,6 +16,32 @@ class ValidationStatus(
     REGRESSED = "regressed"
 
 
+class ProgressKind(str, Enum):
+    ADVANCED = "advanced"
+    OBSERVATION = "observation"
+    NONE = "none"
+    REGRESSED = "regressed"
+
+
+@dataclass(frozen=True)
+class ProgressSignal:
+    kind: ProgressKind
+    reason: str = ""
+
+    @property
+    def advanced(self) -> bool:
+        return self.kind == ProgressKind.ADVANCED
+
+
+@dataclass(frozen=True)
+class ValidationFingerprint:
+    outcome: str
+    failed_count: int | None
+    purpose: str = "unknown"
+    scope: str = "unknown"
+    path: str = ""
+
+
 @dataclass
 class ValidationProgress:
 
@@ -35,18 +61,14 @@ class ValidationProgress:
 
     stalled: bool = False
 
+    signal: ProgressSignal = ProgressSignal(ProgressKind.NONE)
+
     @property
     def meaningful_progress(
         self,
     ) -> bool:
 
-        return (
-            self.status
-            in {
-                ValidationStatus.PASSED,
-                ValidationStatus.IMPROVED,
-            }
-        )
+        return self.signal.advanced
 
     @property
     def crossed_revision(
@@ -124,13 +146,7 @@ class ProgressController:
         # key -> (failed_count, edit_revision)
         # =====================================================
 
-        self._validation_series: dict[
-            str,
-            tuple[
-                int,
-                int | None,
-            ],
-        ] = {}
+        self._validation_series: dict[str, tuple[ValidationFingerprint, int | None]] = {}
 
     # =========================================================
     # Reset
@@ -242,7 +258,21 @@ class ProgressController:
         failed_count: int | None,
         validation_key: str | None = None,
         edit_revision: int | None = None,
+        *,
+        outcome: str | None = None,
+        purpose: str = "unknown",
+        scope: str = "unknown",
+        path: str = "",
+        fingerprint: ValidationFingerprint | None = None,
     ) -> ValidationProgress:
+
+        fingerprint = fingerprint or ValidationFingerprint(
+            outcome=outcome or ("passed" if failed_count == 0 else "failed" if failed_count is not None else "inconclusive"),
+            failed_count=failed_count,
+            purpose=purpose,
+            scope=scope,
+            path=path,
+        )
 
         # =====================================================
         # Cannot Interpret
@@ -263,6 +293,7 @@ class ProgressController:
                 validation_key=(
                     validation_key
                 ),
+                signal=ProgressSignal(ProgressKind.OBSERVATION, "Validation was inconclusive."),
             )
 
         normalized_key = (
@@ -298,7 +329,7 @@ class ProgressController:
         self._validation_series[
             normalized_key
         ] = (
-            failed_count,
+            fingerprint,
             edit_revision,
         )
 
@@ -334,6 +365,7 @@ class ProgressController:
                     message=(
                         "Validation succeeded."
                     ),
+                    signal=ProgressSignal(ProgressKind.ADVANCED, "Validation changed from unknown to passing."),
                 )
 
             return ValidationProgress(
@@ -355,21 +387,20 @@ class ProgressController:
                     "Initial comparable validation "
                     f"recorded: {failed_count} failed."
                 ),
+                signal=ProgressSignal(ProgressKind.OBSERVATION, "Initial failing validation baseline."),
             )
 
         (
-            previous_failed,
+            previous_fingerprint,
             previous_revision,
         ) = previous
+        previous_failed = previous_fingerprint.failed_count
 
         # =====================================================
         # Passed
         # =====================================================
 
-        if (
-            failed_count
-            == 0
-        ):
+        if failed_count == 0:
 
             self.validation_no_progress_count = 0
 
@@ -392,6 +423,11 @@ class ProgressController:
                 ),
                 message=(
                     "Validation succeeded."
+                ),
+                signal=(
+                    ProgressSignal(ProgressKind.ADVANCED, "Comparable validation changed from failing to passing.")
+                    if previous_failed not in {None, 0}
+                    else ProgressSignal(ProgressKind.NONE, "Comparable validation remains passing.")
                 ),
             )
 
@@ -430,6 +466,7 @@ class ProgressController:
                     f"{previous_failed} failed -> "
                     f"{failed_count} failed."
                 ),
+                signal=ProgressSignal(ProgressKind.ADVANCED, "The comparable failure count decreased."),
             )
 
         # =====================================================
@@ -475,6 +512,7 @@ class ProgressController:
                 stalled=(
                     stalled
                 ),
+                signal=ProgressSignal(ProgressKind.NONE, "The comparable failure count did not change."),
             )
 
         # =====================================================
@@ -515,4 +553,5 @@ class ProgressController:
             stalled=(
                 stalled
             ),
+            signal=ProgressSignal(ProgressKind.REGRESSED, "The comparable failure count increased."),
         )

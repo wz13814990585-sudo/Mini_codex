@@ -468,6 +468,7 @@ class EvaluationHarness:
             max_steps_exhausted=bool(metric("max_steps_exhausted", False)),
             final_outcome=metric("final_outcome"),
             final_completion_reason=metric("final_completion_reason"),
+            final_reason_code=metric("final_reason_code"),
             duration_seconds=(
                 duration
             ),

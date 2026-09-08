@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from ..agent.checkpoint import (
     CheckpointManager,
 )
-from ..agent.loop import (
+from ..agent.orchestration.validation_orchestrator import (
     apply_validation_evidence,
 )
 from ..agent.progress import (
