@@ -1,115 +1,135 @@
-# MiniCodex control-plane architecture
+# MiniCodex vibecoding architecture
 
-MiniCodex uses one shared agent loop for FAST, STANDARD, and COMPLEX work. The
-router selects an `ExecutionPolicy`; it does not select a separate runtime.
-Mode differences are limited to planning, budgets, exposed tools, context,
-recovery, and proportional regression requirements.
+MiniCodex uses one shared coding loop. `TaskRouter` composes two orthogonal,
+deterministic decisions: `IntentClassifier` selects `TaskIntent` (`MODIFY`,
+`INSPECT_ONLY`, or `INFORMATIONAL`), while `ComplexityRouter` selects
+`ExecutionMode` (`FAST`, `STANDARD`, or `COMPLEX`). Intent controls
+authorization and final-response semantics. Mode controls planning depth,
+budgets, context, recovery, and proportional regression requirements.
 
-Before execution, `TaskRouter` also classifies the final-response contract.
-Informational questions may return ordinary model text. Coding/action requests
-use `TASK_REPORT`: model prose is never completion evidence. An unevidenced
-text response receives one execution correction and the task continues. Only
-`CompletionPolicy` readiness, an explicit concrete `BLOCKED:` reason, or budget
-exhaustion can terminate a coding task.
+Inspect-only requests cannot see edit or dependency-install capabilities.
+Informational requests normally see no tools. Model prose cannot complete a
+modify task: the task must edit and validate, or validate that the requested
+state already exists.
 
-## State and phases
+## State, progress, and phases
 
-`TaskState` is the orchestration read-model. It projects the current mode,
-phase, user request, edit/validation/rollback/plan revisions, completed steps,
-validation flags, progress counters, remaining budget, and final outcome.
+`TaskState` is the compact orchestration read-model. It projects intent, mode,
+phase, request targets, relevant paths, edit/validation/rollback/plan revisions,
+completed steps, validation flags, pressure counters, budget, and outcome.
 Filesystem contents, tool results, validation evidence, and plan objects remain
-the underlying sources of truth.
+the sources of truth.
 
-The phase machine is deliberately small:
+`AgentPhase` has seven states: `INSPECTING`, `ACTING`, `VALIDATING`, `FIXING`,
+`FINALIZING`, `DONE`, and `BLOCKED`. `ActionController` consumes a mandatory
+`ProgressSignal`; it does not infer progress from arbitrary state changes.
+Reads are observations, edits and completed plan criteria advance, unchanged
+validation does not advance, an improved failure count advances, a passed-to-
+failed transition regresses, and rollback is not positive advancement.
+`ValidationFingerprint` compares only the same purpose/scope/path series.
 
-1. `INSPECTING`: at most two or three reconnaissance calls.
-2. `ACTING`: perform a concrete edit or other required action.
-3. `VALIDATING`: obtain artifact-appropriate evidence; unrelated search is
-   rejected.
-4. `FIXING`: after failed validation or stale edit context, allow one targeted
-   source read and then an edit.
-5. `FINALIZING`: permit only missing validation, a necessary edit, evidenced
-   plan completion, or a concrete blocker.
-6. `DONE` and `BLOCKED`: terminal outcomes.
+## Runtime responsibilities
 
-`ActionController` is the only generic inspection/no-state-change pressure
-source. It consumes `ProgressSignal` and monotonic task facts. Edit and plan
-advancement reset pressure; validation sequence numbers, repeated reads,
-searches, repository-map refreshes, rollback, and identical observations do
-not. `ValidationFingerprint` compares only the same purpose/scope/path series:
-fewer failures or failed-to-passed advances, unchanged results do not, and a
-higher failure count regresses.
+The shared flow is:
 
-## Execution flow
+1. Project current `TaskState` and build one provider turn.
+2. `TurnBuilder` delegates system text to `PromptBuilder`, phase-specific task
+   context to `ContextBuilder`, and schemas to `ToolSchemaProvider`.
+3. `ToolCallRunner` owns prepare → restrict → duplicate-check → safe execution
+   for one call.
+4. `ToolBatchRunner` owns the complete ordered provider batch and emits exactly
+   one tool result for every declared call, including skipped calls before a
+   control transition.
+5. `PlanOrchestrator` owns step attempt, local recovery, and replan transitions.
+6. `ValidationPipeline` normalizes tool output into evidence;
+   `ValidationOrchestrator` owns trend and next-action policy;
+   `RollbackCoordinator` owns safe checkpoint restoration.
+7. `CompletionHandler` is the only termination owner. `TaskReportBuilder`
+   renders the final coding report immediately, without another model call.
 
-The shared loop performs the following sequence:
+Normal product flows:
 
-1. Refresh the task-state projection and build mode-filtered context.
-2. `TurnBuilder` prepares compact provider messages and mode-filtered schemas.
-3. `ToolBatchRunner` applies parse, restriction, duplicate, safety, checkpoint,
-   and execution ordering.
-4. `ValidationOrchestrator` normalizes progress, recovery, rollback, and the
-   next validation transition.
-5. `CompletionHandler` applies the single exit policy and
-   `TaskReportBuilder` renders coding-task outcomes without another LLM call.
-6. Close every skipped provider tool call before restarting or finishing.
+- `MODIFY + FAST`: minimal inspect → edit → targeted validation → done.
+- `MODIFY + STANDARD`: short plan → edit → acceptance → relevant regression → done.
+- `MODIFY + COMPLEX`: plan → iterative edit → acceptance → full regression → done.
+- `INSPECT_ONLY`: inspect → report, with zero edits.
+- `INFORMATIONAL`: answer directly.
 
-FAST is planless and immediately completes when targeted acceptance evidence
-passes. STANDARD uses a short outcome plan and focused regression. COMPLEX adds
-long-term memory, broader recovery, limited replanning, and full regression.
+## Editing, recovery, and safety
 
-## Edit, dependency, and validation reliability
+`EditStrategyHint` recommends `write_file` for new files, `patch_file` for
+small exact edits, `replace_symbol` for known Python symbols, and
+`replace_lines` for known line regions. It is advisory and never auto-edits.
+`EditRetryPolicy` recovers locally first: stale/range/ambiguous edits reread the
+target, missing symbols use one symbol search, test failures focus on the
+failing test or traceback path, and dependency failures inspect the manifest.
 
-Checkpointed edit tools return structured metadata including `path`,
-`checkpoint_id`, `changed`, and `edit_kind`. Exact patch, line, and symbol
-guards return typed `EditFailureType` and stable `ReasonCode` values instead of
-requiring downstream message matching. `EditRetryPolicy` permits bounded local
-recovery: stale/ambiguous/range failures receive one targeted read and retry;
-missing symbols receive one symbol search and narrower retry; no-change points
-to already-satisfied evidence; permission denial is a blocker.
+All mutations still pass through `SafetyToolExecutor`, workspace guards, and
+checkpoint capture/seal. Cross-revision regression may restore the responsible
+checkpoint. Rollback creates a new monotonic edit revision and invalidates old
+validation evidence. Stable `EditFailureType` and `ReasonCode` values drive
+control logic; user-facing text does not.
 
-`DependencyResolver` reads `pyproject.toml` and `requirements*.txt` before a
-Python install. Declared dependencies may be installed. Undeclared project
-dependencies require a manifest edit first. Isolated examples avoid unrelated
-manifest mutation.
+## Validation targeting
 
-`ValidationSelector` recommends one proportional validator from artifact type.
-Static HTML uses `validate_static_web`. `TestTargetResolver` maps a Python
-source to an existing focused test; a source module is never sent to pytest as
-acceptance evidence. `run_tests` exports conservative repo-local
-`failure_paths`, and `RelevantPathSet` combines request targets, edits,
-tracebacks, failed tests, plan criteria, stale targets, and dependency config
-to permit focused FIXING reads while blocking unrelated reconnaissance. Other
-artifacts can use a labelled acceptance command. A future
-`validate_browser_app` tool can register as a runtime browser extension without
-changing the loop or validation state model.
+`ValidationSelector` recommends one proportional validator. Static HTML uses
+`validate_static_web`, which proves structure, inline syntax, and configured
+static requirements—not click, keyboard, gameplay, or runtime state. The
+optional `validate_browser_app` tool uses Playwright for page load, console
+errors, selectors, text, click, keypress, and basic DOM/text changes. It is
+registered only when Playwright is available; static validation remains the
+fallback.
 
-## Safety and observability
+A revision-cached, AST-based `TestIndex` maps imported/referenced Python source
+modules to tests. `TestTargetResolver` ranks exact basename, import match,
+same-package test, then broader test directory. Only genuinely focused
+candidates are labelled acceptance; package/broad candidates remain
+regression. A source module is never used as a pytest acceptance target.
+`run_tests` emits conservative repo-relative `failure_paths` from failed node
+IDs and traceback/error locations.
 
-All edits still flow through safety checks and checkpoint capture/seal.
-Cross-revision validation regression can restore the responsible checkpoint;
-rollback creates a new monotonic edit revision and invalidates old evidence.
-Provider tool-message ordering and async cancellation boundaries are preserved.
+`RelevantPathResolver` derives scope from request targets, edited paths, failed
+tests, tracebacks, validation targets, stale edits, plan criteria, symbol-search
+recovery, and explicit dependency-resolution evidence. It does not add every
+manifest to unrelated tasks.
 
-`ExecutionMetrics` records mode, LLM/tool/inspection/edit/validation calls,
-calls before first edit and validation, action pressure, replans, rollbacks,
-budget exhaustion, prompt tokens, and final outcome/reason. The deterministic
-evaluation harness exports those fields with each case result.
+## Context, memory, capabilities, and UX
 
-## Current package boundaries
+`ContextBuilder` changes content by phase: inspecting sees targets/repository
+fragment; acting sees the edit hint and exact current state; validating sees
+changed targets and the recommended validator; fixing sees the latest failure
+paths; finalizing sees only missing evidence. Older tool payloads become short
+facts. Exact code is re-read from the workspace when needed.
 
-The migration is deliberately incremental to preserve imports and provider
-protocol behavior. `agent/orchestration/` now owns turn construction, atomic
-tool-call mechanics, validation/recovery orchestration, completion handling,
-and task reports. Stable domain types (`TaskState`, `ProgressSignal`,
-`ReasonCode`, `EditFailureType`) remain shallow and directly importable.
-`utils/paths.py` owns neutral workspace/path normalization, while
-`tools/paths.py` remains a compatibility import. Legacy policy modules have not
-all been physically moved yet; compatibility re-exports in `agent/loop.py`
-allow semantic tests and consumers to migrate without a flag-day rewrite.
+Working-memory entries carry path and revision. Editing a path removes older
+observations for that path before recording the new revision. Memory is a cache;
+the workspace remains authoritative.
 
-The shared loop now owns only the high-level step budget, phase/context update,
-provider call sequencing, provider-message atomicity, and dispatch of results
-to the focused components. It no longer implements final-response formatting,
-turn construction, tool preparation/execution ordering, or validation and
-rollback policy.
+`ToolRegistry` supports lightweight capabilities such as `filesystem.read`,
+`filesystem.write`, `code.search`, `code.edit`, `process.run`, `test.run`,
+`validation.static_web`, `validation.browser`, `dependency.install`, and
+`git.inspect`, with name-based compatibility for existing tools.
+
+CLI levels are `normal`, `verbose`, and `debug`. Normal hides Harness/provider
+noise and internal enums. Verbose retains execution/phase diagnostics. Debug
+also exposes outcome tokens and the post-task trace summary. Normal final
+reports contain changed files and validation results only.
+
+## Package boundaries and compatibility
+
+- `agent/orchestration/`: shared loop, turn/batch/plan/validation/completion flow.
+- `agent/routing/`: intent classification and complexity routing.
+- `agent/progress/`: progress signals and validation trends.
+- `agent/validation/`: evidence pipeline, selector, `TestIndex`, target resolver.
+- `agent/editing/`: edit strategy and rollback coordination.
+- `utils/`: domain-neutral path/text/parsing helpers only.
+
+Compatibility re-exports in `agent/loop.py`, `agent/task_router.py`,
+`agent/test_index.py`, `agent/test_target_resolver.py`, and
+`agent/validation_selector.py` preserve existing imports during migration.
+
+`ExecutionMetrics` and the deterministic evaluation harness record intent,
+mode, success/outcome, false completion, wrong edit, LLM/tool/inspection/edit/
+validation counts, first-edit latency, replans, rollbacks, action pressure,
+prompt tokens, and budget exhaustion. The fixed real-task catalog contains 30
+CREATE, MODIFY, FIX, INSPECT, and INFORMATIONAL cases.

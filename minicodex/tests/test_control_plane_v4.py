@@ -307,7 +307,8 @@ def test_failure_benchmark_stale_patch_reads_target_then_retries(tmp_path):
     assert "return 2" in target.read_text(encoding="utf-8")
     assert agent.execution_metrics.calls_before_first_edit == 3
     assert agent.task_state.phase == AgentPhase.DONE
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"
+    assert "Outcome:" not in result
 
 
 def test_failure_benchmark_validation_fail_fix_revalidate(tmp_path):
@@ -334,7 +335,8 @@ def test_failure_benchmark_validation_fail_fix_revalidate(tmp_path):
     assert llm.call_count == 5
     assert agent.validation_pipeline.state.acceptance_passed is True
     assert "return 2" in target.read_text(encoding="utf-8")
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"
+    assert "Outcome:" not in result
 
 
 def test_failure_benchmark_unsafe_command_then_safe_edit(tmp_path):
@@ -355,4 +357,5 @@ def test_failure_benchmark_unsafe_command_then_safe_edit(tmp_path):
     result = agent.run("Fix a simple Python bug in examples/helper.py.")
     assert command.calls == 0
     assert target.read_text(encoding="utf-8") == "value = 1\n"
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"
+    assert "Outcome:" not in result

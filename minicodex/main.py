@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 
 from dotenv import load_dotenv
 
@@ -43,6 +44,7 @@ from .tools.install_python_package import (
 from .tools.validate_static_web import (
     ValidateStaticWebTool,
 )
+from .tools.validate_browser_app import ValidateBrowserAppTool
 from .tools.complete_plan_step import CompletePlanStepTool
 from .tools.replan import ReplanTool
 from .tools.git_status import GitStatusTool
@@ -62,7 +64,7 @@ load_dotenv(
 )
 
 
-def main():
+def main(output_level: str = "normal"):
 
     # =========================================================
     # Shared Workspace
@@ -231,6 +233,9 @@ def main():
         )
     )
 
+    if ValidateBrowserAppTool.available():
+        registry.register(ValidateBrowserAppTool(workspace=workspace))
+
     # =========================================================
     # Repository Map
     # =========================================================
@@ -271,6 +276,7 @@ def main():
             replanner=replanner,
             repo_map=repo_map,
             max_steps=20,
+            output_level=output_level,
         )
     )
 
@@ -395,73 +401,39 @@ def main():
             f"{result}"
         )
 
-        # =====================================================
-        # Trace Summary
-        # =====================================================
+        if output_level == "debug":
+            # Debug-only internal trace summary.
 
-        trace_summary = (
-            trace_recorder
-            .summary()
-        )
+            trace_summary = trace_recorder.summary()
 
-        print(
-            "\n[Trace Summary]"
-        )
+            print("\n[Trace Summary]")
 
-        print(
-            "Task ID: "
-            f"{trace_summary.task_id}"
-        )
+            print(f"Task ID: {trace_summary.task_id}")
 
-        print(
-            "Events: "
-            f"{trace_summary.total_events}"
-        )
+            print(f"Events: {trace_summary.total_events}")
 
-        print(
-            "LLM Calls: "
-            f"{trace_summary.llm_calls}"
-        )
+            print(f"LLM Calls: {trace_summary.llm_calls}")
 
-        print(
-            "Tool Calls: "
-            f"{trace_summary.tool_calls}"
-        )
+            print(f"Tool Calls: {trace_summary.tool_calls}")
 
-        print(
-            "Edits: "
-            f"{trace_summary.edits}"
-        )
+            print(f"Edits: {trace_summary.edits}")
 
-        print(
-            "Validation Runs: "
-            f"{trace_summary.validation_runs}"
-        )
+            print(f"Validation Runs: {trace_summary.validation_runs}")
 
-        print(
-            "Rollbacks: "
-            f"{trace_summary.rollbacks}"
-        )
+            print(f"Rollbacks: {trace_summary.rollbacks}")
 
-        print(
-            "Replans: "
-            f"{trace_summary.replans}"
-        )
+            print(f"Replans: {trace_summary.replans}")
 
-        print(
-            "Safety Blocks: "
-            f"{trace_summary.safety_blocks}"
-        )
+            print(f"Safety Blocks: {trace_summary.safety_blocks}")
 
         # =====================================================
         # Long-Term Memory
         # =====================================================
 
-        print(
-            "[Long-Term Memory] "
-            f"{len(long_term_memory.records)} "
-            "stored task experiences."
-        )
+            print(
+                "[Long-Term Memory] "
+                f"{len(long_term_memory.records)} stored task experiences."
+            )
 
         # =====================================================
         # Persist Latest Trace
@@ -476,5 +448,11 @@ def main():
 
 
 if __name__ == "__main__":
-
-    main()
+    parser = argparse.ArgumentParser(description="MiniCodex interactive coding agent")
+    parser.add_argument(
+        "--output",
+        choices=("normal", "verbose", "debug"),
+        default="normal",
+        help="terminal detail level (default: normal)",
+    )
+    main(output_level=parser.parse_args().output)

@@ -1,3 +1,5 @@
+"""Explicit action progress and comparable validation trends."""
+
 import json
 
 from dataclasses import dataclass

@@ -133,6 +133,7 @@ class WorkingSummary:
         tool_name: str,
         arguments: dict,
         result,
+        revision: int | None = None,
     ) -> None:
 
         if not isinstance(
@@ -163,6 +164,7 @@ class WorkingSummary:
                 result=(
                     result
                 ),
+                revision=revision,
             )
 
         except Exception:
@@ -319,6 +321,9 @@ class WorkingSummary:
             if result.success:
 
                 if path:
+                    self.items[:] = [item for item in self.items if path not in item]
+
+                if path:
 
                     self.add(
                         "Modified file successfully: "
@@ -379,12 +384,12 @@ class WorkingSummary:
 
             return
 
-        if tool_name == "validate_static_web":
+        if tool_name in {"validate_static_web", "validate_browser_app"}:
             outcome = str(
                 result.data.get("outcome", "inconclusive")
             )
             self.add(
-                f"Static web validation for {path or 'unknown path'} "
+                f"Web validation for {path or 'unknown path'} "
                 f"was {outcome}."
             )
             return

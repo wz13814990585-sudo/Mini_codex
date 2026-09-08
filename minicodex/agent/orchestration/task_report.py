@@ -15,10 +15,11 @@ class TaskReportBuilder:
         outcome: TaskOutcome,
         reason: str = "",
     ) -> str:
+        debug = str(getattr(getattr(agent, "output_level", "normal"), "value", getattr(agent, "output_level", "normal"))) == "debug"
         if outcome == TaskOutcome.BLOCKED:
-            return self.blocked(reason)
+            return self.blocked(reason, debug=debug)
         if outcome == TaskOutcome.INCOMPLETE:
-            return self.incomplete(agent, reason)
+            return self.incomplete(agent, reason, debug=debug)
 
         lines = [
             (
@@ -39,18 +40,18 @@ class TaskReportBuilder:
             lines.extend(["", "Validation:"])
             lines.extend(validation_lines)
 
-        # The enum value is retained as a stable machine-readable token while
-        # the upper-case name remains easy to scan in terminal output.
-        lines.extend(["", "Outcome:", f"{outcome.name} ({outcome.value})"])
+        if debug:
+            lines.extend(["", "Outcome:", f"{outcome.name} ({outcome.value})"])
         return "\n".join(lines)
 
-    def blocked(self, reason: str) -> str:
+    def blocked(self, reason: str, *, debug: bool = False) -> str:
         concrete = str(reason or "A deterministic blocker prevented completion.").strip()
-        return "\n".join(
-            ["Task blocked.", "", "Reason:", f"- {concrete}", "", "Outcome:", "BLOCKED"]
-        )
+        lines = ["Task blocked.", "", "Reason:", f"- {concrete}"]
+        if debug:
+            lines.extend(["", "Outcome:", "BLOCKED"])
+        return "\n".join(lines)
 
-    def incomplete(self, agent, reason: str) -> str:
+    def incomplete(self, agent, reason: str, *, debug: bool = False) -> str:
         lines = [
             "Task incomplete.",
             "",
@@ -61,7 +62,8 @@ class TaskReportBuilder:
         if changed:
             lines.extend(["", "Changed before stopping:"])
             lines.extend(f"- {path}" for path in changed)
-        lines.extend(["", "Outcome:", "INCOMPLETE"])
+        if debug:
+            lines.extend(["", "Outcome:", "INCOMPLETE"])
         return "\n".join(lines)
 
     @staticmethod

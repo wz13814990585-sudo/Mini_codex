@@ -11,6 +11,7 @@ import time
 from ..agent.completion import (
     CompletionGate,
 )
+from ..agent.routing import TaskIntent
 
 from .checks import (
     EvaluationCheckRunner,
@@ -389,10 +390,16 @@ class EvaluationHarness:
                 <= case.max_duration_seconds
             )
 
-        completion_ready = (
-            completion.can_complete
-            and plan_completed
-        )
+        route = getattr(agent, "execution_route", None)
+        intent = getattr(route, "intent", TaskIntent.MODIFY)
+        final_outcome = metric("final_outcome")
+        edit_count = int(metric("edit_tool_count", 0) or 0)
+        if intent == TaskIntent.INSPECT_ONLY:
+            completion_ready = final_outcome == "inspected" and edit_count == 0
+        elif intent == TaskIntent.INFORMATIONAL:
+            completion_ready = final_outcome == "informational_answer" and edit_count == 0
+        else:
+            completion_ready = completion.can_complete and plan_completed
 
         if not (
             case.require_completion_ready
@@ -454,6 +461,7 @@ class EvaluationHarness:
                 llm_calls
             ),
             execution_mode=metric("execution_mode"),
+            intent=metric("intent", getattr(intent, "value", intent)),
             tool_call_count=int(metric("tool_call_count", 0) or 0),
             inspection_tool_count=int(metric("inspection_tool_count", 0) or 0),
             edit_tool_count=int(metric("edit_tool_count", 0) or 0),
@@ -466,9 +474,15 @@ class EvaluationHarness:
             replan_count=int(metric("replan_count", 0) or 0),
             rollback_count=int(metric("rollback_count", 0) or 0),
             max_steps_exhausted=bool(metric("max_steps_exhausted", False)),
-            final_outcome=metric("final_outcome"),
+            final_outcome=final_outcome,
             final_completion_reason=metric("final_completion_reason"),
             final_reason_code=metric("final_reason_code"),
+            false_completion=bool(
+                intent == TaskIntent.MODIFY
+                and final_outcome in {"edited_and_validated", "already_satisfied"}
+                and not (completion.can_complete and plan_completed)
+            ),
+            wrong_edit=bool(intent != TaskIntent.MODIFY and edit_count > 0),
             duration_seconds=(
                 duration
             ),

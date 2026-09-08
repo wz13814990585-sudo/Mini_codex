@@ -7,6 +7,7 @@ from ..agent.completion_policy import TaskCompletionPolicy
 from ..agent.execution_mode import ExecutionMode
 from ..agent.execution_policy import policy_for
 from ..agent.finalization import FinalizationController
+from ..agent.progress import ProgressKind, ProgressSignal
 from ..agent.state import AgentPlan, PlanStep
 from ..agent.step_evidence import EvidenceStrength, StepEvidenceStore
 from ..agent.task_router import TaskRouter
@@ -32,7 +33,9 @@ def test_action_controller_bounds_inspection_and_keeps_action_tools_open():
 
     for _ in range(policy.max_inspection_calls):
         assert controller.restriction_reason("read_file", {}, policy) is None
-        assert controller.observe_action("read_file", state()) is False
+        assert controller.observe_action(
+            "read_file", state(), ProgressSignal(ProgressKind.OBSERVATION)
+        ) is False
 
     assert controller.restriction_reason("search_code", {}, policy)
     assert controller.action_required is True
@@ -48,15 +51,23 @@ def test_edit_resets_pressure_but_validation_revision_alone_does_not():
     policy = policy_for(ExecutionMode.FAST)
     controller.reset(state())
     for _ in range(policy.max_inspection_calls):
-        controller.observe_action("search_code", state())
+        controller.observe_action(
+            "search_code", state(), ProgressSignal(ProgressKind.OBSERVATION)
+        )
     controller.update_pressure(policy)
     assert controller.action_required is True
 
-    assert controller.observe_action("write_file", state(edit=1)) is True
-    assert controller.action_required is False
-    controller.observe_action("read_file", state(edit=1))
     assert controller.observe_action(
-        "validate_static_web", state(edit=1, validation=1)
+        "write_file", state(edit=1), ProgressSignal(ProgressKind.ADVANCED)
+    ) is True
+    assert controller.action_required is False
+    controller.observe_action(
+        "read_file", state(edit=1), ProgressSignal(ProgressKind.OBSERVATION)
+    )
+    assert controller.observe_action(
+        "validate_static_web",
+        state(edit=1, validation=1),
+        ProgressSignal(ProgressKind.OBSERVATION),
     ) is False
     assert controller.consecutive_no_state_change == 2
 
@@ -66,7 +77,9 @@ def test_repeated_observation_is_not_meaningful_progress():
     policy = policy_for(ExecutionMode.STANDARD)
     controller.reset(state())
     for _ in range(policy.max_no_progress_steps):
-        assert controller.observe_action("search_code", state()) is False
+        assert controller.observe_action(
+            "search_code", state(), ProgressSignal(ProgressKind.OBSERVATION)
+        ) is False
     assert controller.update_pressure(policy) is True
     assert controller.action_required is True
 

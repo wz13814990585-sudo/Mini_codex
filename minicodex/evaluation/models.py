@@ -122,6 +122,8 @@ class EvaluationResult:
 
     execution_mode: str | None = None
 
+    intent: str | None = None
+
     tool_call_count: int = 0
 
     inspection_tool_count: int = 0
@@ -147,6 +149,10 @@ class EvaluationResult:
     final_completion_reason: str | None = None
 
     final_reason_code: str | None = None
+
+    false_completion: bool = False
+
+    wrong_edit: bool = False
 
     duration_seconds: float = 0.0
 

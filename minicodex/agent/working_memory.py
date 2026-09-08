@@ -382,6 +382,7 @@ class WorkingMemory:
         tool_name: str,
         arguments: dict,
         result,
+        revision: int | None = None,
     ) -> None:
 
         if not isinstance(
@@ -508,6 +509,7 @@ class WorkingMemory:
                 path=(
                     path
                 ),
+                revision=revision,
                 metadata={
                     "start_line": (
                         start_line
@@ -630,11 +632,7 @@ class WorkingMemory:
                 path
             )
 
-            revision_value = (
-                data.get(
-                    "checkpoint_revision"
-                )
-            )
+            revision_value = revision if revision is not None else data.get("checkpoint_revision")
 
             try:
 

@@ -8,6 +8,7 @@ from ..agent.execution_policy import policy_for
 from ..agent.finalization import FinalizationController
 from ..agent.long_term_memory import LongTermMemoryStore
 from ..agent.long_term_memory_runtime import attach_long_term_memory
+from ..agent.progress import ProgressKind, ProgressSignal
 from ..tools.registry import ToolRegistry
 
 
@@ -26,12 +27,16 @@ def test_action_controller_blocks_reconnaissance_but_allows_validation():
     policy = policy_for(ExecutionMode.FAST)
     controller.reset(state())
     for _ in range(policy.max_inspection_calls):
-        controller.observe_action("search_code", state())
+        controller.observe_action(
+            "search_code", state(), ProgressSignal(ProgressKind.OBSERVATION)
+        )
 
     assert controller.restriction_reason("search_code", {}, policy)
     assert controller.restriction_reason("validate_static_web", {}, policy) is None
 
-    controller.observe_action("write_file", state(edit=1))
+    controller.observe_action(
+        "write_file", state(edit=1), ProgressSignal(ProgressKind.ADVANCED)
+    )
     assert controller.action_required is False
     assert controller.consecutive_inspections == 0
 

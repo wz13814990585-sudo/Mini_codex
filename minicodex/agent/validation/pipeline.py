@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 
-from ..tools.results import ToolResult
+from ...tools.results import ToolResult
 
 
 # =============================================================
@@ -284,11 +284,12 @@ class ValidationPipeline:
         result: ToolResult,
     ) -> ValidationEvidence | None:
 
-        if tool_name == "validate_static_web":
+        if tool_name in {"validate_static_web", "validate_browser_app"}:
 
             evidence = self._from_static_web(
                 arguments=arguments,
                 result=result,
+                tool_name=tool_name,
             )
 
         elif tool_name == "run_command":
@@ -342,6 +343,7 @@ class ValidationPipeline:
         *,
         arguments: dict,
         result: ToolResult,
+        tool_name: str = "validate_static_web",
     ) -> ValidationEvidence:
         outcome_value = str(
             result.data.get(
@@ -368,7 +370,7 @@ class ValidationPipeline:
             failure_count = 0
 
         return ValidationEvidence(
-            tool_name="validate_static_web",
+            tool_name=tool_name,
             execution_succeeded=result.success,
             outcome=outcome,
             scope=ValidationScope.TARGETED,

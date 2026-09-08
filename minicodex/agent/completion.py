@@ -26,6 +26,7 @@ class CompletionStatus(
 
 class TaskOutcome(str, Enum):
     INFORMATIONAL_ANSWER = "informational_answer"
+    INSPECTED = "inspected"
     ALREADY_SATISFIED = "already_satisfied"
     EDITED_AND_VALIDATED = "edited_and_validated"
     BLOCKED = "blocked"

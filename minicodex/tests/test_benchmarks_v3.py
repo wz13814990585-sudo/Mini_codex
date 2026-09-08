@@ -208,7 +208,7 @@ def test_benchmark_hello_html_edits_validates_and_finishes(tmp_path):
     assert agent.execution_metrics.tool_call_count == 2
     assert agent.execution_metrics.calls_before_first_edit == 1
     assert agent.execution_metrics.final_outcome == "edited_and_validated"
-    assert "edited_and_validated" in result
+    assert "Outcome:" not in result
     assert all("complete_plan_step" not in schemas for schemas in llm.schemas)
     assert all("replan" not in schemas for schemas in llm.schemas)
 
@@ -239,7 +239,7 @@ def test_benchmark_existing_tetris_finishes_without_edit(tmp_path):
     assert agent.execution_metrics.inspection_tool_count == 1
     assert agent.execution_metrics.validation_tool_count == 1
     assert agent.execution_metrics.final_outcome == "already_satisfied"
-    assert "already_satisfied" in result
+    assert "Task already satisfied." in result
 
 
 def test_fast_validation_pass_does_not_request_another_llm_round(tmp_path):
@@ -317,7 +317,7 @@ def test_fast_immediate_completion_closes_remaining_provider_batch(tmp_path):
 
     assert llm.calls == 1
     assert trailing.calls == 0
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"
 
 
 def test_benchmark_readme_is_planless_and_skips_full_regression(tmp_path):
@@ -352,7 +352,7 @@ def test_benchmark_readme_is_planless_and_skips_full_regression(tmp_path):
     assert llm.calls == 2
     assert agent.execution_metrics.validation_tool_count == 1
     assert agent.validation_pipeline.state.full_passed is False
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"
 
 
 def test_benchmark_small_python_edit_reaches_action_and_targeted_validation(tmp_path):
@@ -394,4 +394,4 @@ def test_benchmark_small_python_edit_reaches_action_and_targeted_validation(tmp_
     assert llm.calls == 2
     assert agent.execution_metrics.calls_before_first_edit == 1
     assert agent.execution_metrics.final_outcome == "edited_and_validated"
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"

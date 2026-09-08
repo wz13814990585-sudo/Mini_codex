@@ -8,6 +8,7 @@ from enum import Enum
 from .completion import TaskOutcome
 from .execution_mode import ExecutionMode
 from .validation import ValidationOutcome
+from .routing import TaskIntent
 
 
 class AgentPhase(str, Enum):
@@ -32,6 +33,7 @@ class TaskState:
     """
 
     mode: ExecutionMode | None = None
+    intent: TaskIntent = TaskIntent.MODIFY
     phase: AgentPhase = AgentPhase.INSPECTING
     user_request: str = ""
     final_response_mode: str = "task_report"
@@ -87,7 +89,7 @@ class TaskState:
             self.phase = AgentPhase.FIXING
         elif tool_name in {"patch_file", "replace_lines", "replace_symbol", "write_file"}:
             self.phase = AgentPhase.VALIDATING if success else AgentPhase.ACTING
-        elif tool_name in {"run_tests", "validate_static_web"} or (
+        elif tool_name in {"run_tests", "validate_static_web", "validate_browser_app"} or (
             tool_name == "run_command" and validation_outcome is not None
         ):
             if validation_outcome == ValidationOutcome.FAILED:
@@ -128,6 +130,7 @@ class TaskState:
             self.phase = AgentPhase.BLOCKED
         elif outcome in {
             TaskOutcome.INFORMATIONAL_ANSWER,
+            TaskOutcome.INSPECTED,
             TaskOutcome.ALREADY_SATISFIED,
             TaskOutcome.EDITED_AND_VALIDATED,
         }:

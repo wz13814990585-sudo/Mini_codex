@@ -44,6 +44,7 @@ def resolve_tool_restriction(agent, tool_name: str, arguments: dict) -> ToolRest
             str(arguments.get("package", "")),
             target_paths=tuple(getattr(route, "target_paths", ()) or ()),
         )
+        agent.latest_dependency_resolution = resolution
         if not resolution.install_allowed:
             return ToolRestriction(
                 "dependency_manifest_required",

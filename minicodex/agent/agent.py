@@ -1,5 +1,8 @@
 import json
 import re
+import io
+import sys
+from contextlib import redirect_stdout
 
 from .checkpoint import (
     CheckpointManager,
@@ -16,6 +19,7 @@ from .action_controller import (
 from .completion_policy import TaskCompletionPolicy
 from .dependency_resolver import DependencyResolver
 from .edit_retry import EditRetryPolicy
+from .editing import RollbackCoordinator
 from .execution_mode import ExecutionMode
 from .execution_policy import ExecutionPolicy, policy_for
 from .finalization import FinalizationController
@@ -32,7 +36,9 @@ from .orchestration import (
     ToolBatchRunner,
     TurnBuilder,
     ValidationOrchestrator,
+    PlanOrchestrator,
 )
+from .observability import OutputLevel
 from .metrics import (
     ExecutionMetrics,
     TokenMetrics,
@@ -61,7 +67,7 @@ from .state import (
     AgentPlan,
 )
 from .step_evidence import StepEvidenceStore
-from .task_router import TaskRouter
+from .task_router import TaskIntent, TaskRouter
 from .task_state import AgentPhase, TaskState
 from .tool_executor import (
     ToolExecutor,
@@ -98,6 +104,7 @@ class MiniCodexAgent:
         max_no_progress_steps: int = 5,
         task_router: TaskRouter | None = None,
         regression_policy: RegressionPolicy | None = None,
+        output_level: str | OutputLevel = OutputLevel.NORMAL,
     ):
 
         self.llm = llm
@@ -108,6 +115,8 @@ class MiniCodexAgent:
             0.0,
             float(status_interval_seconds),
         )
+        self.output_level = OutputLevel.parse(output_level)
+        self._normal_progress_stream = None
 
         # =====================================================
         # Shared Workspace
@@ -344,12 +353,16 @@ class MiniCodexAgent:
         self.task_state = TaskState()
         self.edit_retry = EditRetryPolicy()
         self.dependency_resolver = DependencyResolver(self.workspace)
+        self.latest_dependency_resolution = None
+        self.latest_symbol_recovery_paths: tuple[str, ...] = ()
         self.relevant_path_resolver = RelevantPathResolver(self.workspace)
         self.validation_selector = ValidationSelector(self.workspace)
         self.completion_handler = CompletionHandler()
         self.turn_builder = TurnBuilder()
         self.tool_batch_runner = ToolBatchRunner()
-        self.validation_orchestrator = ValidationOrchestrator()
+        self.rollback_coordinator = RollbackCoordinator()
+        self.validation_orchestrator = ValidationOrchestrator(self.rollback_coordinator)
+        self.plan_orchestrator = PlanOrchestrator()
         self.final_response_mode = FinalResponseMode.TASK_REPORT
         self.replan_count = 0
 
@@ -433,10 +446,11 @@ class MiniCodexAgent:
             if getattr(step.status, "value", step.status) == "completed"
         )
         state = self.task_state
+        route = self.execution_route
         state.mode = getattr(self.execution_policy, "mode", None)
+        state.intent = getattr(route, "intent", TaskIntent.MODIFY)
         state.user_request = self.active_user_request or ""
         state.final_response_mode = self.final_response_mode.value
-        route = self.execution_route
         state.target_paths = tuple(getattr(route, "target_paths", ()) or ())
         state.relevant_paths = self.relevant_path_resolver.resolve(self).paths
         state.edit_revision = validation_state.edit_revision
@@ -487,6 +501,28 @@ class MiniCodexAgent:
         use_planning: bool | None = None,
         policy: ExecutionPolicy | None = None,
     ) -> str:
+        if self.output_level in {OutputLevel.VERBOSE, OutputLevel.DEBUG}:
+            return self._run_impl(user_input, use_planning=use_planning, policy=policy)
+        # Legacy control-plane diagnostics remain available in verbose/debug.
+        # Normal product use exposes only small user-facing action events.
+        self._normal_progress_stream = sys.stdout
+        try:
+            with redirect_stdout(io.StringIO()):
+                return self._run_impl(user_input, use_planning=use_planning, policy=policy)
+        finally:
+            self._normal_progress_stream = None
+
+    def emit_normal_progress(self, message: str) -> None:
+        stream = self._normal_progress_stream
+        if stream is not None:
+            print(str(message).strip(), file=stream, flush=True)
+
+    def _run_impl(
+        self,
+        user_input: str,
+        use_planning: bool | None = None,
+        policy: ExecutionPolicy | None = None,
+    ) -> str:
 
         self.active_user_request = (
             user_input
@@ -499,8 +535,7 @@ class MiniCodexAgent:
             policy=policy,
         )
         self.task_requires_validation = bool(
-            self.execution_route
-            and self.execution_route.requires_coding_action
+            self.execution_route and self.execution_route.intent == TaskIntent.MODIFY
         )
         self.final_response_mode = self.completion_handler.response_mode(self)
         # FAST is structurally planless. A legacy caller cannot force the
@@ -547,14 +582,22 @@ class MiniCodexAgent:
 
         self.token_metrics.reset()
 
-        self.execution_metrics.reset(self.execution_policy.mode.value)
+        self.execution_metrics.reset(
+            self.execution_policy.mode.value,
+            intent=self.execution_route.intent.value,
+        )
 
         self.edit_retry.reset()
+
+        self.latest_dependency_resolution = None
+
+        self.latest_symbol_recovery_paths = ()
 
         self.completion_handler.reset()
 
         self.task_state = TaskState(
             mode=self.execution_policy.mode,
+            intent=self.execution_route.intent,
             phase=AgentPhase.INSPECTING,
             user_request=user_input,
             final_response_mode=self.final_response_mode.value,
@@ -665,7 +708,24 @@ class MiniCodexAgent:
     def get_tool_schemas(self) -> list[dict]:
         """Expose only mode-relevant tools without mutating the Registry."""
 
-        schemas = self.registry.get_schemas()
+        intent = getattr(self.execution_route, "intent", TaskIntent.MODIFY)
+        if intent == TaskIntent.INFORMATIONAL:
+            # File-specific explanations may inspect the workspace; general
+            # questions do not need tool access.
+            allowed_capabilities = (
+                {"filesystem.read", "code.search"}
+                if getattr(self.execution_route, "target_paths", ())
+                else set()
+            )
+            return self._schemas_for_capabilities(allowed_capabilities) if allowed_capabilities else []
+        if intent == TaskIntent.INSPECT_ONLY:
+            inspect_capabilities = {
+                "filesystem.read", "code.search", "git.inspect", "test.run",
+                "validation.static_web", "validation.browser", "process.run",
+            }
+            schemas = self._schemas_for_capabilities(inspect_capabilities)
+        else:
+            schemas = self.registry.get_schemas()
         policy = self.execution_policy
         allowed = getattr(policy, "exposed_tool_names", None)
         if allowed is None:
@@ -675,6 +735,23 @@ class MiniCodexAgent:
             for schema in schemas
             if schema.get("function", {}).get("name") in allowed
         ]
+
+    def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
+        """Capability filtering with compatibility for legacy test registries."""
+
+        try:
+            return self.registry.get_schemas(capabilities=capabilities)
+        except TypeError:
+            from ..tools.registry import ToolRegistry
+
+            schemas = self.registry.get_schemas()
+            fallback = getattr(ToolRegistry, "_NAME_CAPABILITIES", {})
+            return [
+                schema
+                for schema in schemas
+                if set(fallback.get(schema.get("function", {}).get("name"), ()))
+                & capabilities
+            ]
 
     # =========================================================
     # Repository Map Refresh
@@ -1235,6 +1312,10 @@ class MiniCodexAgent:
             selection = self.validation_selector.select(
                 target_paths=targets,
                 registered_tools=registered,
+                revision=validation.edit_revision,
+                desired_purpose=(
+                    "acceptance" if not validation.acceptance_passed else "regression"
+                ),
             )
             action_text = (
                 self.action_controller.INSTRUCTION

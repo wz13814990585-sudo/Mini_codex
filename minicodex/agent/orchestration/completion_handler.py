@@ -9,10 +9,12 @@ from ..completion import TaskOutcome
 from .orchestration_transitions import completion_transition, record_task_outcome
 from .task_report import TaskReportBuilder
 from ..reason_codes import ReasonCode
+from ..routing import TaskIntent
 
 
 class FinalResponseMode(str, Enum):
     INFORMATIONAL_ANSWER = "informational_answer"
+    INSPECTION_REPORT = "inspection_report"
     TASK_REPORT = "task_report"
 
 
@@ -41,11 +43,12 @@ class CompletionHandler:
     @staticmethod
     def response_mode(agent) -> FinalResponseMode:
         route = getattr(agent, "execution_route", None)
-        return (
-            FinalResponseMode.TASK_REPORT
-            if bool(getattr(route, "requires_coding_action", True))
-            else FinalResponseMode.INFORMATIONAL_ANSWER
-        )
+        intent = getattr(route, "intent", TaskIntent.MODIFY)
+        if intent == TaskIntent.INFORMATIONAL:
+            return FinalResponseMode.INFORMATIONAL_ANSWER
+        if intent == TaskIntent.INSPECT_ONLY:
+            return FinalResponseMode.INSPECTION_REPORT
+        return FinalResponseMode.TASK_REPORT
 
     def handle_text_response(
         self,
@@ -54,11 +57,31 @@ class CompletionHandler:
         content: str,
         remaining_steps: int,
     ) -> CompletionHandleResult:
-        if self.response_mode(agent) == FinalResponseMode.INFORMATIONAL_ANSWER:
+        response_mode = self.response_mode(agent)
+        if response_mode == FinalResponseMode.INFORMATIONAL_ANSWER:
             record_task_outcome(
                 agent,
                 TaskOutcome.INFORMATIONAL_ANSWER,
                 "The request was classified as informational.",
+            )
+            return CompletionHandleResult(True, content)
+        if response_mode == FinalResponseMode.INSPECTION_REPORT:
+            route = getattr(agent, "execution_route", None)
+            metrics = getattr(agent, "execution_metrics", None)
+            needs_repo_inspection = bool(getattr(route, "target_paths", ()))
+            inspected = bool(getattr(metrics, "inspection_tool_count", 0))
+            if needs_repo_inspection and not inspected and remaining_steps > 0:
+                return CompletionHandleResult(
+                    False,
+                    followup_instruction=(
+                        "Inspect the requested repository target with read/search tools, "
+                        "then report findings without modifying files."
+                    ),
+                )
+            record_task_outcome(
+                agent,
+                TaskOutcome.INSPECTED,
+                "The inspect-only request was answered without workspace edits.",
             )
             return CompletionHandleResult(True, content)
 
@@ -119,6 +142,30 @@ class CompletionHandler:
 
     def build_task_report(self, agent, *, outcome: TaskOutcome, reason: str = "") -> str:
         return self.report_builder.build(agent, outcome=outcome, reason=reason)
+
+    def handle_incomplete(self, agent, *, reason: str) -> CompletionHandleResult:
+        record_task_outcome(agent, TaskOutcome.INCOMPLETE, reason)
+        return CompletionHandleResult(
+            True,
+            self.report_builder.build(agent, outcome=TaskOutcome.INCOMPLETE, reason=reason),
+        )
+
+    def handle_control_stop(
+        self,
+        agent,
+        *,
+        reason: str,
+        reason_code: ReasonCode | None = None,
+    ) -> CompletionHandleResult:
+        outcome = TaskOutcome.BLOCKED if reason_code == ReasonCode.BLOCKED else TaskOutcome.INCOMPLETE
+        record_task_outcome(agent, outcome, reason, reason_code)
+        return CompletionHandleResult(
+            True,
+            self.report_builder.build(agent, outcome=outcome, reason=reason),
+        )
+
+    def finish_ready(self, agent, decision) -> CompletionHandleResult:
+        return self._successful(agent, decision)
 
     def _successful(self, agent, decision) -> CompletionHandleResult:
         record_task_outcome(agent, decision.outcome, decision.reason)

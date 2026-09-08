@@ -8,6 +8,7 @@ class ExecutionMetrics:
     """Behavior metrics for one task; these never influence execution."""
 
     execution_mode: str | None = None
+    intent: str | None = None
     llm_call_count: int = 0
     tool_call_count: int = 0
     inspection_tool_count: int = 0
@@ -23,9 +24,12 @@ class ExecutionMetrics:
     final_outcome: str | None = None
     final_completion_reason: str | None = None
     final_reason_code: str | None = None
+    false_completion: bool = False
+    wrong_edit: bool = False
 
-    def reset(self, execution_mode: str | None = None) -> None:
+    def reset(self, execution_mode: str | None = None, *, intent: str | None = None) -> None:
         self.execution_mode = execution_mode
+        self.intent = intent
         self.llm_call_count = 0
         self.tool_call_count = 0
         self.inspection_tool_count = 0
@@ -41,6 +45,8 @@ class ExecutionMetrics:
         self.final_outcome = None
         self.final_completion_reason = None
         self.final_reason_code = None
+        self.false_completion = False
+        self.wrong_edit = False
 
     def record_tool(
         self,

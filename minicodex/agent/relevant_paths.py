@@ -45,8 +45,11 @@ class RelevantPathResolver:
         evidence = getattr(state, "latest_evidence", None)
         if evidence is not None:
             add(getattr(evidence, "path", None), "validation target")
-            for path in (getattr(evidence, "details", {}) or {}).get("failure_paths", ()):
+            details = getattr(evidence, "details", {}) or {}
+            for path in details.get("failure_paths", ()):
                 add(path, "validation failure")
+            for key in ("manifest", "dependency_manifest", "requirements_path"):
+                add(details.get(key), "dependency failure evidence")
 
         plan = getattr(agent, "active_plan", None)
         if plan is not None:
@@ -58,9 +61,17 @@ class RelevantPathResolver:
         if pending is not None:
             add(getattr(pending, "path", None), "stale edit target")
 
-        for manifest in ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"):
-            if (self.workspace / manifest).is_file():
-                add(manifest, "dependency configuration")
+        for path in getattr(agent, "latest_symbol_recovery_paths", ()) or ():
+            add(path, "symbol-search recovery")
+
+        dependency = getattr(agent, "latest_dependency_resolution", None)
+        if dependency is not None and getattr(dependency, "action", "") == "update_manifest_first":
+            add(getattr(dependency, "preferred_manifest", None), "requested dependency update")
+
+        if evidence is not None and details.get("failure_type") == "missing_dependency":
+            for manifest in ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"):
+                if (self.workspace / manifest).is_file():
+                    add(manifest, "dependency failure evidence")
 
         return RelevantPathSet(
             paths=tuple(reasons),

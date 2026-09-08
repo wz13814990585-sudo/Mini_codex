@@ -284,4 +284,5 @@ def test_final_reconciliation_can_finish_stale_plan_bookkeeping(tmp_path):
     result = run_agent_loop(agent, "Finish existing work")
 
     assert agent.active_plan.is_completed() is True
-    assert "edited_and_validated" in result
+    assert agent.execution_metrics.final_outcome == "edited_and_validated"
+    assert "Outcome:" not in result

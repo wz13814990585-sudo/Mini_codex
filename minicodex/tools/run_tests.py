@@ -537,6 +537,11 @@ def parse_pytest_output(
         stderr=stderr,
         workspace=workspace,
     )
+    combined_output = f"{stdout}\n{stderr}"
+    missing_dependency = re.search(
+        r"(?:ModuleNotFoundError:\s*No module named|ImportError:\s*No module named)\s*['\"]([^'\"]+)",
+        combined_output,
+    )
 
     return {
         "exit_code": (
@@ -567,6 +572,10 @@ def parse_pytest_output(
             failure_details
         ),
         "failure_paths": failure_paths,
+        "failure_type": "missing_dependency" if missing_dependency else (
+            "regression_failed" if exit_code else None
+        ),
+        "missing_module": missing_dependency.group(1) if missing_dependency else None,
         "stderr": (
             stderr_lines[
                 :20

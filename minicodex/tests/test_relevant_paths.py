@@ -55,3 +55,49 @@ def test_fixing_allows_targeted_read_of_traceback_path():
     assert controller.restriction_reason(
         "read_file", {"path": "README.md"}, policy_for(ExecutionMode.STANDARD)
     ) is not None
+
+
+def test_relevant_paths_add_manifest_only_for_dependency_evidence(tmp_path):
+    for relative in ("src/app.py", "pyproject.toml"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    agent = SimpleNamespace(
+        execution_route=SimpleNamespace(target_paths=("src/app.py",)),
+        git_awareness=None,
+        validation_pipeline=SimpleNamespace(
+            state=SimpleNamespace(
+                latest_evidence=SimpleNamespace(
+                    path="tests/test_app.py",
+                    details={"failure_type": "missing_dependency"},
+                )
+            )
+        ),
+        active_plan=None,
+        edit_retry=None,
+        latest_dependency_resolution=None,
+        latest_symbol_recovery_paths=(),
+    )
+
+    relevant = RelevantPathResolver(tmp_path).resolve(agent)
+
+    assert "pyproject.toml" in relevant.paths
+
+
+def test_relevant_paths_include_symbol_search_recovery_matches(tmp_path):
+    target = tmp_path / "src/worker.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("", encoding="utf-8")
+    agent = SimpleNamespace(
+        execution_route=SimpleNamespace(target_paths=()),
+        git_awareness=None,
+        validation_pipeline=SimpleNamespace(state=SimpleNamespace(latest_evidence=None)),
+        active_plan=None,
+        edit_retry=None,
+        latest_dependency_resolution=None,
+        latest_symbol_recovery_paths=("src/worker.py",),
+    )
+
+    relevant = RelevantPathResolver(tmp_path).resolve(agent)
+
+    assert relevant.reasons["src/worker.py"] == ("symbol-search recovery",)

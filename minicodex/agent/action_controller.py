@@ -29,7 +29,7 @@ class ActionController:
         {"write_file", "patch_file", "replace_lines", "replace_symbol"}
     )
     VALIDATION_TOOLS = frozenset(
-        {"validate_static_web", "run_tests"}
+        {"validate_static_web", "validate_browser_app", "run_tests"}
     )
     INSTRUCTION = (
         "You have enough context. Make a concrete edit, run the required "
@@ -82,17 +82,11 @@ class ActionController:
         self,
         tool_name: str,
         state: TaskState,
-        signal: ProgressSignal | None = None,
+        signal: ProgressSignal,
     ) -> bool:
         """Record one action and return whether it genuinely advanced work."""
 
         current_key = state.progress_key()
-        changed = self.last_progress_key is not None and current_key != self.last_progress_key
-        if signal is None:
-            signal = ProgressSignal(
-                ProgressKind.ADVANCED if changed else ProgressKind.OBSERVATION,
-                "Monotonic task state advanced." if changed else "No monotonic task state advanced.",
-            )
         self.last_state = state
         self.last_progress_key = current_key
         self.has_edit = state.edit_revision > 0
