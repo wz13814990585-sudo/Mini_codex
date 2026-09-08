@@ -99,6 +99,9 @@ class ReadFileTool(BaseTool):
                 ),
                 data={
                     "path": path,
+                    "start": 0,
+                    "end": 0,
+                    "total": 0,
                     "start_line": 0,
                     "end_line": 0,
                     "total_lines": 0,
@@ -117,6 +120,9 @@ class ReadFileTool(BaseTool):
                 ),
                 data={
                     "path": path,
+                    "start": start,
+                    "end": start - 1,
+                    "total": total,
                     "start_line": start,
                     "end_line": start - 1,
                     "total_lines": total,
@@ -152,6 +158,9 @@ class ReadFileTool(BaseTool):
             ),
             data={
                 "path": path,
+                "start": start,
+                "end": end,
+                "total": total,
                 "start_line": start,
                 "end_line": end,
                 "total_lines": total,

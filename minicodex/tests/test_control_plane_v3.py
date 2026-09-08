@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from ..agent.action_controller import ActionController, TaskProgressState
+from ..agent.action_controller import ActionController
 from ..agent.agent import MiniCodexAgent
 from ..agent.completion import CompletionStatus, TaskOutcome
 from ..agent.completion_policy import TaskCompletionPolicy
@@ -10,16 +10,17 @@ from ..agent.finalization import FinalizationController
 from ..agent.state import AgentPlan, PlanStep
 from ..agent.step_evidence import EvidenceStrength, StepEvidenceStore
 from ..agent.task_router import TaskRouter
+from ..agent.task_state import TaskState
 from ..tools.registry import ToolRegistry
 from ..tools.results import ToolResult
 
 
 def state(edit=0, validation=0, completed=0, plan=0, rollback=0):
-    return TaskProgressState(
+    return TaskState(
         edit_revision=edit,
-        validation_version=validation,
-        completed_plan_steps=completed,
-        plan_version=plan,
+        validation_revision=validation,
+        completed_plan_steps=tuple(range(completed)),
+        plan_revision=plan,
         rollback_revision=rollback,
     )
 

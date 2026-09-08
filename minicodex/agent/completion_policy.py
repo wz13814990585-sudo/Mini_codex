@@ -11,6 +11,7 @@ from .completion import (
     TaskOutcome,
 )
 from .regression_policy import RegressionRequirement
+from .task_state import AgentPhase
 
 
 class TaskCompletionPolicy:
@@ -51,6 +52,15 @@ class TaskCompletionPolicy:
             allow_already_satisfied=True,
         )
 
+        task_state = getattr(agent, "task_state", None)
+        if task_state is not None and task_state.phase == AgentPhase.BLOCKED:
+            return replace(
+                decision,
+                status=CompletionStatus.NOT_READY,
+                outcome=TaskOutcome.BLOCKED,
+                reason="The task is blocked by a concrete external or safety constraint.",
+            )
+
         plan = getattr(agent, "active_plan", None)
         plan_required = bool(getattr(policy, "use_plan", plan is not None))
         if (
@@ -68,4 +78,6 @@ class TaskCompletionPolicy:
                     "outcome plan still has unfinished steps."
                 ),
             )
+        if decision.can_complete and task_state is not None:
+            task_state.mark_finalizing()
         return decision

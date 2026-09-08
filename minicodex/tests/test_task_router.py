@@ -29,6 +29,24 @@ from ..agent.task_router import TaskRouter
             "Refactor MiniCodex async runtime and cancellation architecture.",
             ExecutionMode.COMPLEX,
         ),
+        ("Change the button color in try_code/index.html.", ExecutionMode.FAST),
+        ("Fix a simple Python bug in helper.py.", ExecutionMode.FAST),
+        (
+            "Fix the existing Tetris implementation in try_code/tetris.html.",
+            ExecutionMode.FAST,
+        ),
+        (
+            "Implement a feature across app/a.py app/b.py and tests/test_a.py.",
+            ExecutionMode.STANDARD,
+        ),
+        (
+            "Diagnose and fix a medium bug with focused regression tests.",
+            ExecutionMode.STANDARD,
+        ),
+        (
+            "Refactor validation architecture and completion routing.",
+            ExecutionMode.COMPLEX,
+        ),
     ],
 )
 def test_benchmark_routing(task_text, expected):

@@ -136,24 +136,25 @@ def test_replace_lines_rejects_stale_expected_text(
         workspace=tmp_path
     )
 
-    with pytest.raises(
-        ValueError,
-        match="no longer matches",
-    ):
+    result = tool.execute(
+        path="demo.py",
+        start_line=1,
+        end_line=2,
+        expected_text=(
+            "def run():\n"
+            "    return 1"
+        ),
+        new_text=(
+            "def run():\n"
+            "    return 2"
+        ),
+    )
 
-        tool.execute(
-            path="demo.py",
-            start_line=1,
-            end_line=2,
-            expected_text=(
-                "def run():\n"
-                "    return 1"
-            ),
-            new_text=(
-                "def run():\n"
-                "    return 2"
-            ),
-        )
+    assert result.success is False
+    assert result.data["failure_type"] == "stale_context"
+    assert result.data["path"] == "demo.py"
+    assert result.data["changed"] is False
+    assert file_path.read_text() == "def run():\n    return 99\n"
 
 
 def test_replace_lines_rejects_invalid_range(

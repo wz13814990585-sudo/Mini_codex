@@ -6,6 +6,7 @@ from ..agent.state import (
     PlanStep,
     StepStatus,
 )
+from ..agent.metrics import ExecutionMetrics
 from ..evaluation import (
     EvaluationCase,
     EvaluationCheck,
@@ -126,6 +127,19 @@ class FakeAgent:
             )
         )
 
+        self.execution_metrics = ExecutionMetrics(
+            execution_mode="standard",
+            llm_call_count=2,
+            tool_call_count=4,
+            inspection_tool_count=1,
+            edit_tool_count=1,
+            validation_tool_count=2,
+            calls_before_first_edit=2,
+            calls_before_first_validation=2,
+            final_outcome="edited_and_validated",
+            final_completion_reason="ready",
+        )
+
         self.active_plan = (
             AgentPlan(
                 goal="test",
@@ -244,6 +258,11 @@ def test_successful_evaluation_case(
         result.llm_calls
         == 2
     )
+
+    assert result.execution_mode == "standard"
+    assert result.tool_call_count == 4
+    assert result.calls_before_first_validation == 2
+    assert result.final_outcome == "edited_and_validated"
 
 
 # =============================================================

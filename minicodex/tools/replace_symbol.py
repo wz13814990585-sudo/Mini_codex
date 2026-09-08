@@ -213,13 +213,24 @@ class ReplaceSymbolTool(
                     "\n"
                 )
             ):
-
-                raise ValueError(
-                    (
-                        "The current symbol source no longer "
-                        "matches expected_text. "
-                        "Re-read the symbol before editing."
-                    )
+                return ToolResult(
+                    success=False,
+                    summary=(
+                        f"Symbol replacement context is stale for "
+                        f"{target.qualified_name}."
+                    ),
+                    data={
+                        "path": target.path,
+                        "checkpoint_id": None,
+                        "symbol": target.qualified_name,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "changed": False,
+                        "edit_kind": "symbol",
+                        "failure_type": "stale_context",
+                        "retry_action": "read_target_region_then_retry_once",
+                    },
+                    error="The current symbol no longer matches expected_text.",
                 )
 
         # =====================================================
@@ -326,6 +337,8 @@ class ReplaceSymbolTool(
                 "path": (
                     target.path
                 ),
+                "checkpoint_id": None,
+                "edit_kind": "symbol",
                 "old_start_line": (
                     start_line
                 ),

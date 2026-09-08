@@ -2,18 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class TaskProgressState:
-    """Monotonic task facts; observations are deliberately excluded."""
-
-    edit_revision: int
-    validation_version: int
-    completed_plan_steps: int
-    plan_version: int
-    rollback_revision: int
+from .task_state import AgentPhase, TaskState
 
 
 class ActionController:
@@ -49,8 +38,9 @@ class ActionController:
     def __init__(self) -> None:
         self.reset()
 
-    def reset(self, state: TaskProgressState | None = None) -> None:
+    def reset(self, state: TaskState | None = None) -> None:
         self.last_state = state
+        self.last_progress_key = state.progress_key() if state is not None else None
         self.consecutive_inspections = 0
         self.consecutive_no_state_change = 0
         self.action_required = False
@@ -59,11 +49,13 @@ class ActionController:
         self.acceptance_missing = True
         self.current_mode = None
         self.remaining_budget: int | None = None
+        self.phase = getattr(state, "phase", AgentPhase.INSPECTING)
+        self.target_paths = tuple(getattr(state, "target_paths", ()) or ())
 
     def update_context(
         self,
         *,
-        state: TaskProgressState,
+        state: TaskState,
         policy,
         remaining_budget: int,
         acceptance_missing: bool,
@@ -72,16 +64,22 @@ class ActionController:
 
         if self.last_state is None:
             self.last_state = state
+        if self.last_progress_key is None:
+            self.last_progress_key = state.progress_key()
         self.has_edit = state.edit_revision > 0
         self.acceptance_missing = bool(acceptance_missing)
         self.current_mode = getattr(policy, "mode", None)
         self.remaining_budget = max(0, int(remaining_budget))
+        self.phase = state.phase
+        self.target_paths = state.target_paths
 
-    def observe_action(self, tool_name: str, state: TaskProgressState) -> bool:
+    def observe_action(self, tool_name: str, state: TaskState) -> bool:
         """Record one completed tool action and return state-change truth."""
 
-        changed = self.last_state is not None and state != self.last_state
+        current_key = state.progress_key()
+        changed = self.last_progress_key is not None and current_key != self.last_progress_key
         self.last_state = state
+        self.last_progress_key = current_key
         self.has_edit = state.edit_revision > 0
 
         if changed:
@@ -98,7 +96,7 @@ class ActionController:
         return False
 
     def update_pressure(self, policy) -> bool:
-        inspection_limit = getattr(policy, "max_inspection_calls", None)
+        inspection_limit = self._inspection_limit(policy)
         no_change_limit = getattr(policy, "max_no_progress_steps", None)
         should_require = bool(
             (
@@ -126,6 +124,35 @@ class ActionController:
 
         self.current_mode = getattr(policy, "mode", None)
 
+        if self.phase == AgentPhase.FINALIZING and tool_name in self.INSPECTION_TOOLS:
+            return (
+                "The task is finalizing. Only a necessary edit, missing "
+                "validation, plan completion, or a concrete blocker is allowed."
+            )
+        if self.phase == AgentPhase.VALIDATING and tool_name in self.INSPECTION_TOOLS:
+            return (
+                "The current revision is ready for validation. Run the relevant "
+                "validator instead of unrelated reconnaissance."
+            )
+        if self.phase == AgentPhase.FIXING:
+            if tool_name in self.INSPECTION_TOOLS - {"read_file"}:
+                return (
+                    "Validation failed. Inspect at most one targeted source region, "
+                    "then make the fix. Broad reconnaissance is unavailable."
+                )
+            if tool_name == "read_file" and self.consecutive_inspections >= 1:
+                return (
+                    "The targeted failure context has already been inspected. "
+                    "Make a concrete fix or report a blocker."
+                )
+            if tool_name == "read_file" and self.target_paths:
+                path = str((arguments or {}).get("path", "") or "").strip()
+                if path not in self.target_paths:
+                    return (
+                        "FIXING permits one targeted read of the requested source "
+                        f"({', '.join(self.target_paths)}), not {path or 'an unspecified path'}."
+                    )
+
         if tool_name == "complete_plan_step" and not getattr(
             policy, "use_plan", False
         ):
@@ -151,7 +178,7 @@ class ActionController:
                 "FAST task. Run one targeted acceptance validation instead."
             )
 
-        inspection_limit = getattr(policy, "max_inspection_calls", None)
+        inspection_limit = self._inspection_limit(policy)
         next_inspection_exceeds_budget = bool(
             inspection_limit is not None
             and tool_name in self.INSPECTION_TOOLS
@@ -181,3 +208,13 @@ class ActionController:
         if not self.action_required:
             self.action_required = True
             self.action_required_trigger_count += 1
+
+    def _inspection_limit(self, policy) -> int | None:
+        configured = getattr(policy, "max_inspection_calls", None)
+        if self.phase == AgentPhase.INSPECTING:
+            return min(configured, 3) if configured is not None else 3
+        if self.phase in {AgentPhase.ACTING, AgentPhase.FIXING}:
+            return 1
+        if self.phase in {AgentPhase.VALIDATING, AgentPhase.FINALIZING}:
+            return 0
+        return configured

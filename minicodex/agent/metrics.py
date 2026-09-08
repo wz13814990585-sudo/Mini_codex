@@ -8,25 +8,35 @@ class ExecutionMetrics:
     """Behavior metrics for one task; these never influence execution."""
 
     execution_mode: str | None = None
+    llm_call_count: int = 0
     tool_call_count: int = 0
     inspection_tool_count: int = 0
     edit_tool_count: int = 0
     validation_tool_count: int = 0
     calls_before_first_edit: int | None = None
+    calls_before_first_validation: int | None = None
     replan_count: int = 0
     action_required_trigger_count: int = 0
+    rollback_count: int = 0
+    max_steps_exhausted: bool = False
+    total_prompt_tokens: int = 0
     final_outcome: str | None = None
     final_completion_reason: str | None = None
 
     def reset(self, execution_mode: str | None = None) -> None:
         self.execution_mode = execution_mode
+        self.llm_call_count = 0
         self.tool_call_count = 0
         self.inspection_tool_count = 0
         self.edit_tool_count = 0
         self.validation_tool_count = 0
         self.calls_before_first_edit = None
+        self.calls_before_first_validation = None
         self.replan_count = 0
         self.action_required_trigger_count = 0
+        self.rollback_count = 0
+        self.max_steps_exhausted = False
+        self.total_prompt_tokens = 0
         self.final_outcome = None
         self.final_completion_reason = None
 
@@ -41,6 +51,7 @@ class ExecutionMetrics:
         from .action_controller import ActionController
 
         self.tool_call_count += 1
+        self.llm_call_count = max(self.llm_call_count, int(llm_call_count))
         if tool_name in ActionController.INSPECTION_TOOLS:
             self.inspection_tool_count += 1
         if tool_name in ActionController.EDIT_TOOLS and success:
@@ -53,12 +64,21 @@ class ExecutionMetrics:
             == "acceptance"
         ):
             self.validation_tool_count += 1
+            if self.calls_before_first_validation is None:
+                self.calls_before_first_validation = llm_call_count
         if tool_name == "replan":
             self.replan_count += 1
 
     def finish(self, outcome: str, reason: str) -> None:
         self.final_outcome = outcome
         self.final_completion_reason = reason
+
+    def observe_llm(self, *, call_count: int, total_prompt_tokens: int) -> None:
+        self.llm_call_count = max(0, int(call_count))
+        self.total_prompt_tokens = max(0, int(total_prompt_tokens))
+
+    def record_rollback(self) -> None:
+        self.rollback_count += 1
 
 
 @dataclass

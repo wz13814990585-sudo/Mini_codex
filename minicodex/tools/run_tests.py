@@ -247,6 +247,9 @@ class RunTestsTool(
                         .failure_type
                         or "sandbox_start"
                     ),
+                    "outcome": "inconclusive",
+                    "failed_count": None,
+                    "validation_summary": "Tests could not be started.",
                 },
                 error=(
                     sandbox_result.error
@@ -295,6 +298,9 @@ class RunTestsTool(
                     "failure_type": (
                         "sandbox_timeout"
                     ),
+                    "outcome": "inconclusive",
+                    "failed_count": None,
+                    "validation_summary": "Tests timed out.",
                 },
                 error=(
                     "pytest execution "
@@ -371,6 +377,11 @@ class RunTestsTool(
                     normalized_purpose
                 ),
                 **parsed,
+                "outcome": (
+                    "passed" if parsed["tests_passed"] else "failed"
+                ),
+                "failed_count": parsed["failed"] + parsed["errors"],
+                "validation_summary": summary,
                 "sandbox": (
                     sandbox_result
                     .sandbox_metadata()

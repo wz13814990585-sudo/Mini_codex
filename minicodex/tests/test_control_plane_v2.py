@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 
 from ..agent.agent import MiniCodexAgent
-from ..agent.action_controller import ActionController, TaskProgressState
+from ..agent.action_controller import ActionController
+from ..agent.task_state import TaskState
 from ..agent.execution_mode import ExecutionMode
 from ..agent.execution_policy import policy_for
 from ..agent.finalization import FinalizationController
@@ -11,11 +12,11 @@ from ..tools.registry import ToolRegistry
 
 
 def state(edit=0, validation=0):
-    return TaskProgressState(
+    return TaskState(
         edit_revision=edit,
-        completed_plan_steps=0,
-        validation_version=validation,
-        plan_version=0,
+        completed_plan_steps=(),
+        validation_revision=validation,
+        plan_revision=0,
         rollback_revision=0,
     )
 

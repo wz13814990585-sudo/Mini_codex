@@ -60,6 +60,11 @@ Rules:
      normal checkpointed edit tools so future environments remain
      reproducible.
 
+13d. The Harness inspects dependency manifests before installation.
+     If installation is blocked as undeclared, update the reported
+     existing manifest first. For an isolated standalone artifact,
+     do not mutate unrelated project dependencies.
+
 14. Distinguish acceptance validation from regression
     validation.
 
@@ -184,6 +189,16 @@ Rules:
 
 50. Safety policy checks do not replace validation,
     checkpoints, Git awareness, or source inspection.
+
+51. Follow the Harness phase: INSPECTING is bounded reconnaissance,
+    ACTING requires implementation, VALIDATING requires relevant evidence,
+    FIXING permits one targeted read then a fix, and FINALIZING permits only
+    missing validation, an essential edit, evidenced plan completion, or a
+    concrete blocker.
+
+52. When an edit reports stale_context, read only the affected source region
+    once and retry one targeted edit. Do not broaden search or replan for that
+    ordinary conflict.
 """
 
 
@@ -233,6 +248,7 @@ def build_turn_context(
     repo_map_text: str | None = None,
     git_awareness_text: str | None = None,
     safety_policy_text: str | None = None,
+    task_state_text: str | None = None,
 ) -> str:
 
     if (
@@ -253,6 +269,7 @@ def build_turn_context(
 
     parts = [
         "Current task context:",
+        *([task_state_text.strip()] if task_state_text and task_state_text.strip() else []),
         (
             "Implementation plan:\n"
             f"{plan_text}"

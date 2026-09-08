@@ -189,14 +189,25 @@ class ReplaceLinesTool(
                 current_text
                 != normalized_expected
             ):
-
-                raise ValueError(
-                    (
-                        "The current file content no longer "
-                        "matches expected_text for the requested "
-                        f"range {start}-{end}. "
-                        "Re-read the file before editing."
-                    )
+                return ToolResult(
+                    success=False,
+                    summary=(
+                        f"Line replacement context is stale for {path} "
+                        f"lines {start}-{end}."
+                    ),
+                    data={
+                        "path": path,
+                        "checkpoint_id": None,
+                        "start_line": start,
+                        "end_line": end,
+                        "changed": False,
+                        "edit_kind": "line_range",
+                        "failure_type": "stale_context",
+                        "retry_action": "read_target_region_then_retry_once",
+                    },
+                    error=(
+                        "The current line range no longer matches expected_text."
+                    ),
                 )
 
         # =====================================================
@@ -287,6 +298,8 @@ class ReplaceLinesTool(
             ),
             data={
                 "path": path,
+                "checkpoint_id": None,
+                "edit_kind": "line_range",
                 "old_start_line": start,
                 "old_end_line": end,
                 "new_start_line": start,

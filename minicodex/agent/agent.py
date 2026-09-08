@@ -12,9 +12,10 @@ from .context_budget import (
 )
 from .action_controller import (
     ActionController,
-    TaskProgressState,
 )
 from .completion_policy import TaskCompletionPolicy
+from .dependency_resolver import DependencyResolver
+from .edit_retry import EditRetryPolicy
 from .execution_mode import ExecutionMode
 from .execution_policy import ExecutionPolicy, policy_for
 from .finalization import FinalizationController
@@ -53,12 +54,14 @@ from .state import (
 )
 from .step_evidence import StepEvidenceStore
 from .task_router import TaskRouter
+from .task_state import AgentPhase, TaskState
 from .tool_executor import (
     ToolExecutor,
 )
 from .validation import (
     ValidationPipeline,
 )
+from .validation_selector import ValidationSelector
 from .working_summary import (
     WorkingSummary,
 )
@@ -329,6 +332,10 @@ class MiniCodexAgent:
         self.step_evidence = StepEvidenceStore()
         self.completion_policy = TaskCompletionPolicy()
         self.execution_metrics = ExecutionMetrics()
+        self.task_state = TaskState()
+        self.edit_retry = EditRetryPolicy()
+        self.dependency_resolver = DependencyResolver(self.workspace)
+        self.validation_selector = ValidationSelector()
         self.replan_count = 0
 
         self.plan_progress_reconciler = (
@@ -402,22 +409,35 @@ class MiniCodexAgent:
             + 1
         )
 
-    def task_progress_state(self) -> TaskProgressState:
+    def task_progress_state(self, remaining_steps: int | None = None) -> TaskState:
         plan = self.active_plan
         validation_state = self.validation_pipeline.state
-        return TaskProgressState(
-            edit_revision=validation_state.edit_revision,
-            completed_plan_steps=(
-                len(plan.completed_history) if plan is not None else 0
-            ),
-            validation_version=getattr(
-                validation_state,
-                "evidence_sequence",
-                0,
-            ),
-            plan_version=self.plan_version,
-            rollback_revision=self.rollback_revision,
+        completed = tuple(
+            step.id
+            for step in (plan.all_steps() if plan is not None else [])
+            if getattr(step.status, "value", step.status) == "completed"
         )
+        state = self.task_state
+        state.mode = getattr(self.execution_policy, "mode", None)
+        state.user_request = self.active_user_request or ""
+        route = self.execution_route
+        state.target_paths = tuple(getattr(route, "target_paths", ()) or ())
+        state.edit_revision = validation_state.edit_revision
+        state.validation_revision = getattr(validation_state, "evidence_sequence", 0)
+        state.rollback_revision = self.rollback_revision
+        state.plan_revision = self.plan_version
+        state.completed_plan_steps = completed
+        state.has_edit = validation_state.has_edit
+        state.acceptance_passed = validation_state.acceptance_passed
+        state.relevant_validation_passed = validation_state.targeted_passed
+        state.full_validation_passed = validation_state.full_passed
+        state.consecutive_inspections = self.action_controller.consecutive_inspections
+        state.consecutive_no_state_change = self.action_controller.consecutive_no_state_change
+        if remaining_steps is not None:
+            state.remaining_steps = max(0, int(remaining_steps))
+        latest = validation_state.latest_evidence
+        state.latest_validation_outcome = latest.outcome if latest is not None else None
+        return state
 
     def current_regression_requirement(self):
         policy = self.execution_policy
@@ -509,6 +529,18 @@ class MiniCodexAgent:
 
         self.execution_metrics.reset(self.execution_policy.mode.value)
 
+        self.edit_retry.reset()
+
+        self.task_state = TaskState(
+            mode=self.execution_policy.mode,
+            phase=AgentPhase.INSPECTING,
+            user_request=user_input,
+            target_paths=tuple(
+                getattr(self.execution_route, "target_paths", ()) or ()
+            ),
+            remaining_steps=self.task_max_steps,
+        )
+
         self.context_budget.reset()
 
         self.working_summary.reset()
@@ -525,13 +557,9 @@ class MiniCodexAgent:
 
         self._repo_map_initialized = False
         self._repo_map_revision = None
-        explicit_fast_target = bool(
-            self.execution_policy.mode == ExecutionMode.FAST
-            and self.execution_route is not None
-            and self.execution_route.target_paths
-        )
-        if explicit_fast_target:
-            self.repo_map_text = "Repository map omitted for explicit FAST target."
+        fast_mode = self.execution_policy.mode == ExecutionMode.FAST
+        if fast_mode:
+            self.repo_map_text = "Repository map omitted in FAST mode."
         else:
             self._refresh_repo_map(force=True)
 
@@ -1100,12 +1128,7 @@ class MiniCodexAgent:
             self.execution_policy
             and self.execution_policy.compact_context
         )
-        explicit_fast_target = bool(
-            compact_context
-            and self.execution_route is not None
-            and self.execution_route.target_paths
-        )
-        if not explicit_fast_target:
+        if not compact_context:
             self._refresh_repo_map()
 
         # =====================================================
@@ -1181,6 +1204,15 @@ class MiniCodexAgent:
 
         if compact_context:
             validation = self.validation_pipeline.state
+            state = self.task_progress_state(remaining_agent_steps)
+            registered = set(getattr(self.registry, "_tools", {}) or {})
+            targets = tuple(
+                getattr(self.execution_route, "target_paths", ()) or ()
+            )
+            selection = self.validation_selector.select(
+                target_paths=targets,
+                registered_tools=registered,
+            )
             action_text = (
                 self.action_controller.INSTRUCTION
                 if self.action_controller.action_required
@@ -1189,16 +1221,23 @@ class MiniCodexAgent:
             return "\n\n".join(
                 [
                     f"User request: {self.active_user_request or ''}",
-                    "Execution mode: FAST (no plan).",
+                    f"Execution mode: FAST (no plan). Phase: {state.phase.value}.",
+                    (
+                        "Target paths: " + (", ".join(targets) if targets else "not explicit")
+                    ),
                     f"Remaining agent steps: {remaining_agent_steps}",
-                    git_awareness_text,
                     (
                         "Validation state: "
                         f"revision={validation.edit_revision}, "
                         f"has_edit={validation.has_edit}, "
                         f"acceptance_passed={validation.acceptance_passed}."
                     ),
-                    self.working_summary.render()[-2000:],
+                    self.working_summary.render_relevant(targets, max_items=8)[-2000:],
+                    (
+                        f"Recommended acceptance validator: {selection.tool_name}"
+                        + (f" for {selection.path}" if selection and selection.path else "")
+                        if selection else "No dedicated acceptance validator selected."
+                    ),
                     action_text,
                     safety_policy_text,
                 ]
@@ -1206,6 +1245,13 @@ class MiniCodexAgent:
 
         return (
             build_turn_context(
+                task_state_text=(
+                    "Task state: "
+                    f"mode={self.task_state.mode.value if self.task_state.mode else 'unknown'}, "
+                    f"phase={self.task_state.phase.value}, "
+                    f"edit_revision={self.task_state.edit_revision}, "
+                    f"validation_revision={self.task_state.validation_revision}."
+                ),
                 plan_text=(
                     plan_text
                 ),
@@ -1216,8 +1262,10 @@ class MiniCodexAgent:
                     remaining_agent_steps
                 ),
                 working_summary_text=(
-                    self.working_summary
-                    .render()
+                    self.working_summary.render_relevant(
+                        tuple(getattr(self.execution_route, "target_paths", ()) or ()),
+                        max_items=14,
+                    )
                 ),
                 repo_map_text=(
                     self.repo_map_text[:2000]

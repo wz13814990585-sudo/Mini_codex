@@ -98,6 +98,32 @@ class WorkingSummary:
                 :overflow
             ]
 
+    def render_relevant(
+        self,
+        target_paths: tuple[str, ...] = (),
+        *,
+        max_items: int = 10,
+    ) -> str:
+        """Render recent actionable facts, prioritizing explicit targets."""
+
+        targets = tuple(str(path).casefold() for path in target_paths if path)
+        ranked: list[tuple[int, int, str]] = []
+        for index, item in enumerate(self.items):
+            lowered = item.casefold()
+            score = 0
+            if any(target in lowered for target in targets):
+                score += 4
+            if any(word in lowered for word in (
+                "failed", "modified", "validation", "blocked", "stale", "installed"
+            )):
+                score += 2
+            if index >= max(0, len(self.items) - max_items):
+                score += 1
+            ranked.append((score, index, item))
+        selected = sorted(ranked, key=lambda value: (value[0], value[1]), reverse=True)
+        selected = sorted(selected[:max(1, int(max_items))], key=lambda value: value[1])
+        return "\n".join(f"- {item}" for _, _, item in selected)
+
     # =========================================================
     # Record Tool Result
     # =========================================================

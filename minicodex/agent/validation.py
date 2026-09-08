@@ -323,6 +323,18 @@ class ValidationPipeline:
             evidence
         )
 
+        # Expose one normalized validation result shape to downstream traces,
+        # summaries, and evaluation code regardless of the concrete tool.
+        result.data.update(
+            {
+                "purpose": evidence.purpose.value,
+                "outcome": evidence.outcome.value,
+                "path": evidence.path,
+                "failed_count": evidence.failed_count,
+                "validation_summary": evidence.summary,
+            }
+        )
+
         return evidence
 
     def _from_static_web(

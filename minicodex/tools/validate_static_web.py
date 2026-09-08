@@ -327,7 +327,11 @@ class ValidateStaticWebTool(BaseTool):
         metrics.update(counts or {})
         data = {
             "path": path,
+            "purpose": "acceptance",
             "outcome": outcome,
+            "failed_count": len(errors) if outcome == "failed" else (
+                0 if outcome == "passed" else None
+            ),
             "html_parse": html_parse,
             "script_syntax": script_syntax,
             "inline_script_count": inline_script_count,
@@ -343,6 +347,7 @@ class ValidateStaticWebTool(BaseTool):
             f"data-row={metrics['data_row_count']}, "
             f"data-col={metrics['data_col_count']}."
         )
+        data["validation_summary"] = summary
         return ToolResult(
             success=True,
             summary=summary,

@@ -356,6 +356,11 @@ class EvaluationHarness:
             or 0
         )
 
+        execution_metrics = getattr(agent, "execution_metrics", None)
+
+        def metric(name, default=None):
+            return getattr(execution_metrics, name, default)
+
         # =====================================================
         # Constraints
         # =====================================================
@@ -448,6 +453,21 @@ class EvaluationHarness:
             llm_calls=(
                 llm_calls
             ),
+            execution_mode=metric("execution_mode"),
+            tool_call_count=int(metric("tool_call_count", 0) or 0),
+            inspection_tool_count=int(metric("inspection_tool_count", 0) or 0),
+            edit_tool_count=int(metric("edit_tool_count", 0) or 0),
+            validation_tool_count=int(metric("validation_tool_count", 0) or 0),
+            calls_before_first_edit=metric("calls_before_first_edit"),
+            calls_before_first_validation=metric("calls_before_first_validation"),
+            action_required_trigger_count=int(
+                metric("action_required_trigger_count", 0) or 0
+            ),
+            replan_count=int(metric("replan_count", 0) or 0),
+            rollback_count=int(metric("rollback_count", 0) or 0),
+            max_steps_exhausted=bool(metric("max_steps_exhausted", False)),
+            final_outcome=metric("final_outcome"),
+            final_completion_reason=metric("final_completion_reason"),
             duration_seconds=(
                 duration
             ),

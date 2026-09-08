@@ -17,9 +17,17 @@ class TaskRoute:
     requires_coding_action: bool = True
 
 
+@dataclass(frozen=True)
+class RoutingRule:
+    name: str
+    mode: ExecutionMode
+    description: str
+
+
 class TaskRouter:
     _PATH = re.compile(
-        r"(?<![\w.-])([\w.-]+(?:[/\\][\w.-]+)+|README(?:\.md)?)",
+        r"(?<![\w.-])([\w.-]+(?:[/\\][\w.-]+)+|"
+        r"[\w.-]+\.(?:py|html|css|js|md|toml|json|ya?ml)|README(?:\.md)?)",
         re.IGNORECASE,
     )
     _COMPLEX = (
@@ -66,6 +74,31 @@ class TaskRouter:
         "修改 readme",
         "单个函数",
         "独立 html",
+        "simple python bug",
+        "small python bug",
+        "简单 python 错误",
+    )
+    RULE_TABLE = (
+        RoutingRule(
+            "architecture_or_high_risk",
+            ExecutionMode.COMPLEX,
+            "Cross-cutting runtime, architecture, security, or concurrency work.",
+        ),
+        RoutingRule(
+            "bounded_local_artifact",
+            ExecutionMode.FAST,
+            "One clearly named small artifact or function.",
+        ),
+        RoutingRule(
+            "medium_or_multi_file",
+            ExecutionMode.STANDARD,
+            "Feature or bug work spanning several files and focused tests.",
+        ),
+        RoutingRule(
+            "uncertain_default",
+            ExecutionMode.STANDARD,
+            "Ambiguous work receives planning and focused regression by default.",
+        ),
     )
     _CODING_ACTION = re.compile(
         r"\b(create|add|update|fix|refactor|redesign|implement|build|modify|"
@@ -87,6 +120,32 @@ class TaskRouter:
             return TaskRoute(
                 mode=ExecutionMode.COMPLEX,
                 reason="Request contains cross-cutting or high-risk architecture signals.",
+                signals=tuple(signals),
+                target_paths=targets,
+                requires_coding_action=requires_coding_action,
+            )
+
+        standard_hits = [
+            marker
+            for marker in (
+                "fastapi endpoint",
+                "several files",
+                "three files",
+                "3 files",
+                "medium bug",
+                "regression bug",
+                "多个文件",
+                "中等错误",
+            )
+            if marker in lowered
+        ]
+        if len(targets) >= 3 or standard_hits:
+            signals.extend(f"standard:{item}" for item in standard_hits)
+            if len(targets) >= 3:
+                signals.append("standard:three-or-more-targets")
+            return TaskRoute(
+                mode=ExecutionMode.STANDARD,
+                reason="Request is bounded but needs coordinated multi-file work.",
                 signals=tuple(signals),
                 target_paths=targets,
                 requires_coding_action=requires_coding_action,

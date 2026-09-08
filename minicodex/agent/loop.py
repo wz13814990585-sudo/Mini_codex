@@ -6,11 +6,9 @@ import time
 
 from .control_decision import ControlDecision
 from .completion import (
-    CompletionGate,
     CompletionStatus,
     TaskOutcome,
 )
-from .completion_policy import TaskCompletionPolicy
 from .context import (
     compact_messages_for_pressure,
 )
@@ -21,13 +19,19 @@ from .message_protocol import (
     close_tool_batch_before_control_transition,
     validate_tool_message_protocol,
 )
+from .tool_batch import commit_batch_transition, resolve_tool_restriction
 from .execution_mode import ExecutionMode
+from .orchestration_transitions import (
+    completion_transition,
+    plan_is_incomplete,
+    record_task_outcome,
+    validation_transition,
+)
 from .state import (
     StepStatus,
 )
 from .validation import (
     ValidationEvidence,
-    ValidationNextAction,
     ValidationOutcome,
 )
 
@@ -55,13 +59,6 @@ EDIT_TOOL_NAMES = {
     "replace_symbol",
     "write_file",
 }
-
-
-COMPLETION_GATE = (
-    CompletionGate()
-)
-
-TASK_COMPLETION_POLICY = TaskCompletionPolicy(COMPLETION_GATE)
 
 
 def _chat_with_heartbeat(
@@ -261,7 +258,7 @@ def run_agent_loop(
                     )
 
                     if not should_continue:
-
+                        record_task_outcome(agent, TaskOutcome.INCOMPLETE, reason)
                         return (
                             "Agent stopped because "
                             "the current plan step "
@@ -301,7 +298,7 @@ def run_agent_loop(
             agent, "execution_policy", None
         ) is not None:
             action_controller.update_context(
-                state=agent.task_progress_state(),
+                state=agent.task_progress_state(remaining_agent_steps),
                 policy=agent.execution_policy,
                 remaining_budget=remaining_agent_steps,
                 acceptance_missing=(
@@ -320,6 +317,8 @@ def run_agent_loop(
             )
         ):
             print("\n[Finalization Mode]")
+            if hasattr(agent, "task_state"):
+                agent.task_state.mark_finalizing()
             if agent.active_plan is not None:
                 reconciliation = agent.reconcile_plan_progress()
                 if reconciliation["completed"]:
@@ -448,6 +447,13 @@ def run_agent_loop(
             llm_response.usage
         )
 
+        execution_metrics = getattr(agent, "execution_metrics", None)
+        if execution_metrics is not None:
+            execution_metrics.observe_llm(
+                call_count=agent.token_metrics.call_count,
+                total_prompt_tokens=agent.token_metrics.total.prompt_tokens,
+            )
+
         agent.context_budget.observe(
             llm_response
             .usage
@@ -528,12 +534,11 @@ def run_agent_loop(
 
             if content.strip().upper().startswith("BLOCKED:"):
                 reason = content.strip()[len("BLOCKED:"):].strip()
-                metrics = getattr(agent, "execution_metrics", None)
-                if metrics is not None:
-                    metrics.finish(
-                        TaskOutcome.BLOCKED.value,
-                        reason or "The model reported a concrete blocker.",
-                    )
+                record_task_outcome(
+                    agent,
+                    TaskOutcome.BLOCKED,
+                    reason or "The model reported a concrete blocker.",
+                )
                 return summarize_agent_stop(
                     agent,
                     "Task blocked. Final outcome: blocked.",
@@ -595,12 +600,11 @@ def run_agent_loop(
 
                     continue
 
+                stop_reason = "Agent stopped with unfinished plan steps."
+                record_task_outcome(agent, TaskOutcome.INCOMPLETE, stop_reason)
                 return summarize_agent_stop(
                     agent,
-                    (
-                        "Agent stopped with "
-                        "unfinished plan steps."
-                    ),
+                    stop_reason,
                     content,
                 )
 
@@ -625,6 +629,11 @@ def run_agent_loop(
             if not completion.can_complete:
 
                 if not getattr(agent, "task_requires_validation", True):
+                    record_task_outcome(
+                        agent,
+                        TaskOutcome.ALREADY_SATISFIED,
+                        "The request required no code mutation or validation.",
+                    )
                     return content
 
                 remaining_budget = (
@@ -724,14 +733,14 @@ def run_agent_loop(
 
                     continue
 
+                stop_reason = (
+                    "Agent stopped before completion evidence was fully established. "
+                    f"{completion.reason}"
+                )
+                record_task_outcome(agent, TaskOutcome.INCOMPLETE, stop_reason)
                 return summarize_agent_stop(
                     agent,
-                    (
-                        "Agent stopped before "
-                        "completion evidence was "
-                        "fully established. "
-                        f"{completion.reason}"
-                    ),
+                    stop_reason,
                     content,
                 )
 
@@ -863,30 +872,16 @@ def run_agent_loop(
             # Deterministic Recovery Restriction
             # =================================================
 
-            restriction_type = "action_required_restriction"
-            restriction_reason = None
-            finalization = getattr(agent, "finalization", None)
-            if finalization is not None:
-                restriction_reason = finalization.restriction_reason(
-                    tool_name
-                )
-                if restriction_reason:
-                    restriction_type = "finalization_restriction"
-
+            edit_retry = getattr(agent, "edit_retry", None)
             action_controller = getattr(agent, "action_controller", None)
-            policy = getattr(agent, "execution_policy", None)
-            if (
-                restriction_reason is None
-                and action_controller is not None
-                and policy is not None
-            ):
-                restriction_reason = action_controller.restriction_reason(
-                    tool_name,
-                    arguments,
-                    policy,
-                )
+            restriction = resolve_tool_restriction(agent, tool_name, arguments)
 
-            if restriction_reason is not None:
+            if restriction is not None:
+                if (
+                    hasattr(agent, "task_state")
+                    and restriction.failure_type == "action_required_restriction"
+                ):
+                    agent.task_state.require_action()
                 metrics = getattr(agent, "execution_metrics", None)
                 if metrics is not None and action_controller is not None:
                     metrics.action_required_trigger_count = (
@@ -900,11 +895,10 @@ def run_agent_loop(
                     ),
                     data={
                         "tool_name": tool_name,
-                        "failure_type": (
-                            restriction_type
-                        ),
+                        "failure_type": restriction.failure_type,
+                        **restriction.data,
                     },
-                    error=restriction_reason,
+                    error=restriction.reason,
                 )
 
                 if current_plan_step:
@@ -920,13 +914,11 @@ def run_agent_loop(
                         "content": observation_text,
                     }
                 )
-                close_tool_batch_before_control_transition(
+                commit_batch_transition(
                     messages,
-                    response.tool_calls[
-                        tool_index + 1:
-                    ],
-                    "ACTION_REQUIRED restricted reconnaissance",
-                    followup_user_message=restriction_reason,
+                    response.tool_calls[tool_index + 1:],
+                    reason="execution policy restricted the current tool batch",
+                    followup=restriction.reason,
                 )
                 restart_agent_loop = True
                 break
@@ -1060,6 +1052,53 @@ def run_agent_loop(
                     success=result.success,
                 )
 
+            retry_message = None
+            if edit_retry is not None:
+                retry_message = edit_retry.observe(
+                    tool_name,
+                    arguments,
+                    result,
+                )
+            if retry_message:
+                stale_edit = str(result.data.get("failure_type", "")) == "stale_context"
+                if hasattr(agent, "task_state"):
+                    agent.task_state.transition_for_tool(
+                        tool_name,
+                        success=result.success,
+                        stale_edit=stale_edit,
+                    )
+                if action_controller is not None:
+                    action_controller.observe_action(
+                        tool_name,
+                        agent.task_progress_state(),
+                    )
+                close_tool_batch_before_control_transition(
+                    messages,
+                    response.tool_calls[tool_index + 1:],
+                    "bounded stale-edit recovery changed the next allowed action",
+                    followup_user_message=retry_message,
+                )
+                restart_agent_loop = True
+                break
+
+            is_validation_action = (
+                tool_name in {"run_tests", "validate_static_web"}
+                or (
+                    tool_name == "run_command"
+                    and str(arguments.get("purpose", "diagnostic")).strip().lower()
+                    == "acceptance"
+                )
+            )
+            if (
+                hasattr(agent, "task_state")
+                and not is_validation_action
+                and not (tool_name in EDIT_TOOL_NAMES and result.success)
+            ):
+                agent.task_state.transition_for_tool(
+                    tool_name,
+                    success=result.success,
+                )
+
             if (
                 tool_name not in EDIT_TOOL_NAMES
                 and hasattr(agent, "step_evidence")
@@ -1102,6 +1141,12 @@ def run_agent_loop(
                     agent.validation_pipeline
                     .record_edit()
                 )
+
+                if hasattr(agent, "task_state"):
+                    agent.task_state.transition_for_tool(
+                        tool_name,
+                        success=True,
+                    )
 
                 print(
                     "\n[Edit Applied]"
@@ -1302,6 +1347,14 @@ def run_agent_loop(
                     is not None
                 ):
 
+                    if hasattr(agent, "task_state"):
+                        agent.task_progress_state()
+                        agent.task_state.transition_for_tool(
+                            tool_name,
+                            success=result.success,
+                            validation_outcome=evidence.outcome,
+                        )
+
                     if action_controller is not None:
                         action_controller.observe_action(
                             tool_name,
@@ -1387,7 +1440,14 @@ def run_agent_loop(
         # =====================================================
 
         if early_stop:
-
+            metrics = getattr(agent, "execution_metrics", None)
+            if metrics is None or metrics.final_outcome is None:
+                outcome = (
+                    TaskOutcome.BLOCKED
+                    if "block" in early_stop.casefold()
+                    else TaskOutcome.INCOMPLETE
+                )
+                record_task_outcome(agent, outcome, early_stop)
             return early_stop
 
         if restart_agent_loop:
@@ -1428,6 +1488,8 @@ def run_agent_loop(
             and policy is not None
             and action_controller.update_pressure(policy)
         ):
+            if hasattr(agent, "task_state"):
+                agent.task_state.require_action()
             metrics = getattr(agent, "execution_metrics", None)
             if metrics is not None:
                 metrics.action_required_trigger_count = (
@@ -1472,7 +1534,8 @@ def run_agent_loop(
     )
     metrics = getattr(agent, "execution_metrics", None)
     if metrics is not None:
-        metrics.finish(TaskOutcome.INCOMPLETE.value, completion.reason)
+        metrics.max_steps_exhausted = True
+    record_task_outcome(agent, TaskOutcome.INCOMPLETE, completion.reason)
     return result
 
 
@@ -1537,23 +1600,7 @@ def active_plan_incomplete(
     contains unfinished steps.
     """
 
-    policy = getattr(agent, "execution_policy", None)
-    if (
-        policy is not None
-        and getattr(policy, "mode", None) == ExecutionMode.FAST
-    ):
-        return False
-
-    plan = getattr(
-        agent,
-        "active_plan",
-        None,
-    )
-
-    return bool(
-        plan
-        and not plan.is_completed()
-    )
+    return plan_is_incomplete(agent)
 
 
 def acceptance_evidence_reminder(
@@ -1636,8 +1683,7 @@ def acceptance_evidence_reminder(
 def evaluate_completion(
     agent,
 ):
-    policy = getattr(agent, "completion_policy", TASK_COMPLETION_POLICY)
-    return policy.evaluate(agent)
+    return completion_transition(agent).decision
 
 
 def can_complete_edit_task(
@@ -1887,137 +1933,14 @@ def apply_validation_evidence(
         f"{next_action.value}"
     )
 
-    # =========================================================
-    # Both Acceptance + Full Regression
-    #
-    # This does NOT itself terminate the task because the
-    # active plan may still be incomplete.
-    # =========================================================
-
-    if (
-        next_action
-        == (
-            ValidationNextAction
-            .TASK_VALIDATED
-        )
-    ):
-
-        completion = (
-            evaluate_completion(
-                agent
-            )
-        )
-
-        print(
-            "\n[Completion Gate]"
-        )
-
-        print(
-            "Status: "
-            f"{completion.status.value}"
-        )
-
-        return ControlDecision()
-
-    # =========================================================
-    # Need Acceptance
-    # =========================================================
-
-    if (
-        next_action
-        == (
-            ValidationNextAction
-            .RUN_ACCEPTANCE_VALIDATION
-        )
-    ):
-
-        return ControlDecision(
-            restart=True,
-            followup_message=acceptance_evidence_reminder(agent),
-            skipped_reason=(
-                "validation requires acceptance evidence"
-            ),
-        )
-
-    # =========================================================
-    # Need Full Regression
-    # =========================================================
-
-    if (
-        next_action
-        == (
-            ValidationNextAction
-            .RUN_FULL_VALIDATION
-        )
-    ):
-
-        return ControlDecision(
-            restart=True,
-            followup_message=(
-                "Acceptance validation passed for the current edit "
-                "revision. Now run the full regression suite with "
-                "run_tests(path='.', purpose='regression') before "
-                "claiming task completion."
-            ),
-            skipped_reason=(
-                "validation requires full regression evidence"
-            ),
-        )
-
-    # =========================================================
-    # Inconclusive Validation
-    # =========================================================
-
-    if (
-        next_action
-        == (
-            ValidationNextAction
-            .INVESTIGATE_INCONCLUSIVE
-        )
-    ):
-
-        return ControlDecision(
-            restart=True,
-            followup_message=(
-                "Validation was inconclusive. Do not treat it as "
-                "either a code failure or successful validation. "
-                "Inspect why validation could not produce reliable "
-                "evidence and obtain new evidence."
-            ),
-            skipped_reason="validation was inconclusive",
-        )
-
-    # =========================================================
-    # Ordinary Failure
-    #
-    # Cross-revision regression already had an opportunity
-    # to trigger rollback above.
-    # =========================================================
-
-    if (
-        next_action
-        == (
-            ValidationNextAction
-            .FIX_FAILURE
-        )
-        and not (
-            validation_progress
-            .stalled
-        )
-    ):
-
-        return ControlDecision()
-
-    # =========================================================
-    # No Stall
-    # =========================================================
-
-    if not (
-        validation_progress
-        .stalled
-    ):
-
-        return ControlDecision()
+    ordinary_transition = validation_transition(
+        agent,
+        next_action=next_action,
+        stalled=validation_progress.stalled,
+        acceptance_reminder=acceptance_evidence_reminder(agent),
+    )
+    if ordinary_transition is not None:
+        return ordinary_transition
 
     # =========================================================
     # Recovery Escalation
@@ -2359,6 +2282,10 @@ def rollback_regressed_edit(
         .record_edit()
     )
 
+    metrics = getattr(agent, "execution_metrics", None)
+    if metrics is not None:
+        metrics.record_rollback()
+
     if hasattr(agent, "rollback_revision"):
         agent.rollback_revision += 1
 
@@ -2429,9 +2356,7 @@ def rollback_regressed_edit(
 def completion_result(agent, decision, last_text: str = "") -> str:
     """Create the final Harness result without spending another LLM call."""
 
-    metrics = getattr(agent, "execution_metrics", None)
-    if metrics is not None:
-        metrics.finish(decision.outcome.value, decision.reason)
+    record_task_outcome(agent, decision.outcome, decision.reason)
     prefix = (
         "Task already satisfied and validated."
         if decision.outcome == TaskOutcome.ALREADY_SATISFIED

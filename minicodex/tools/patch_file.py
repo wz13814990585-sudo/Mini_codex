@@ -105,21 +105,34 @@ class PatchFileTool(
         )
 
         if count == 0:
-
-            raise ValueError(
-                (
-                    "old_text was not found "
-                    "in the file."
-                )
+            return ToolResult(
+                success=False,
+                summary=f"Patch context is stale for {path}.",
+                data={
+                    "path": path,
+                    "checkpoint_id": None,
+                    "changed": False,
+                    "edit_kind": "exact_patch",
+                    "failure_type": "stale_context",
+                    "retry_action": "read_target_region_then_retry_once",
+                },
+                error="old_text was not found in the current file.",
             )
 
         if count > 1:
-
-            raise ValueError(
-                (
-                    "old_text appears multiple times. "
-                    "Provide a more specific code block."
-                )
+            return ToolResult(
+                success=False,
+                summary=f"Patch context is ambiguous for {path}.",
+                data={
+                    "path": path,
+                    "checkpoint_id": None,
+                    "changed": False,
+                    "edit_kind": "exact_patch",
+                    "failure_type": "ambiguous_context",
+                    "match_count": count,
+                    "retry_action": "read_target_region_then_use_more_specific_context",
+                },
+                error="old_text appears multiple times.",
             )
 
         # =====================================================
@@ -186,6 +199,8 @@ class PatchFileTool(
             ),
             data={
                 "path": path,
+                "checkpoint_id": None,
+                "edit_kind": "exact_patch",
                 "replacement_count": 1,
                 "changed": (
                     verification.changed

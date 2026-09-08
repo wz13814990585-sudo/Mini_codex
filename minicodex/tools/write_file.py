@@ -162,6 +162,10 @@ class WriteFileTool(
             summary=summary,
             data={
                 "path": path,
+                "checkpoint_id": None,
+                "edit_kind": (
+                    "create" if not existed_before else "full_replace"
+                ),
                 "created": (
                     not existed_before
                 ),

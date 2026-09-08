@@ -120,6 +120,32 @@ class EvaluationResult:
 
     llm_calls: int = 0
 
+    execution_mode: str | None = None
+
+    tool_call_count: int = 0
+
+    inspection_tool_count: int = 0
+
+    edit_tool_count: int = 0
+
+    validation_tool_count: int = 0
+
+    calls_before_first_edit: int | None = None
+
+    calls_before_first_validation: int | None = None
+
+    action_required_trigger_count: int = 0
+
+    replan_count: int = 0
+
+    rollback_count: int = 0
+
+    max_steps_exhausted: bool = False
+
+    final_outcome: str | None = None
+
+    final_completion_reason: str | None = None
+
     duration_seconds: float = 0.0
 
     error: str | None = None
