@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..execution_mode import ExecutionMode
+from .execution_mode import ExecutionMode
 
 
 @dataclass(frozen=True)

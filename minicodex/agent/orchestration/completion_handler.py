@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from ..completion import TaskOutcome
+from ..validation import TaskOutcome
 from .orchestration_transitions import completion_transition, record_task_outcome
 from .task_report import TaskReportBuilder
 from ..reason_codes import ReasonCode

@@ -4,25 +4,26 @@ import io
 import sys
 from contextlib import redirect_stdout
 
-from .checkpoint import (
+from .editing import (
     CheckpointManager,
-)
-from .checkpoint_executor import (
     CheckpointingToolExecutor,
+    EditRetryPolicy,
+    RollbackCoordinator,
+    RollbackEngine,
 )
 from .context_budget import (
     ContextBudget,
 )
-from .action_controller import (
-    ActionController,
+from .progress import ActionController, FinalizationController
+from .validation import (
+    RegressionPolicy,
+    RelevantPathResolver,
+    TaskCompletionPolicy,
+    ValidationPipeline,
+    ValidationSelector,
 )
-from .completion_policy import TaskCompletionPolicy
-from .dependency_resolver import DependencyResolver
-from .edit_retry import EditRetryPolicy
-from .editing import RollbackCoordinator
-from .execution_mode import ExecutionMode
-from .execution_policy import ExecutionPolicy, policy_for
-from .finalization import FinalizationController
+from .dependency import DependencyResolver
+from .routing import ExecutionMode, ExecutionPolicy, TaskIntent, TaskRouter, policy_for
 from .git_awareness import (
     GitAwareness,
     GitRepositoryInspector,
@@ -38,45 +39,25 @@ from .orchestration import (
     ValidationOrchestrator,
     PlanOrchestrator,
 )
-from .observability import OutputLevel
-from .metrics import (
+from .observability import (
     ExecutionMetrics,
+    OutputLevel,
     TokenMetrics,
 )
-from .progress import (
-    ProgressController,
-)
-from .plan_progress import (
-    PlanProgressReconciler,
-)
+from .progress import ProgressController
+from .planning import AgentPlan, PlanProgressReconciler, StepEvidenceStore
 from .recovery import (
     RecoveryController,
 )
-from .relevant_paths import RelevantPathResolver
-from .rollback import (
-    RollbackEngine,
-)
-from .regression_policy import RegressionPolicy
 from .safety import (
     SafetyPolicy,
-)
-from .safety_executor import (
     SafetyToolExecutor,
 )
-from .state import (
-    AgentPlan,
-)
-from .step_evidence import StepEvidenceStore
-from .task_router import TaskIntent, TaskRouter
 from .task_state import AgentPhase, TaskState
-from .tool_executor import (
+from .runtime.tool_executor import (
     ToolExecutor,
 )
-from .validation import (
-    ValidationPipeline,
-)
-from .validation_selector import ValidationSelector
-from .working_summary import (
+from .memory import (
     WorkingSummary,
 )
 
@@ -473,7 +454,7 @@ class MiniCodexAgent:
     def current_regression_requirement(self):
         policy = self.execution_policy
         if policy is None:
-            from .regression_policy import RegressionRequirement
+            from .validation import RegressionRequirement
 
             return RegressionRequirement.REQUIRED
 

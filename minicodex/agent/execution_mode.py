@@ -1,10 +1,5 @@
-"""Execution modes selected before a MiniCodex task starts."""
+"""Compatibility exports for routing execution modes."""
 
-from enum import Enum
+from .routing.execution_mode import ExecutionMode
 
-
-class ExecutionMode(str, Enum):
-    FAST = "fast"
-    STANDARD = "standard"
-    COMPLEX = "complex"
-
+__all__ = ["ExecutionMode"]

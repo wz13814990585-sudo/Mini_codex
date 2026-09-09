@@ -1,5 +1,9 @@
 # MiniCodex vibecoding architecture
 
+The package migration is structural: it changes ownership and import paths but
+intentionally introduces no execution, policy, validation, safety, or output
+behavior changes.
+
 MiniCodex uses one shared coding loop. `TaskRouter` composes two orthogonal,
 deterministic decisions: `IntentClassifier` selects `TaskIntent` (`MODIFY`,
 `INSPECT_ONLY`, or `INFORMATIONAL`), while `ComplexityRouter` selects
@@ -115,18 +119,44 @@ noise and internal enums. Verbose retains execution/phase diagnostics. Debug
 also exposes outcome tokens and the post-task trace summary. Normal final
 reports contain changed files and validation results only.
 
-## Package boundaries and compatibility
+## Package ownership
 
-- `agent/orchestration/`: shared loop, turn/batch/plan/validation/completion flow.
-- `agent/routing/`: intent classification and complexity routing.
-- `agent/progress/`: progress signals and validation trends.
-- `agent/validation/`: evidence pipeline, selector, `TestIndex`, target resolver.
-- `agent/editing/`: edit strategy and rollback coordination.
-- `utils/`: domain-neutral path/text/parsing helpers only.
+- `agent/`: the `MiniCodexAgent` facade, central `TaskState`, shared reason codes,
+  and temporary compatibility modules.
+- `agent/orchestration/`: loop control, provider turns, tool batches, planning and
+  validation coordination, completion handling, and task reports.
+- `agent/routing/`: task intent, complexity, execution mode, and execution policy.
+- `agent/progress/`: progress signals, action pressure, and finalization control.
+- `agent/planning/`: plans, planning/replanning, plan quality, and step evidence.
+- `agent/validation/`: evidence normalization, validation selection, test indexing
+  and targeting, relevant paths, regression policy, and completion policy.
+- `agent/editing/`: edit strategy/retry, checkpoints, verified execution, rollback,
+  and rollback coordination.
+- `agent/dependency/`: manifest-aware dependency resolution policy.
+- `agent/memory/`: task-local working memory and persistent memory integration.
+- `agent/safety/`: permission policy, fail-closed execution, and process sandboxing.
+- `agent/runtime/`: tool execution, cancellation, and asynchronous task mechanics.
+- `agent/observability/`: execution/token metrics, structured trace events and
+  adapters, and output-level selection.
+- `tools/`: model-callable capabilities grouped into `filesystem`, `search`,
+  `editing`, `execution`, `validation`, and `planning`; tool-system core types stay
+  shallow in `base.py`, `registry.py`, and `results.py`.
+- `utils/`: domain-neutral helpers only, including workspace path resolution.
 
-Compatibility re-exports in `agent/loop.py`, `agent/task_router.py`,
-`agent/test_index.py`, `agent/test_target_resolver.py`, and
-`agent/validation_selector.py` preserve existing imports during migration.
+## Dependency rules and compatibility
+
+Dependency direction is deliberate: `utils` does not depend on agent domains;
+tools do not depend on orchestration; domain packages avoid importing the
+`MiniCodexAgent` facade; orchestration coordinates domain APIs; and `agent.py`
+acts as the composition root. Package `__init__.py` files expose intentional
+stable APIs. A few imports are lazy solely to prevent package-initialization
+cycles while preserving the identity of the canonical class or enum.
+
+Legacy module paths such as `agent/task_router.py`, `agent/tool_executor.py`,
+`agent/test_index.py`, and `tools/read_file.py` are thin re-export modules. They
+contain no alternate implementation and preserve downstream imports during the
+migration period. New application code imports from the canonical domain
+packages.
 
 `ExecutionMetrics` and the deterministic evaluation harness record intent,
 mode, success/outcome, false completion, wrong edit, LLM/tool/inspection/edit/

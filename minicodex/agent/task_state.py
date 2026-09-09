@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .completion import TaskOutcome
-from .execution_mode import ExecutionMode
+from .validation import TaskOutcome
+from .routing import ExecutionMode
 from .validation import ValidationOutcome
 from .routing import TaskIntent
 

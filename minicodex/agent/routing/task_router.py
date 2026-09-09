@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from ..execution_mode import ExecutionMode
+from .execution_mode import ExecutionMode
 from ...utils.paths import normalize_repo_path
 from .complexity import ComplexityRouter
 from .intent import IntentClassifier, TaskIntent

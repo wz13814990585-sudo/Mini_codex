@@ -4,49 +4,31 @@ import argparse
 from dotenv import load_dotenv
 
 from .agent.agent import MiniCodexAgent
-from .agent.long_term_memory import (
+from .agent.memory import (
     LongTermMemoryStore,
-)
-from .agent.long_term_memory_runtime import (
     attach_long_term_memory,
 )
-from .agent.planner import Planner
-from .agent.replanner import Replanner
+from .agent.planning import Planner, Replanner
 from .agent.repo_map import RepoMap
-from .agent.sandbox import (
+from .agent.safety import (
     SandboxLimits,
     SandboxRunner,
 )
 from .agent.symbol_index import SymbolIndex
-from .agent.trace import (
+from .agent.observability import (
     TraceRecorder,
-)
-from .agent.trace_runtime import (
     attach_runtime_tracing,
 )
 
 from .llm.client import LLMClient
 
 from .tools.registry import ToolRegistry
-from .tools.read_file import ReadFileTool
-from .tools.list_files import ListFilesTool
-from .tools.write_file import WriteFileTool
-from .tools.search_code import SearchCodeTool
-from .tools.search_symbol import SearchSymbolTool
-from .tools.patch_file import PatchFileTool
-from .tools.replace_lines import ReplaceLinesTool
-from .tools.replace_symbol import ReplaceSymbolTool
-from .tools.run_command import RunCommandTool
-from .tools.run_tests import RunTestsTool
-from .tools.install_python_package import (
-    InstallPythonPackageTool,
-)
-from .tools.validate_static_web import (
-    ValidateStaticWebTool,
-)
-from .tools.validate_browser_app import ValidateBrowserAppTool
-from .tools.complete_plan_step import CompletePlanStepTool
-from .tools.replan import ReplanTool
+from .tools.filesystem import ListFilesTool, ReadFileTool
+from .tools.search import SearchCodeTool, SearchSymbolTool
+from .tools.editing import PatchFileTool, ReplaceLinesTool, ReplaceSymbolTool, WriteFileTool
+from .tools.execution import InstallPythonPackageTool, RunCommandTool, RunTestsTool
+from .tools.validation import ValidateBrowserAppTool, ValidateStaticWebTool
+from .tools.planning import CompletePlanStepTool, ReplanTool
 from .tools.git_status import GitStatusTool
 from .tools.git_diff import GitDiffTool
 

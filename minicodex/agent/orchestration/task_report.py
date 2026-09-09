@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..completion import TaskOutcome
+from ..validation import TaskOutcome
 
 
 class TaskReportBuilder:

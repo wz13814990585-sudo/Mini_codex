@@ -1,6 +1,6 @@
 """Progress signals and comparable validation trends."""
 
-from .core import (
+from .progress import (
     ProgressController,
     ProgressKind,
     ProgressSignal,
@@ -8,6 +8,8 @@ from .core import (
     ValidationProgress,
     ValidationStatus,
 )
+from .action_controller import ActionController
+from .finalization import FinalizationController
 
 __all__ = [
     "ProgressController",
@@ -16,4 +18,6 @@ __all__ = [
     "ValidationFingerprint",
     "ValidationProgress",
     "ValidationStatus",
+    "ActionController",
+    "FinalizationController",
 ]
