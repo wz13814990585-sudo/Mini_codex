@@ -98,6 +98,16 @@ class WorkingSummary:
                 :overflow
             ]
 
+    def advance_revision(self, revision: int) -> None:
+        """Drop stale active validation/failure prose after a physical mutation."""
+        self.items[:] = [
+            item for item in self.items
+            if not any(marker in item.casefold() for marker in (
+                "validation failed", "tests failed", "still failing", "inconclusive validation"
+            ))
+        ]
+        self.memory.invalidate_validation_before(revision)
+
     def render_relevant(
         self,
         target_paths: tuple[str, ...] = (),

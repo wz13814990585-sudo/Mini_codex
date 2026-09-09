@@ -170,15 +170,15 @@ def test_existing_artifact_reports_already_satisfied(tmp_path):
     assert "ALREADY_SATISFIED" not in report
 
 
-def test_concrete_blocker_becomes_harness_blocked_report(tmp_path):
+def test_llm_blocker_without_deterministic_evidence_is_not_accepted(tmp_path):
     llm = ScriptedLLM([response(content="BLOCKED: required credential is unavailable")])
 
     agent = make_agent(tmp_path, llm)
+    agent.configured_max_steps = 1
     report = agent.run("Create try_code/demo.html")
 
-    assert report.startswith("Task blocked.")
-    assert "required credential is unavailable" in report
-    assert agent.execution_metrics.final_outcome == "blocked"
+    assert report.startswith("Task incomplete.")
+    assert agent.execution_metrics.final_outcome == "incomplete"
     assert "Outcome:" not in report
 
 

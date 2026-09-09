@@ -11,6 +11,10 @@ from .plan_quality import (
     PlanQualityValidator,
 )
 from .step_evidence import EvidenceStrength, StepEvidence, StepEvidenceStore
+from .requirements import (
+    RequirementCategory, RequirementsExtractor, RequirementsTelemetry,
+    TaskRequirement, TaskRequirements,
+)
 
 __all__ = [
     "AgentPlan",
@@ -24,8 +28,13 @@ __all__ = [
     "PlanStep",
     "Planner",
     "Replanner",
+    "RequirementCategory",
+    "RequirementsExtractor",
+    "RequirementsTelemetry",
     "StepEvaluation",
     "StepEvidence",
     "StepEvidenceStore",
     "StepStatus",
+    "TaskRequirement",
+    "TaskRequirements",
 ]

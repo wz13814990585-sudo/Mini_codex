@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..validation import TaskOutcome
+from ..observability.redaction import redact
 
 
 class TaskReportBuilder:
@@ -40,12 +41,20 @@ class TaskReportBuilder:
             lines.extend(["", "Validation:"])
             lines.extend(validation_lines)
 
+        requirements = getattr(agent, "task_requirements", None)
+        if requirements is not None and requirements.items:
+            lines.extend(["", "Requirements:"])
+            lines.extend(
+                f"- [{'x' if item.satisfied else ' '}] {item.description}"
+                for item in requirements.items
+            )
+
         if debug:
             lines.extend(["", "Outcome:", f"{outcome.name} ({outcome.value})"])
         return "\n".join(lines)
 
     def blocked(self, reason: str, *, debug: bool = False) -> str:
-        concrete = str(reason or "A deterministic blocker prevented completion.").strip()
+        concrete = str(redact(str(reason or "A deterministic blocker prevented completion."))).strip()
         lines = ["Task blocked.", "", "Reason:", f"- {concrete}"]
         if debug:
             lines.extend(["", "Outcome:", "BLOCKED"])
@@ -56,12 +65,16 @@ class TaskReportBuilder:
             "Task incomplete.",
             "",
             "Reason:",
-            f"- {str(reason or 'Required completion evidence is missing.').strip()}",
+            f"- {str(redact(str(reason or 'Required completion evidence is missing.'))).strip()}",
         ]
         changed = self.changed_files(agent)
         if changed:
             lines.extend(["", "Changed before stopping:"])
             lines.extend(f"- {path}" for path in changed)
+        requirements = getattr(agent, "task_requirements", None)
+        if requirements is not None and requirements.unsatisfied:
+            lines.extend(["", "Unproven requirements:"])
+            lines.extend(f"- {item.description}" for item in requirements.unsatisfied)
         if debug:
             lines.extend(["", "Outcome:", "INCOMPLETE"])
         return "\n".join(lines)

@@ -62,6 +62,22 @@ class RollbackCoordinator:
             )
 
         rollback_revision = pipeline.record_edit()
+        requirements = getattr(agent, "task_requirements", None)
+        if requirements is not None:
+            requirements.invalidate_revision(rollback_revision)
+        if hasattr(agent, "_repo_map_initialized"):
+            agent._repo_map_initialized = False
+            agent._repo_map_revision = None
+        summary_memory = getattr(getattr(agent, "working_summary", None), "memory", None)
+        if summary_memory is not None:
+            # Rollback may invalidate several post-edit repository facts.
+            summary_memory.reset()
+        step_evidence = getattr(agent, "step_evidence", None)
+        if step_evidence is not None:
+            step_evidence.reset()
+        edit_retry = getattr(agent, "edit_retry", None)
+        if edit_retry is not None:
+            edit_retry.reset()
         metrics = getattr(agent, "execution_metrics", None)
         if metrics is not None:
             metrics.record_rollback()

@@ -19,6 +19,7 @@ from .async_runtime import (
     CancellableToolExecutor,
 )
 from .tool_executor import ToolExecutor
+from .task_control import RuntimeTaskControl
 
 __all__ = [
     "AsyncAgentRunner",
@@ -39,4 +40,5 @@ __all__ = [
     "PreparedToolCall",
     "ToolExecution",
     "ToolExecutor",
+    "RuntimeTaskControl",
 ]

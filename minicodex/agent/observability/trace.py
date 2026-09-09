@@ -16,6 +16,7 @@ from datetime import (
 )
 import json
 import uuid
+from .redaction import redact
 
 
 # =============================================================
@@ -281,12 +282,7 @@ class TraceRecorder:
                 task_id=(
                     self.task_id
                 ),
-                data=(
-                    _json_safe(
-                        data
-                        or {}
-                    )
-                ),
+                data=redact(_json_safe(data or {})),
             )
         )
 

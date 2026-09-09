@@ -705,6 +705,17 @@ class AsyncAgentTask:
 
         except ExecutionCancelled as e:
 
+            try:
+                from ..validation import TaskOutcome
+                state = getattr(self.agent, "task_state", None)
+                if state is not None:
+                    state.finish(TaskOutcome.CANCELLED)
+                metrics = getattr(self.agent, "execution_metrics", None)
+                if metrics is not None:
+                    metrics.finish(TaskOutcome.CANCELLED.value, str(e))
+            except Exception:
+                pass
+
             self._set_status(
                 AsyncTaskStatus
                 .CANCELLED

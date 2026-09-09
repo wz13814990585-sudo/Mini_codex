@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+from pathlib import Path
 
 from .checkpoint import (
     CheckpointManager,
@@ -276,6 +277,34 @@ class CheckpointingToolExecutor:
                     error=e,
                     path=path,
                 )
+            )
+
+        # Detect a concurrent user/IDE write between snapshot capture and the
+        # physical edit. Rebuild against current truth instead of overwriting it.
+        file_path = Path(self.checkpoint_manager.workspace) / path
+        current_hash = None
+        try:
+            if file_path.is_file():
+                from .edit_verifier import EditVerifier
+                current_hash = EditVerifier.content_hash(file_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            current_hash = "__unreadable__"
+        if current_hash != checkpoint.snapshot.sha256:
+            self.checkpoint_manager.discard(checkpoint.checkpoint_id)
+            return ToolExecution(
+                tool_name=prepared.tool_name,
+                arguments=prepared.arguments,
+                result=ToolResult(
+                    success=False,
+                    summary=f"Edit conflict detected for {path}; the file changed after inspection.",
+                    data={
+                        "path": path, "failure_type": "workspace_conflict",
+                        "expected_sha256": checkpoint.snapshot.sha256,
+                        "current_sha256": current_hash,
+                        "retry_action": "read_current_file_then_rebuild_edit",
+                    },
+                    error="Concurrent workspace modification prevented the edit.",
+                ),
             )
 
         # =====================================================

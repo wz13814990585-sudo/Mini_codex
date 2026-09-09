@@ -1,15 +1,23 @@
 # MiniCodex vibecoding architecture
 
-The package migration is structural: it changes ownership and import paths but
-intentionally introduces no execution, policy, validation, safety, or output
-behavior changes.
+MiniCodex follows one control-plane boundary: semantic understanding and
+strategy belong to bounded LLM calls; factual state, safety, execution, policy,
+recovery, and completion belong to the deterministic Harness.
 
-MiniCodex uses one shared coding loop. `TaskRouter` composes two orthogonal,
-deterministic decisions: `IntentClassifier` selects `TaskIntent` (`MODIFY`,
-`INSPECT_ONLY`, or `INFORMATIONAL`), while `ComplexityRouter` selects
-`ExecutionMode` (`FAST`, `STANDARD`, or `COMPLEX`). Intent controls
-authorization and final-response semantics. Mode controls planning depth,
-budgets, context, recovery, and proportional regression requirements.
+At task start `TaskRouter` makes one stateless control-model call returning a
+strict `RoutingDecision`: `TaskIntent`, `ExecutionMode`, independent
+`needs_plan`, confidence, and a bounded debug reason. Only the raw current task
+is sent. The response is schema-validated; malformed/provider/timeout failures
+use one conservative deterministic fallback. Path extraction remains structural
+and workspace-normalized. The old keyword complexity scorer and intent
+classifier are not production routing paths.
+
+`ExecutionPolicy` translates the semantic mode into fixed step, retry, tool,
+validation, recovery, and context limits. The model cannot choose resources.
+Runtime scope may escalate monotonically FAST → STANDARD → COMPLEX without
+resetting consumed budget. Direct execution may activate a plan once when new
+facts prove coordination is necessary; replan attempts remain separately
+bounded.
 
 Inspect-only requests cannot see edit or dependency-install capabilities.
 Informational requests normally see no tools. Model prose cannot complete a
@@ -19,8 +27,9 @@ state already exists.
 ## State, progress, and phases
 
 `TaskState` is the compact orchestration read-model. It projects intent, mode,
-phase, request targets, relevant paths, edit/validation/rollback/plan revisions,
-completed steps, validation flags, pressure counters, budget, and outcome.
+planning state, requirement IDs, request targets, relevant paths,
+edit/validation/rollback/plan revisions, completed steps, validation flags,
+pressure counters, budget, and outcome.
 Filesystem contents, tool results, validation evidence, and plan objects remain
 the sources of truth.
 
@@ -30,7 +39,9 @@ the sources of truth.
 Reads are observations, edits and completed plan criteria advance, unchanged
 validation does not advance, an improved failure count advances, a passed-to-
 failed transition regresses, and rollback is not positive advancement.
-`ValidationFingerprint` compares only the same purpose/scope/path series.
+`ValidationFingerprint` compares only the same stable
+purpose/scope/normalized-target/validator series and includes failure identities,
+not only counts. Contradictory same-revision results become unstable evidence.
 
 ## Runtime responsibilities
 
@@ -45,17 +56,22 @@ The shared flow is:
    one tool result for every declared call, including skipped calls before a
    control transition.
 5. `PlanOrchestrator` owns step attempt, local recovery, and replan transitions.
-6. `ValidationPipeline` normalizes tool output into evidence;
-   `ValidationOrchestrator` owns trend and next-action policy;
-   `RollbackCoordinator` owns safe checkpoint restoration.
-7. `CompletionHandler` is the only termination owner. `TaskReportBuilder`
+6. `ValidationPipeline` normalizes tool output into current-revision facts,
+   baseline deltas, stable keys, failure identities, and instability;
+   `ProgressController` describes only comparable trends.
+7. A compact stateless `SemanticRegressionJudge` runs only for a genuinely
+   ambiguous cross-revision regression. Its recommendation cannot edit,
+   rollback, bypass safety, or complete the task.
+8. Deterministic recovery permits bounded materially different repair before
+   `RollbackCoordinator` may restore a conflict-free checkpoint.
+9. `CompletionHandler` is the only termination owner. `TaskReportBuilder`
    renders the final coding report immediately, without another model call.
 
 Normal product flows:
 
-- `MODIFY + FAST`: minimal inspect → edit → targeted validation → done.
-- `MODIFY + STANDARD`: short plan → edit → acceptance → relevant regression → done.
-- `MODIFY + COMPLEX`: plan → iterative edit → acceptance → full regression → done.
+- `MODIFY + FAST`: minimal inspect → edit → proportional acceptance → done.
+- `MODIFY + STANDARD`: optional short plan → edit → acceptance → relevant regression → done.
+- `MODIFY + COMPLEX`: optional plan → iterative edit → acceptance → full regression → done.
 - `INSPECT_ONLY`: inspect → report, with zero edits.
 - `INFORMATIONAL`: answer directly.
 
@@ -68,11 +84,14 @@ small exact edits, `replace_symbol` for known Python symbols, and
 target, missing symbols use one symbol search, test failures focus on the
 failing test or traceback path, and dependency failures inspect the manifest.
 
-All mutations still pass through `SafetyToolExecutor`, workspace guards, and
-checkpoint capture/seal. Cross-revision regression may restore the responsible
-checkpoint. Rollback creates a new monotonic edit revision and invalidates old
-validation evidence. Stable `EditFailureType` and `ReasonCode` values drive
-control logic; user-facing text does not.
+All mutations still pass through `SafetyToolExecutor`, raw no-edit permission
+guards, workspace/protected-path rules, anti-test-gaming checks, and checkpoint
+capture/seal. Checkpoint execution detects concurrent changes, and rollback
+refuses to overwrite a post-checkpoint external edit. Rollback creates a new
+monotonic revision, invalidates validation/plan evidence and repository caches,
+and resynchronizes task-local memory. A higher failed count alone never rolls
+back. Stable `EditFailureType` and `ReasonCode` values drive control logic;
+user-facing text does not.
 
 ## Validation targeting
 
@@ -90,7 +109,10 @@ same-package test, then broader test directory. Only genuinely focused
 candidates are labelled acceptance; package/broad candidates remain
 regression. A source module is never used as a pytest acceptance target.
 `run_tests` emits conservative repo-relative `failure_paths` from failed node
-IDs and traceback/error locations.
+IDs and traceback/error locations, plus bounded failure fingerprints. Regression
+baseline evidence distinguishes pre-existing, persisting, resolved, and newly
+introduced failures. Tool execution failure and timeout are inconclusive
+environment evidence, not automatic code failure.
 
 `RelevantPathResolver` derives scope from request targets, edited paths, failed
 tests, tracebacks, validation targets, stale edits, plan criteria, symbol-search
@@ -105,9 +127,19 @@ changed targets and the recommended validator; fixing sees the latest failure
 paths; finalizing sees only missing evidence. Older tool payloads become short
 facts. Exact code is re-read from the workspace when needed.
 
+`TaskRequirements` stores independently provable user outcomes and their current
+evidence. Multi-goal/coordinated tasks may use one stateless requirements call;
+obvious FAST tasks avoid it. Green validation cannot finish a task while an
+explicit requested outcome remains unproven.
+
 Working-memory entries carry path and revision. Editing a path removes older
 observations for that path before recording the new revision. Memory is a cache;
 the workspace remains authoritative.
+
+Task control state and checkpoints are task-local and in memory. MiniCodex does
+not claim resumable in-flight tasks after a process crash. A restarted process
+must inspect the physical workspace and establish fresh validation; it cannot
+reuse pre-crash validation or rollback state.
 
 `ToolRegistry` supports lightweight capabilities such as `filesystem.read`,
 `filesystem.write`, `code.search`, `code.edit`, `process.run`, `test.run`,
@@ -127,9 +159,11 @@ reports contain changed files and validation results only.
   context used during navigation.
 - `agent/orchestration/`: loop control, provider turns, tool batches, planning and
   validation coordination, completion handling, and task reports.
-- `agent/routing/`: task intent, complexity, execution mode, and execution policy.
+- `agent/routing/`: semantic routing schema/prompt/fallback, task intent,
+  execution mode, and deterministic execution policy.
 - `agent/progress/`: progress signals, action pressure, and finalization control.
-- `agent/planning/`: plans, planning/replanning, plan quality, and step evidence.
+- `agent/planning/`: task requirements, plans, planning/replanning, plan quality,
+  and step evidence.
 - `agent/validation/`: evidence normalization, validation selection, test indexing
   and targeting, relevant paths, regression policy, and completion policy.
 - `agent/editing/`: edit strategy/retry, checkpoints, verified execution, rollback,
@@ -158,8 +192,10 @@ cycles while preserving the identity of the canonical class or enum. Every
 concept has one canonical module path; the source tree contains no legacy
 module wrappers or compatibility import paths.
 
-`ExecutionMetrics` and the deterministic evaluation harness record intent,
-mode, success/outcome, false completion, wrong edit, LLM/tool/inspection/edit/
-validation counts, first-edit latency, replans, rollbacks, action pressure,
-prompt tokens, and budget exhaustion. The fixed real-task catalog contains 30
-CREATE, MODIFY, FIX, INSPECT, and INFORMATIONAL cases.
+`ExecutionMetrics` and the deterministic evaluation harness separate main-agent,
+routing, requirements, and semantic-judge calls/tokens/latency. They also record
+mode escalation, late planning, repair, validation/flaky reruns, prevented
+premature rollback, outcome, false completion, wrong edits, tool counts,
+replans, rollbacks, action pressure, and budget exhaustion. Prompt versions and
+configured model names are observable. The evaluation package contains both a
+30-task end-to-end catalog and a balanced English/Chinese/mixed routing corpus.

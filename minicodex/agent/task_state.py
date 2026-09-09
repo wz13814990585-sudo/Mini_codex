@@ -34,6 +34,8 @@ class TaskState:
 
     mode: ExecutionMode | None = None
     intent: TaskIntent = TaskIntent.MODIFY
+    needs_plan: bool = False
+    planning_activated: bool = False
     phase: AgentPhase = AgentPhase.INSPECTING
     user_request: str = ""
     final_response_mode: str = "task_report"
@@ -53,6 +55,9 @@ class TaskState:
     remaining_steps: int = 0
     outcome: TaskOutcome = TaskOutcome.INCOMPLETE
     latest_validation_outcome: ValidationOutcome | None = None
+    active_evidence_edit_revision: int | None = None
+    requirement_ids: tuple[str, ...] = field(default_factory=tuple)
+    satisfied_requirement_ids: tuple[str, ...] = field(default_factory=tuple)
 
     # Alternate computed views; no duplicate revision state is stored.
     @property
@@ -72,6 +77,22 @@ class TaskState:
             self.plan_revision,
             self.completed_plan_steps,
         )
+
+    def invariant_violations(self, *, tool_batch_open: bool = False, next_provider_call: bool = False) -> tuple[str, ...]:
+        """Reject a compact set of impossible control-plane projections."""
+        problems = []
+        if self.intent == TaskIntent.INSPECT_ONLY and self.has_edit:
+            problems.append("inspect_only_with_edit")
+        if self.phase == AgentPhase.DONE and self.outcome == TaskOutcome.EDITED_AND_VALIDATED and not self.acceptance_passed:
+            problems.append("finished_without_acceptance")
+        if (
+            self.active_evidence_edit_revision is not None
+            and self.active_evidence_edit_revision != self.edit_revision
+        ):
+            problems.append("stale_validation_revision")
+        if tool_batch_open and next_provider_call:
+            problems.append("provider_call_during_open_tool_batch")
+        return tuple(problems)
 
     def transition_for_tool(
         self,
@@ -133,5 +154,6 @@ class TaskState:
             TaskOutcome.INSPECTED,
             TaskOutcome.ALREADY_SATISFIED,
             TaskOutcome.EDITED_AND_VALIDATED,
+            TaskOutcome.CANCELLED,
         }:
             self.phase = AgentPhase.DONE

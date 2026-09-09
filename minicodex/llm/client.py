@@ -10,20 +10,13 @@ from .types import (
 
 class LLMClient:
 
-    def __init__(self):
+    def __init__(self, *, api_key: str | None = None, base_url: str | None = None, model: str | None = None):
         self.client = OpenAI(
-            api_key=os.getenv(
-                "DEEPSEEK_API_KEY"
-            ),
-            base_url=(
-                "https://api.deepseek.com"
-            ),
+            api_key=api_key or os.getenv("DEEPSEEK_API_KEY"),
+            base_url=base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         )
 
-        self.model = os.getenv(
-            "DEEPSEEK_MODEL",
-            "deepseek-chat",
-        )
+        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
     def chat(
         self,

@@ -45,9 +45,9 @@ FAST_TOOL_NAMES = frozenset(
 )
 
 
-def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
+def policy_for(mode: ExecutionMode, *, needs_plan: bool | None = None) -> ExecutionPolicy:
     if mode == ExecutionMode.FAST:
-        return ExecutionPolicy(
+        policy = ExecutionPolicy(
             mode=mode,
             use_plan=False,
             max_steps=8,
@@ -63,11 +63,18 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
             finalization_threshold=2,
             compact_context=True,
             exposed_tool_names=FAST_TOOL_NAMES,
-            max_replans=0,
+            max_replans=1 if needs_plan else 0,
         )
+        if needs_plan is True:
+            from dataclasses import replace
+            return replace(
+                policy, use_plan=True, max_plan_steps=3, enable_replan=True,
+                exposed_tool_names=policy.exposed_tool_names | {"complete_plan_step", "replan"},
+            )
+        return policy
 
     if mode == ExecutionMode.STANDARD:
-        return ExecutionPolicy(
+        policy = ExecutionPolicy(
             mode=mode,
             use_plan=True,
             max_steps=12,
@@ -85,8 +92,12 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
             exposed_tool_names=None,
             max_replans=1,
         )
+        if needs_plan is False:
+            from dataclasses import replace
+            return replace(policy, use_plan=False)
+        return policy
 
-    return ExecutionPolicy(
+    policy = ExecutionPolicy(
         mode=ExecutionMode.COMPLEX,
         use_plan=True,
         max_steps=24,
@@ -104,3 +115,7 @@ def policy_for(mode: ExecutionMode) -> ExecutionPolicy:
         exposed_tool_names=None,
         max_replans=2,
     )
+    if needs_plan is False:
+        from dataclasses import replace
+        return replace(policy, use_plan=False)
+    return policy

@@ -92,6 +92,12 @@ class StepEvidenceStore:
             }.issubset(strengths)
         )
 
+    def has_validation(self, *, step_id: int, edit_revision: int) -> bool:
+        return any(
+            item.strength == EvidenceStrength.VALIDATION
+            for item in self.fresh_for(step_id=step_id, edit_revision=edit_revision)
+        )
+
     @classmethod
     def _strength(cls, tool_name: str) -> EvidenceStrength:
         if tool_name in cls.IMPLEMENTATION_TOOLS:

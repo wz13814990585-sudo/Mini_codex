@@ -16,6 +16,8 @@ class ValidationStatus(
     IMPROVED = "improved"
     UNCHANGED = "unchanged"
     REGRESSED = "regressed"
+    CHANGED = "changed"
+    UNSTABLE = "unstable"
 
 
 class ProgressKind(str, Enum):
@@ -42,6 +44,7 @@ class ValidationFingerprint:
     purpose: str = "unknown"
     scope: str = "unknown"
     path: str = ""
+    failure_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -266,6 +269,8 @@ class ProgressController:
         scope: str = "unknown",
         path: str = "",
         fingerprint: ValidationFingerprint | None = None,
+        failure_ids: tuple[str, ...] = (),
+        unstable: bool = False,
     ) -> ValidationProgress:
 
         fingerprint = fingerprint or ValidationFingerprint(
@@ -274,7 +279,18 @@ class ProgressController:
             purpose=purpose,
             scope=scope,
             path=path,
+            failure_ids=tuple(failure_ids),
         )
+
+        if unstable:
+            return ValidationProgress(
+                status=ValidationStatus.UNSTABLE,
+                current_failed=failed_count,
+                current_revision=edit_revision,
+                validation_key=validation_key,
+                message="Contradictory comparable results indicate unstable validation.",
+                signal=ProgressSignal(ProgressKind.OBSERVATION, "Validation is suspected flaky."),
+            )
 
         # =====================================================
         # Cannot Interpret
@@ -475,10 +491,30 @@ class ProgressController:
         # Unchanged
         # =====================================================
 
-        if (
-            failed_count
-            == previous_failed
-        ):
+        if failed_count == previous_failed:
+
+            previous_ids = set(previous_fingerprint.failure_ids)
+            current_ids = set(fingerprint.failure_ids)
+            if previous_ids and current_ids and previous_ids != current_ids:
+                new_ids = current_ids - previous_ids
+                resolved_ids = previous_ids - current_ids
+                status = ValidationStatus.REGRESSED if new_ids else ValidationStatus.CHANGED
+                return ValidationProgress(
+                    status=status,
+                    previous_failed=previous_failed,
+                    current_failed=failed_count,
+                    previous_revision=previous_revision,
+                    current_revision=edit_revision,
+                    validation_key=validation_key,
+                    message=(
+                        f"Failure identities changed: {len(resolved_ids)} resolved, "
+                        f"{len(new_ids)} new."
+                    ),
+                    signal=ProgressSignal(
+                        ProgressKind.REGRESSED if new_ids else ProgressKind.OBSERVATION,
+                        "Comparable failure identities changed.",
+                    ),
+                )
 
             self.validation_no_progress_count += 1
 

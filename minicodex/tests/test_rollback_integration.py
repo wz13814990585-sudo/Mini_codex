@@ -98,7 +98,7 @@ def make_agent(
 # =============================================================
 
 
-def test_regressed_validation_rolls_back_latest_edit(
+def test_first_regressed_validation_does_not_roll_back_latest_edit(
     tmp_path: Path,
 ):
 
@@ -224,17 +224,18 @@ def test_regressed_validation_rolls_back_latest_edit(
         is True
     )
 
-    # Bad edit was physically reverted.
+    # A first regression is an intermediate state. Without semantic proof of
+    # causality the Harness retains it for inspection/corrective repair.
     assert (
         file_path.read_text(
             encoding="utf-8"
         )
-        == "value = 1\n"
+        == "value = 999\n"
     )
 
     assert (
         checkpoint.rolled_back
-        is True
+        is False
     )
 
     # Rollback creates a new monotonic revision.
@@ -242,7 +243,7 @@ def test_regressed_validation_rolls_back_latest_edit(
         agent.validation_pipeline
         .state
         .edit_revision
-        == 3
+        == 2
     )
 
     # Old evidence is stale.
@@ -266,7 +267,7 @@ def test_regressed_validation_rolls_back_latest_edit(
     )
 
     assert (
-        "automatically rolled back"
+        "uncertain"
         in (
             decision.followup_message
             .lower()

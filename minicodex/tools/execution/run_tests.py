@@ -1,5 +1,6 @@
 import re
 import sys
+from hashlib import sha1
 from pathlib import Path
 
 from ...agent.safety import (
@@ -524,6 +525,11 @@ def parse_pytest_output(
             MAX_FAILURE_DETAIL_LINES,
         )
     )
+    failure_fingerprints = tuple(
+        sha1(re.sub(r"\b\d+\b", "#", line).strip().encode("utf-8")).hexdigest()[:12]
+        for line in failure_details
+        if line.strip()
+    )[:20]
 
     stderr_lines = [
         line
@@ -571,6 +577,7 @@ def parse_pytest_output(
         "failure_details": (
             failure_details
         ),
+        "failure_fingerprints": list(failure_fingerprints),
         "failure_paths": failure_paths,
         "failure_type": "missing_dependency" if missing_dependency else (
             "regression_failed" if exit_code else None

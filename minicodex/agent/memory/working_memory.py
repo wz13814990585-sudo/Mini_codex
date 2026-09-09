@@ -372,6 +372,16 @@ class WorkingMemory:
             stale_keys
         )
 
+    def invalidate_validation_before(self, revision: int) -> int:
+        stale = [
+            key for key, entry in self.entries.items()
+            if entry.kind == MemoryKind.VALIDATION
+            and (entry.revision is None or entry.revision < int(revision))
+        ]
+        for key in stale:
+            self.entries.pop(key, None)
+        return len(stale)
+
     # =========================================================
     # Tool Result Observation
     # =========================================================
@@ -741,6 +751,7 @@ class WorkingMemory:
                 source_tool=tool_name,
                 path=path or None,
                 metadata=dict(data),
+                revision=revision,
             )
 
         elif (
@@ -876,6 +887,7 @@ class WorkingMemory:
                         tests_passed
                     ),
                 },
+                revision=revision,
             )
 
         # =====================================================

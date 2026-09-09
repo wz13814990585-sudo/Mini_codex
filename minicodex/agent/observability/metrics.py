@@ -26,6 +26,25 @@ class ExecutionMetrics:
     final_reason_code: str | None = None
     false_completion: bool = False
     wrong_edit: bool = False
+    routing_llm_calls: int = 0
+    routing_prompt_tokens: int = 0
+    routing_completion_tokens: int = 0
+    routing_latency: float = 0.0
+    routing_fallback_count: int = 0
+    routing_prompt_version: str = ""
+    routing_model: str = ""
+    requirements_llm_calls: int = 0
+    requirements_tokens: int = 0
+    semantic_judge_llm_calls: int = 0
+    semantic_judge_tokens: int = 0
+    semantic_judge_latency: float = 0.0
+    semantic_judge_prompt_version: str = ""
+    mode_escalations: int = 0
+    late_plan_activations: int = 0
+    repair_attempts: int = 0
+    validation_runs: int = 0
+    flaky_reruns: int = 0
+    premature_rollbacks_prevented: int = 0
 
     def reset(self, execution_mode: str | None = None, *, intent: str | None = None) -> None:
         self.execution_mode = execution_mode
@@ -47,6 +66,25 @@ class ExecutionMetrics:
         self.final_reason_code = None
         self.false_completion = False
         self.wrong_edit = False
+        self.routing_llm_calls = 0
+        self.routing_prompt_tokens = 0
+        self.routing_completion_tokens = 0
+        self.routing_latency = 0.0
+        self.routing_fallback_count = 0
+        self.routing_prompt_version = ""
+        self.routing_model = ""
+        self.requirements_llm_calls = 0
+        self.requirements_tokens = 0
+        self.semantic_judge_llm_calls = 0
+        self.semantic_judge_tokens = 0
+        self.semantic_judge_latency = 0.0
+        self.semantic_judge_prompt_version = ""
+        self.mode_escalations = 0
+        self.late_plan_activations = 0
+        self.repair_attempts = 0
+        self.validation_runs = 0
+        self.flaky_reruns = 0
+        self.premature_rollbacks_prevented = 0
 
     def record_tool(
         self,
@@ -74,6 +112,7 @@ class ExecutionMetrics:
             self.validation_tool_count += 1
             if self.calls_before_first_validation is None:
                 self.calls_before_first_validation = llm_call_count
+            self.validation_runs += 1
         if tool_name == "replan":
             self.replan_count += 1
 
@@ -88,6 +127,29 @@ class ExecutionMetrics:
 
     def record_rollback(self) -> None:
         self.rollback_count += 1
+
+    def record_routing(self, telemetry) -> None:
+        self.routing_llm_calls = int(getattr(telemetry, "calls", 0))
+        self.routing_prompt_tokens = int(getattr(telemetry, "prompt_tokens", 0))
+        self.routing_completion_tokens = int(getattr(telemetry, "completion_tokens", 0))
+        self.routing_latency = float(getattr(telemetry, "latency_seconds", 0.0))
+        self.routing_fallback_count = int(getattr(telemetry, "fallback_count", 0))
+        self.routing_prompt_version = str(getattr(telemetry, "prompt_version", ""))
+        self.routing_model = str(getattr(telemetry, "model", ""))
+
+    def record_requirements(self, telemetry) -> None:
+        self.requirements_llm_calls = int(getattr(telemetry, "calls", 0))
+        self.requirements_tokens = int(getattr(telemetry, "prompt_tokens", 0)) + int(
+            getattr(telemetry, "completion_tokens", 0)
+        )
+
+    def record_semantic_judge(self, telemetry) -> None:
+        self.semantic_judge_llm_calls += int(getattr(telemetry, "calls", 0))
+        self.semantic_judge_tokens += int(getattr(telemetry, "prompt_tokens", 0)) + int(
+            getattr(telemetry, "completion_tokens", 0)
+        )
+        self.semantic_judge_latency += float(getattr(telemetry, "latency_seconds", 0.0))
+        self.semantic_judge_prompt_version = str(getattr(telemetry, "prompt_version", ""))
 
 
 @dataclass

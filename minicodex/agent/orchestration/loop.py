@@ -135,9 +135,24 @@ def run_agent_loop(
     # Main Step Budget
     # =========================================================
 
-    for agent_step in range(
-        task_max_steps
-    ):
+    for agent_step in range(int(getattr(agent, "configured_max_steps", task_max_steps))):
+
+        agent.task_steps_consumed = agent_step
+        task_max_steps = int(getattr(agent, "task_max_steps", task_max_steps))
+        remaining_before_turn = task_max_steps - agent_step
+        escalation_reason = agent.runtime_control.should_escalate(
+            agent, remaining_steps=remaining_before_turn
+        )
+        if escalation_reason and agent.runtime_control.escalate(agent, reason=escalation_reason):
+            task_max_steps = int(agent.task_max_steps)
+            if agent.execution_policy.use_plan:
+                agent.activate_late_plan(reason=escalation_reason)
+        late_plan_reason = agent.runtime_control.should_activate_plan(agent)
+        if late_plan_reason:
+            agent.runtime_control.enable_planning(agent)
+            agent.activate_late_plan(reason=late_plan_reason)
+        if agent_step >= task_max_steps:
+            break
 
         print(
             f"\n[Agent Step "

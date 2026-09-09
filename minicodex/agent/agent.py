@@ -16,17 +16,21 @@ from .context import (
 )
 from .progress import ActionController, FinalizationController
 from .validation import (
+    JudgeContextBuilder,
     RegressionPolicy,
+    RegressionRecoveryPolicy,
     RelevantPathResolver,
     TaskCompletionPolicy,
     ValidationPipeline,
     ValidationSelector,
+    SemanticRegressionJudge,
 )
 from .dependency import DependencyResolver
 from .routing import ExecutionMode, ExecutionPolicy, TaskIntent, TaskRouter, policy_for
 from .runtime import (
     GitAwareness,
     GitRepositoryInspector,
+    RuntimeTaskControl,
     ToolExecutor,
 )
 from .orchestration.loop import (
@@ -46,7 +50,10 @@ from .observability import (
     TokenMetrics,
 )
 from .progress import ProgressController
-from .planning import AgentPlan, PlanProgressReconciler, StepEvidenceStore
+from .planning import (
+    AgentPlan, PlanProgressReconciler, RequirementsExtractor,
+    StepEvidenceStore, TaskRequirements,
+)
 from .progress import RecoveryController
 from .safety import (
     SafetyPolicy,
@@ -72,6 +79,8 @@ class MiniCodexAgent:
         status_interval_seconds: float = 15.0,
         max_no_progress_steps: int = 5,
         task_router: TaskRouter | None = None,
+        requirements_extractor: RequirementsExtractor | None = None,
+        semantic_judge: SemanticRegressionJudge | None = None,
         regression_policy: RegressionPolicy | None = None,
         output_level: str | OutputLevel = OutputLevel.NORMAL,
     ):
@@ -295,6 +304,14 @@ class MiniCodexAgent:
         ) = None
 
         self.task_router = task_router or TaskRouter()
+        self.requirements_extractor = requirements_extractor or RequirementsExtractor()
+        self.task_requirements = TaskRequirements()
+        self.runtime_control = RuntimeTaskControl()
+        self.semantic_judge = semantic_judge or SemanticRegressionJudge()
+        self.judge_context_builder = JudgeContextBuilder()
+        self.regression_recovery_policy = RegressionRecoveryPolicy()
+        self.task_steps_consumed = 0
+        self.concrete_blockers: list[str] = []
         self.regression_policy = regression_policy or RegressionPolicy()
         self.execution_route = None
         self.execution_policy: ExecutionPolicy | None = None
@@ -418,6 +435,8 @@ class MiniCodexAgent:
         route = self.execution_route
         state.mode = getattr(self.execution_policy, "mode", None)
         state.intent = getattr(route, "intent", TaskIntent.MODIFY)
+        state.needs_plan = bool(getattr(route, "needs_plan", False))
+        state.planning_activated = self.active_plan is not None
         state.user_request = self.active_user_request or ""
         state.final_response_mode = self.final_response_mode.value
         state.target_paths = tuple(getattr(route, "target_paths", ()) or ())
@@ -437,6 +456,13 @@ class MiniCodexAgent:
             state.remaining_steps = max(0, int(remaining_steps))
         latest = validation_state.latest_evidence
         state.latest_validation_outcome = latest.outcome if latest is not None else None
+        state.active_evidence_edit_revision = (
+            getattr(latest, "edit_revision", None) if latest is not None else None
+        )
+        state.requirement_ids = tuple(item.id for item in self.task_requirements.items)
+        state.satisfied_requirement_ids = tuple(
+            item.id for item in self.task_requirements.items if item.satisfied
+        )
         return state
 
     def current_regression_requirement(self):
@@ -506,9 +532,11 @@ class MiniCodexAgent:
         self.task_requires_validation = bool(
             self.execution_route and self.execution_route.intent == TaskIntent.MODIFY
         )
+        self.safety_policy.begin_task(
+            user_input,
+            routed_intent=getattr(self.execution_route, "intent", None),
+        )
         self.final_response_mode = self.completion_handler.response_mode(self)
-        # FAST is structurally planless. A legacy caller cannot force the
-        # Planner back into this mode with use_planning=True.
         planning_enabled = bool(
             self.execution_policy.use_plan
             and use_planning is not False
@@ -555,6 +583,30 @@ class MiniCodexAgent:
             self.execution_policy.mode.value,
             intent=self.execution_route.intent.value,
         )
+        self.execution_metrics.record_routing(self.task_router.last_telemetry)
+
+        self.requirements_extractor.reset()
+        self.task_requirements = (
+            self.requirements_extractor.extract(
+                user_input,
+                mode=self.execution_policy.mode,
+                target_paths=getattr(self.execution_route, "target_paths", ()),
+            )
+            if self.task_requires_validation
+            else TaskRequirements()
+        )
+        self.execution_metrics.record_requirements(
+            self.requirements_extractor.last_telemetry
+        )
+        self.runtime_control.reset(planning_active=False)
+        self.runtime_control.control_llm_calls = (
+            self.execution_metrics.routing_llm_calls
+            + self.execution_metrics.requirements_llm_calls
+        )
+        self.semantic_judge.reset()
+        self.regression_recovery_policy.reset()
+        self.task_steps_consumed = 0
+        self.concrete_blockers.clear()
 
         self.edit_retry.reset()
 
@@ -573,6 +625,8 @@ class MiniCodexAgent:
             target_paths=tuple(
                 getattr(self.execution_route, "target_paths", ()) or ()
             ),
+            needs_plan=bool(getattr(self.execution_route, "needs_plan", False)),
+            planning_activated=planning_enabled,
             remaining_steps=self.task_max_steps,
         )
 
@@ -652,6 +706,7 @@ class MiniCodexAgent:
         # Agent Loop
         # =====================================================
 
+        self.runtime_control.planning_activated = self.active_plan is not None
         self.action_controller.reset(self.task_progress_state())
 
         return (
@@ -672,7 +727,33 @@ class MiniCodexAgent:
             return policy
 
         self.execution_route = self.task_router.route(user_input)
-        return policy_for(self.execution_route.mode)
+        return policy_for(
+            self.execution_route.mode,
+            needs_plan=getattr(self.execution_route, "needs_plan", None),
+        )
+
+    def activate_late_plan(self, *, reason: str) -> bool:
+        """Monotonically activate planning when runtime scope disproves direct execution."""
+        if self.active_plan is not None or self.runtime_control.planning_activated:
+            return False
+        if self.planner is None or not self.task_requires_validation:
+            return False
+        try:
+            self.active_plan = self.planner.create_plan(
+                self.active_user_request or "",
+                max_agent_steps=self.task_max_steps,
+                max_plan_steps=max(1, self.execution_policy.max_plan_steps),
+                token_metrics=self.token_metrics,
+            )
+        except Exception:
+            return False
+        self.runtime_control.planning_activated = True
+        self.runtime_control.late_plan_activations += 1
+        self.execution_metrics.late_plan_activations = self.runtime_control.late_plan_activations
+        self.plan_version += 1
+        self.working_summary.add(f"Late planning activated: {reason}")
+        self._print_plan(self.active_plan)
+        return True
 
     def get_tool_schemas(self) -> list[dict]:
         """Expose only mode-relevant tools without mutating the Registry."""
@@ -871,6 +952,20 @@ class MiniCodexAgent:
                             "criteria that are not yet satisfied."
                         ),
                     }
+            elif getattr(current, "requires_semantic_completion", False) and not self.step_evidence.has_validation(
+                step_id=current.id,
+                edit_revision=self.validation_pipeline.state.edit_revision,
+            ):
+                return {
+                    "completed": False,
+                    "step_id": current.id,
+                    "step_description": current.description,
+                    "failure_type": "broad_semantic_step_without_acceptance_evidence",
+                    "message": (
+                        "A broad semantic plan step requires current-revision "
+                        "acceptance evidence; a file edit alone is insufficient."
+                    ),
+                }
             elif not self.step_evidence.has_sufficient(
                 step_id=current.id,
                 edit_revision=self.validation_pipeline.state.edit_revision,

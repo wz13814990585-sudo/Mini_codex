@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import os
 
 from dotenv import load_dotenv
 
@@ -9,6 +10,9 @@ from .agent.memory import (
     attach_long_term_memory,
 )
 from .agent.planning import Planner, Replanner
+from .agent.planning import RequirementsExtractor
+from .agent.routing import TaskRouter
+from .agent.validation import SemanticRegressionJudge
 from .agent.context import RepoMap, SymbolIndex
 from .agent.safety import (
     SandboxLimits,
@@ -61,6 +65,10 @@ def main(output_level: str = "normal"):
     llm = (
         LLMClient()
     )
+    control_model = os.getenv("DEEPSEEK_CONTROL_MODEL", "").strip()
+    judge_model = os.getenv("DEEPSEEK_JUDGE_MODEL", "").strip()
+    control_llm = LLMClient(model=control_model) if control_model else llm
+    judge_llm = LLMClient(model=judge_model) if judge_model else control_llm
 
     # =========================================================
     # Stage 17 Shared Process Sandbox
@@ -255,6 +263,9 @@ def main(output_level: str = "normal"):
             planner=planner,
             replanner=replanner,
             repo_map=repo_map,
+            task_router=TaskRouter(llm=control_llm),
+            requirements_extractor=RequirementsExtractor(llm=control_llm),
+            semantic_judge=SemanticRegressionJudge(llm=judge_llm),
             max_steps=20,
             output_level=output_level,
         )
@@ -432,7 +443,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         choices=("normal", "verbose", "debug"),
-        default="normal",
-        help="terminal detail level (default: normal)",
+        default="debug",
+        help="terminal detail level (default: debug)",
     )
     main(output_level=parser.parse_args().output)

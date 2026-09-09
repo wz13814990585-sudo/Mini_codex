@@ -31,6 +31,7 @@ class TaskOutcome(str, Enum):
     EDITED_AND_VALIDATED = "edited_and_validated"
     BLOCKED = "blocked"
     INCOMPLETE = "incomplete"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)

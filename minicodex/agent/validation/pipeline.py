@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from ...tools.results import ToolResult
@@ -46,6 +46,31 @@ class ValidationPurpose(
 
     ACCEPTANCE = "acceptance"
     REGRESSION = "regression"
+
+
+class FailureDelta(str, Enum):
+    PRE_EXISTING_FAILURE = "pre_existing_failure"
+    NEW_FAILURE = "new_failure"
+    RESOLVED_FAILURE = "resolved_failure"
+    PERSISTING_FAILURE = "persisting_failure"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class FailureComparison:
+    new: tuple[str, ...] = ()
+    resolved: tuple[str, ...] = ()
+    persisting: tuple[str, ...] = ()
+
+    @property
+    def primary(self) -> FailureDelta:
+        if self.new:
+            return FailureDelta.NEW_FAILURE
+        if self.resolved:
+            return FailureDelta.RESOLVED_FAILURE
+        if self.persisting:
+            return FailureDelta.PERSISTING_FAILURE
+        return FailureDelta.UNKNOWN
 
 
 # =============================================================
@@ -116,6 +141,21 @@ class ValidationEvidence:
     details: dict = field(
         default_factory=dict
     )
+
+    failure_ids: tuple[str, ...] = ()
+
+    unstable: bool = False
+
+    environment_failure: bool = False
+
+    @property
+    def validation_key(self) -> str:
+        normalized = " ".join(str(self.path or "").split())
+        if self.tool_name != "run_command":
+            normalized = normalized.replace("\\", "/")
+            while normalized.startswith("./"):
+                normalized = normalized[2:]
+        return "|".join((self.tool_name, self.purpose.value, self.scope.value, normalized))
 
     @property
     def validation_passed(
@@ -203,6 +243,12 @@ class ValidationState:
 
     evidence_sequence: int = 0
 
+    evidence_history: list[ValidationEvidence] = field(default_factory=list)
+
+    baseline_by_key: dict[str, ValidationEvidence] = field(default_factory=dict)
+
+    unstable_keys: set[str] = field(default_factory=set)
+
     def reset(
         self,
     ) -> None:
@@ -220,6 +266,9 @@ class ValidationState:
         self.latest_evidence = None
 
         self.evidence_sequence = 0
+        self.evidence_history.clear()
+        self.baseline_by_key.clear()
+        self.unstable_keys.clear()
 
 
 # =============================================================
@@ -320,6 +369,7 @@ class ValidationPipeline:
         else:
             return None
 
+        evidence = self._mark_stability(evidence)
         self._record_evidence(
             evidence
         )
@@ -333,6 +383,9 @@ class ValidationPipeline:
                 "path": evidence.path,
                 "failed_count": evidence.failed_count,
                 "validation_summary": evidence.summary,
+                "validation_key": evidence.validation_key,
+                "failure_ids": list(evidence.failure_ids),
+                "unstable": evidence.unstable,
             }
         )
 
@@ -473,12 +526,15 @@ class ValidationPipeline:
             evidence
         )
 
+        self.state.evidence_history.append(evidence)
+        if len(self.state.evidence_history) > 100:
+            del self.state.evidence_history[:-100]
+        if evidence.edit_revision == 0 and evidence.purpose == ValidationPurpose.REGRESSION:
+            self.state.baseline_by_key[evidence.validation_key] = evidence
+
         self.state.evidence_sequence += 1
 
-        passed = (
-            evidence.outcome
-            == ValidationOutcome.PASSED
-        )
+        passed = evidence.outcome == ValidationOutcome.PASSED and not evidence.unstable
 
         # =====================================================
         # Acceptance
@@ -532,6 +588,51 @@ class ValidationPipeline:
         if not passed:
 
             self.state.full_passed = False
+
+    def _mark_stability(self, evidence: ValidationEvidence) -> ValidationEvidence:
+        comparable = [
+            item for item in self.state.evidence_history
+            if item.edit_revision == evidence.edit_revision
+            and item.validation_key == evidence.validation_key
+        ]
+        if evidence.validation_key in self.state.unstable_keys:
+            recent = comparable[-2:]
+            if len(recent) == 2 and all(item.outcome == evidence.outcome for item in recent):
+                self.state.unstable_keys.discard(evidence.validation_key)
+                return evidence
+            return replace(evidence, unstable=True)
+        if comparable and any(item.outcome != evidence.outcome for item in comparable):
+            self.state.unstable_keys.add(evidence.validation_key)
+            return replace(evidence, unstable=True)
+        return evidence
+
+    def failure_delta(self, evidence: ValidationEvidence) -> FailureDelta:
+        comparison = self.compare_baseline(evidence)
+        if comparison is None:
+            return FailureDelta.UNKNOWN
+        if comparison.new:
+            return FailureDelta.NEW_FAILURE
+        if comparison.resolved:
+            return FailureDelta.RESOLVED_FAILURE
+        if comparison.persisting:
+            return (
+                FailureDelta.PRE_EXISTING_FAILURE
+                if evidence.edit_revision > 0
+                else FailureDelta.PERSISTING_FAILURE
+            )
+        return FailureDelta.UNKNOWN
+
+    def compare_baseline(self, evidence: ValidationEvidence) -> FailureComparison | None:
+        baseline = self.state.baseline_by_key.get(evidence.validation_key)
+        if baseline is None:
+            return None
+        before = set(baseline.failure_ids)
+        after = set(evidence.failure_ids)
+        return FailureComparison(
+            new=tuple(sorted(after - before)),
+            resolved=tuple(sorted(before - after)),
+            persisting=tuple(sorted(before & after)),
+        )
 
     # =========================================================
     # Next Action
@@ -730,6 +831,8 @@ class ValidationPipeline:
                 summary=(
                     result.summary
                 ),
+                environment_failure=True,
+                details=dict(result.data),
             )
 
         tests_passed = (
@@ -805,6 +908,8 @@ class ValidationPipeline:
                 summary=(
                     result.summary
                 ),
+                failure_ids=tuple(dict.fromkeys(tuple(result.data.get("failed_tests", ()) or ()) + tuple(result.data.get("failure_fingerprints", ()) or ()))),
+                details=dict(result.data),
             )
 
         # =====================================================
@@ -845,6 +950,8 @@ class ValidationPipeline:
                 summary=(
                     result.summary
                 ),
+                failure_ids=tuple(dict.fromkeys(tuple(result.data.get("failed_tests", ()) or ()) + tuple(result.data.get("failure_fingerprints", ()) or ()))),
+                details=dict(result.data),
             )
 
         # =====================================================
@@ -873,6 +980,8 @@ class ValidationPipeline:
             summary=(
                 result.summary
             ),
+            failure_ids=tuple(dict.fromkeys(tuple(result.data.get("failed_tests", ()) or ()) + tuple(result.data.get("failure_fingerprints", ()) or ()))),
+            details=dict(result.data),
         )
 
     # =========================================================

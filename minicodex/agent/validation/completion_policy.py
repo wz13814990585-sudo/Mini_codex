@@ -61,8 +61,30 @@ class TaskCompletionPolicy:
                 reason="The task is blocked by a concrete external or safety constraint.",
             )
 
+        requirements = getattr(agent, "task_requirements", None)
+        if (
+            decision.can_complete
+            and requirements is not None
+            and getattr(requirements, "items", None)
+            and not requirements.all_satisfied
+        ):
+            missing = "; ".join(item.description for item in requirements.unsatisfied[:4])
+            return replace(
+                decision,
+                status=CompletionStatus.NOT_READY,
+                outcome=TaskOutcome.INCOMPLETE,
+                reason=f"Task requirements lack current evidence: {missing}",
+            )
+
         plan = getattr(agent, "active_plan", None)
         plan_required = bool(getattr(policy, "use_plan", plan is not None))
+        if decision.can_complete and plan_required and plan is None:
+            return replace(
+                decision,
+                status=CompletionStatus.NOT_READY,
+                outcome=TaskOutcome.INCOMPLETE,
+                reason="The routing policy requires a plan, but no valid active plan exists.",
+            )
         if (
             decision.can_complete
             and plan_required

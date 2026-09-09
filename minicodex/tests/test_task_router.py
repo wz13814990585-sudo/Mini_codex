@@ -57,7 +57,7 @@ def test_uncertain_task_routes_standard_not_complex():
     route = TaskRouter().route("Improve the account settings behavior")
 
     assert route.mode == ExecutionMode.STANDARD
-    assert "uncertain" in route.signals[0]
+    assert route.fallback_used is True
 
 
 def test_runtime_word_alone_does_not_force_complex_mode():

@@ -59,6 +59,10 @@ class CompletionHandler:
     ) -> CompletionHandleResult:
         response_mode = self.response_mode(agent)
         if response_mode == FinalResponseMode.INFORMATIONAL_ANSWER:
+            if getattr(agent.validation_pipeline.state, "has_edit", False):
+                return self.handle_incomplete(
+                    agent, reason="An informational task cannot complete after a workspace edit."
+                )
             record_task_outcome(
                 agent,
                 TaskOutcome.INFORMATIONAL_ANSWER,
@@ -68,8 +72,12 @@ class CompletionHandler:
         if response_mode == FinalResponseMode.INSPECTION_REPORT:
             route = getattr(agent, "execution_route", None)
             metrics = getattr(agent, "execution_metrics", None)
-            needs_repo_inspection = bool(getattr(route, "target_paths", ()))
+            needs_repo_inspection = True
             inspected = bool(getattr(metrics, "inspection_tool_count", 0))
+            if getattr(agent.validation_pipeline.state, "has_edit", False):
+                return self.handle_incomplete(
+                    agent, reason="Inspect-only authorization was violated by a workspace edit."
+                )
             if needs_repo_inspection and not inspected and remaining_steps > 0:
                 return CompletionHandleResult(
                     False,
@@ -90,7 +98,7 @@ class CompletionHandler:
         if transition.can_finish:
             return self._successful(agent, transition.decision)
 
-        blocker = self._concrete_blocker(content)
+        blocker = self._concrete_blocker(agent, content)
         if blocker is not None:
             record_task_outcome(agent, TaskOutcome.BLOCKED, blocker, ReasonCode.BLOCKED)
             return CompletionHandleResult(
@@ -185,7 +193,7 @@ class CompletionHandler:
             reconcile()
 
     @staticmethod
-    def _concrete_blocker(content: str) -> str | None:
+    def _concrete_blocker(agent, content: str) -> str | None:
         text = str(content or "").strip()
         if not text.upper().startswith("BLOCKED:"):
             return None
@@ -194,6 +202,9 @@ class CompletionHandler:
             "", "blocked", "cannot do this", "i cannot do this", "unable to proceed"
         }
         if len(reason) < 8 or reason.casefold() in generic:
+            return None
+        evidence = tuple(getattr(agent, "concrete_blockers", ()) or ())
+        if not evidence:
             return None
         return reason
 

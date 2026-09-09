@@ -232,6 +232,29 @@ class SafetyPolicy:
         self.git_awareness = (
             git_awareness
         )
+        self.edits_authorized = True
+        self.test_changes_authorized = False
+        self.user_request = ""
+        self.dependencies_authorized = True
+
+    def begin_task(self, user_request: str, *, routed_intent=None) -> None:
+        """Derive non-negotiable permissions from raw user text, not LLM output."""
+        text = str(user_request or "")
+        self.user_request = text
+        explicit_no_edit = bool(re.search(
+            r"\b(?:do not|don't|dont|without)\s+(?:change|modify|edit|write)(?:ing)?\b|"
+            r"(?:不要|无需|不需要)(?:修改|改动|编辑|写入)", text, re.IGNORECASE,
+        ))
+        routed = getattr(routed_intent, "value", routed_intent)
+        self.edits_authorized = not explicit_no_edit and routed == "modify"
+        self.test_changes_authorized = bool(re.search(
+            r"\b(?:add|update|change|fix|write)\s+(?:the\s+)?tests?\b|"
+            r"(?:添加|更新|修改|修复|编写)(?:测试|用例)", text, re.IGNORECASE,
+        ))
+        self.dependencies_authorized = not bool(re.search(
+            r"\b(?:do not|don't|without)\s+(?:add|install)\s+(?:new\s+)?dependenc|"
+            r"(?:不要|不允许)(?:添加|安装)(?:新)?依赖", text, re.IGNORECASE,
+        ))
 
     # =========================================================
     # Public Assessment
@@ -244,6 +267,12 @@ class SafetyPolicy:
     ) -> SafetyDecision:
 
         if tool_name == "install_python_package":
+            if not self.dependencies_authorized:
+                return SafetyDecision(
+                    SafetyLevel.BLOCKED, False,
+                    "The user explicitly prohibited adding or installing dependencies.",
+                    "dependency_forbidden", tool_name,
+                )
             return SafetyDecision(
                 level=SafetyLevel.CAUTION,
                 allowed=True,
@@ -305,6 +334,13 @@ class SafetyPolicy:
         arguments: dict,
     ) -> SafetyDecision:
 
+        if not self.edits_authorized:
+            return SafetyDecision(
+                SafetyLevel.BLOCKED, False,
+                "The current task does not authorize repository modification.",
+                "task_no_edit_constraint", tool_name,
+            )
+
         path_value = (
             arguments
             .get(
@@ -349,6 +385,24 @@ class SafetyPolicy:
                 raw_path
             )
         )
+
+        if self._test_gaming_attempt(normalized, arguments):
+            return SafetyDecision(
+                SafetyLevel.BLOCKED, False,
+                "The proposed test edit weakens or disables validation without explicit authorization.",
+                "anti_test_gaming", tool_name, path=normalized,
+            )
+
+        protected_root = normalized.split("/", 1)[0] if normalized else ""
+        if protected_root in {
+            ".venv", "venv", "node_modules", "vendor", "dist", "build",
+            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        } and normalized.casefold() not in self.user_request.casefold():
+            return SafetyDecision(
+                SafetyLevel.BLOCKED, False,
+                "Generated, vendor, dependency, environment, and cache paths are protected unless explicitly requested.",
+                "protected_generated_path", tool_name, path=normalized,
+            )
 
         # =====================================================
         # Workspace Escape
@@ -479,6 +533,19 @@ class SafetyPolicy:
             tool_name=tool_name,
             path=normalized,
         )
+
+    def _test_gaming_attempt(self, path: str | None, arguments: dict) -> bool:
+        if not path or not re.search(r"(?:^|/)(?:tests?|test_[^/]+)(?:/|\.|$)", path, re.IGNORECASE):
+            return False
+        candidate = "\n".join(
+            str(arguments.get(name, "") or "")
+            for name in ("content", "new_text", "replacement")
+        )
+        if re.search(r"pytest\.mark\.(?:skip|xfail)|@unittest\.skip|assert\s+True\b", candidate):
+            return not self.test_changes_authorized
+        if arguments.get("content") == "":
+            return True
+        return False
 
     # =========================================================
     # Command Assessment

@@ -4,7 +4,7 @@ from ....agent.agent import MiniCodexAgent
 from ....agent.routing import ExecutionMode
 from ....agent.routing import policy_for
 from ....agent.orchestration import ContextBuilder
-from ....agent.routing import TaskIntent, TaskRoute
+from ....agent.routing import RoutingDecision, TaskIntent
 from ....agent.task_state import AgentPhase
 from ....tools.registry import ToolRegistry
 
@@ -13,9 +13,11 @@ def make_agent(tmp_path):
     agent = MiniCodexAgent(llm=None, registry=ToolRegistry(), repo_map=None)
     agent.workspace = tmp_path
     agent.active_user_request = "Update app.py"
-    agent.execution_route = TaskRoute(
+    agent.execution_route = RoutingDecision(
         intent=TaskIntent.MODIFY,
         mode=ExecutionMode.FAST,
+        needs_plan=False,
+        confidence=1.0,
         reason="fixture",
         target_paths=("app.py",),
     )

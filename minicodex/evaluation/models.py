@@ -153,6 +153,15 @@ class EvaluationResult:
     false_completion: bool = False
 
     wrong_edit: bool = False
+    routing_llm_calls: int = 0
+    requirements_llm_calls: int = 0
+    semantic_judge_llm_calls: int = 0
+    control_llm_calls: int = 0
+    mode_escalations: int = 0
+    late_plan_activations: int = 0
+    repair_attempts: int = 0
+    flaky_reruns: int = 0
+    premature_rollbacks_prevented: int = 0
 
     duration_seconds: float = 0.0
 

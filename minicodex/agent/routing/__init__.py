@@ -1,21 +1,25 @@
-"""Deterministic task intent and complexity routing."""
+"""Semantic task routing and deterministic execution policy."""
 
-from .intent import IntentClassifier, TaskIntent
-from .complexity import ComplexityRoute, ComplexityRouter
+from .intent import TaskIntent
 from .execution_mode import ExecutionMode
 from .execution_policy import ExecutionPolicy, FAST_TOOL_NAMES, policy_for
-from .task_router import RoutingRule, TaskRoute, TaskRouter
+from .task_router import (
+    ROUTING_PROMPT_VERSION,
+    ROUTING_SYSTEM_PROMPT,
+    RoutingDecision,
+    RoutingTelemetry,
+    TaskRouter,
+)
 
 __all__ = [
-    "ComplexityRoute",
-    "ComplexityRouter",
-    "IntentClassifier",
     "ExecutionMode",
     "ExecutionPolicy",
     "FAST_TOOL_NAMES",
     "policy_for",
-    "RoutingRule",
+    "ROUTING_PROMPT_VERSION",
+    "ROUTING_SYSTEM_PROMPT",
+    "RoutingDecision",
+    "RoutingTelemetry",
     "TaskIntent",
-    "TaskRoute",
     "TaskRouter",
 ]

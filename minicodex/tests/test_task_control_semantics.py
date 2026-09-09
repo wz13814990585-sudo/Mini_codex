@@ -128,7 +128,7 @@ def test_fast_is_planless_even_when_legacy_caller_requests_planning(tmp_path):
     )
     agent.run("Create try_code/game.html", use_planning=True)
     assert agent.active_plan is None
-    assert agent.execution_metrics.final_outcome == "blocked"
+    assert agent.execution_metrics.final_outcome == "incomplete"
 
 
 def test_router_uses_semantics_not_single_path_only():

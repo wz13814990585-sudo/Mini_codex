@@ -86,6 +86,14 @@ class ToolBatchRunner:
                 print("\n[Duplicate Tool Blocked]")
             elif not result.success:
                 agent.plan_orchestrator.record_attempt_failure(current_plan_step)
+                failure_type = str(result.data.get("failure_type", "") or "")
+                if failure_type in {
+                    "safety_blocked", "permission_denied", "workspace_conflict",
+                    "rollback_conflict", "missing_credential", "environment_failure",
+                }:
+                    agent.concrete_blockers.append(
+                        f"{failure_type}: {result.error or result.summary}"
+                    )
 
             current_revision = agent.validation_pipeline.state.edit_revision
             recorded_revision = (
@@ -153,6 +161,20 @@ class ToolBatchRunner:
             signal = ProgressSignal(ProgressKind.OBSERVATION, "Tool produced an observation.")
             if tool_name in EDIT_TOOL_NAMES and result.success:
                 revision = agent.validation_pipeline.record_edit()
+                requirements = getattr(agent, "task_requirements", None)
+                if requirements is not None:
+                    requirements.invalidate_revision(revision)
+                    requirements.record_edit(path=str(arguments.get("path", "")), revision=revision)
+                agent.working_summary.advance_revision(revision)
+                agent._repo_map_initialized = False
+                agent._repo_map_revision = None
+                # Latest keyed repository observations cannot survive mutation.
+                memory = getattr(getattr(agent, "working_summary", None), "memory", None)
+                if memory is not None:
+                    try:
+                        memory.invalidate_path(str(arguments.get("path", "")))
+                    except Exception:
+                        pass
                 agent.task_state.transition_for_tool(tool_name, success=True)
                 if hasattr(agent, "step_evidence"):
                     agent.step_evidence.record(
@@ -199,6 +221,9 @@ class ToolBatchRunner:
                 )
                 if evidence is not None:
                     evidence_items.append(evidence)
+                    requirements = getattr(agent, "task_requirements", None)
+                    if requirements is not None:
+                        requirements.record_validation(evidence)
                     agent.task_progress_state()
                     agent.task_state.transition_for_tool(
                         tool_name,

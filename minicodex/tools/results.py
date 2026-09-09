@@ -19,6 +19,10 @@ class ToolResult:
         if self.error:
             parts.append(f"Error: {self.error}")
 
-        return "\n\n".join(parts)
-
+        text = "\n\n".join(parts)
+        # Full raw output belongs in trace/artifacts; provider context receives
+        # one bounded observation so old logs cannot dominate future turns.
+        if len(text) > 16_000:
+            text = text[:15_800] + "\n\n[output truncated by Harness]"
+        return text
 

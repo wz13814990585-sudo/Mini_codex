@@ -483,6 +483,21 @@ class EvaluationHarness:
                 and not (completion.can_complete and plan_completed)
             ),
             wrong_edit=bool(intent != TaskIntent.MODIFY and edit_count > 0),
+            routing_llm_calls=int(metric("routing_llm_calls", 0) or 0),
+            requirements_llm_calls=int(metric("requirements_llm_calls", 0) or 0),
+            semantic_judge_llm_calls=int(metric("semantic_judge_llm_calls", 0) or 0),
+            control_llm_calls=(
+                int(metric("routing_llm_calls", 0) or 0)
+                + int(metric("requirements_llm_calls", 0) or 0)
+                + int(metric("semantic_judge_llm_calls", 0) or 0)
+            ),
+            mode_escalations=int(metric("mode_escalations", 0) or 0),
+            late_plan_activations=int(metric("late_plan_activations", 0) or 0),
+            repair_attempts=int(metric("repair_attempts", 0) or 0),
+            flaky_reruns=int(metric("flaky_reruns", 0) or 0),
+            premature_rollbacks_prevented=int(
+                metric("premature_rollbacks_prevented", 0) or 0
+            ),
             duration_seconds=(
                 duration
             ),

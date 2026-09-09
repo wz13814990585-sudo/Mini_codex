@@ -13,18 +13,12 @@ from .orchestration_transitions import (
 from ..progress import ValidationStatus
 from ..reason_codes import ReasonCode
 from ..validation import ValidationEvidence, ValidationOutcome
+from ..validation import RegressionClassification
 from ..editing.rollback_coordinator import RollbackCoordinator
 
 
 def validation_evidence_key(evidence: ValidationEvidence) -> str:
-    return "|".join(
-        (
-            evidence.tool_name,
-            evidence.purpose.value,
-            evidence.scope.value,
-            evidence.path or "",
-        )
-    )
+    return evidence.validation_key
 
 
 def active_plan_incomplete(agent) -> bool:
@@ -84,6 +78,10 @@ def acceptance_evidence_reminder(
             if getattr(getattr(agent, "validation_pipeline", None), "state", None)
             else 0,
             desired_purpose="acceptance",
+            runtime_behavior=any(
+                marker in request.casefold()
+                for marker in ("game", "playable", "click", "keyboard", "游戏", "可玩", "点击", "键盘")
+            ),
         )
         if selection is not None:
             if selection.tool_name == "validate_static_web":
@@ -144,6 +142,8 @@ class ValidationOrchestrator:
             purpose=evidence.purpose.value,
             scope=evidence.scope.value,
             path=evidence.path or "",
+            failure_ids=evidence.failure_ids,
+            unstable=evidence.unstable,
         )
         agent.latest_progress_signal = progress.signal
         if progress.message:
@@ -155,6 +155,71 @@ class ValidationOrchestrator:
             and progress.status == ValidationStatus.REGRESSED
             and progress.crossed_revision
         ):
+            if evidence.unstable:
+                metrics = getattr(agent, "execution_metrics", None)
+                if metrics is not None:
+                    metrics.flaky_reruns += 1
+                    metrics.premature_rollbacks_prevented += 1
+                return ControlDecision(
+                    restart=True,
+                    followup_message=(
+                        "Comparable validation contradicted itself on the same revision. "
+                        "Rerun it once for stability; do not repair or rollback yet."
+                    ),
+                    skipped_reason="suspected flaky validation",
+                )
+
+            judge = getattr(agent, "semantic_judge", None)
+            context_builder = getattr(agent, "judge_context_builder", None)
+            control = getattr(agent, "runtime_control", None)
+            can_judge = control is None or control.consume_control_call()
+            assessment = (
+                judge.assess(context_builder.build(agent, evidence, progress))
+                if judge is not None and context_builder is not None and can_judge
+                else None
+            )
+            metrics = getattr(agent, "execution_metrics", None)
+            if metrics is not None and judge is not None and can_judge:
+                metrics.record_semantic_judge(judge.last_telemetry)
+                metrics.premature_rollbacks_prevented += 1
+
+            classification = getattr(assessment, "classification", RegressionClassification.UNCERTAIN)
+            if classification == RegressionClassification.EXPECTED_CHANGE:
+                return ControlDecision(
+                    restart=True,
+                    followup_message=(
+                        "The regression evidence matches an explicit requested contract change. "
+                        "Retain the implementation and update only legitimate affected tests while "
+                        "preserving their validation strength, then rerun acceptance/regression."
+                    ),
+                    skipped_reason="semantic judge classified expected change",
+                )
+            if classification == RegressionClassification.UNCERTAIN:
+                return ControlDecision(
+                    restart=True,
+                    followup_message=(
+                        "Regression meaning is uncertain. Inspect the changed behavior and focused "
+                        "failure evidence; do not rollback until causality is established."
+                    ),
+                    skipped_reason="semantic regression assessment uncertain",
+                )
+
+            repair_policy = getattr(agent, "regression_recovery_policy", None)
+            if repair_policy is not None:
+                repair_policy.record_strategy(
+                    f"revision:{evidence.edit_revision}|failures:{','.join(evidence.failure_ids)}"
+                )
+                if metrics is not None:
+                    metrics.repair_attempts = repair_policy.repair_attempts
+                if not repair_policy.rollback_allowed:
+                    return ControlDecision(
+                        restart=True,
+                        followup_message=(
+                            "A true regression is evidenced. Make one bounded materially different "
+                            "corrective edit and rerun the same comparable validation."
+                        ),
+                        skipped_reason="bounded repair precedes rollback",
+                    )
             rollback = self.rollback_coordinator.coordinate(agent, evidence, progress)
             if rollback is not None:
                 return rollback

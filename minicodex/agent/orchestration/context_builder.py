@@ -22,6 +22,14 @@ class ContextBuilder:
             f"Intent: {state.intent.value}. Mode: {state.mode.value if state.mode else 'unknown'}. Phase: {state.phase.value}.",
             f"Targets: {target_text}. Remaining steps: {remaining_agent_steps}.",
         ]
+        requirements = getattr(agent, "task_requirements", None)
+        if requirements is not None and requirements.items:
+            sections.append(
+                "Current task requirements:\n" + "\n".join(
+                    f"- {item.id} [{'satisfied' if item.satisfied else 'open'}]: {item.description}"
+                    for item in requirements.items[:12]
+                )
+            )
         summary = agent.working_summary.render_relevant(targets, max_items=8)
 
         if state.phase == AgentPhase.INSPECTING:
@@ -41,6 +49,7 @@ class ContextBuilder:
             selection = agent.validation_selector.select(
                 target_paths=targets,
                 registered_tools=registered,
+                runtime_behavior=self._runtime_behavior_requested(agent),
                 revision=state.edit_revision,
                 desired_purpose=(
                     "acceptance" if not state.acceptance_passed else "regression"
@@ -144,6 +153,7 @@ class ContextBuilder:
             selection = agent.validation_selector.select(
                 target_paths=targets,
                 registered_tools=registered,
+                runtime_behavior=self._runtime_behavior_requested(agent),
                 revision=validation.edit_revision,
                 desired_purpose=(
                     "acceptance"
@@ -159,7 +169,8 @@ class ContextBuilder:
             return "\n\n".join(
                 [
                     f"User request: {agent.active_user_request or ''}",
-                    f"Execution mode: FAST (no plan). Phase: {state.phase.value}.",
+                    f"Execution mode: FAST. Phase: {state.phase.value}. "
+                    f"Planning active: {agent.active_plan is not None}.",
                     "Target paths: "
                     + (", ".join(targets) if targets else "not explicit"),
                     f"Remaining agent steps: {remaining_agent_steps}",
@@ -211,3 +222,11 @@ class ContextBuilder:
             git_awareness_text=git_awareness_text,
             safety_policy_text=safety_policy_text,
         )
+
+    @staticmethod
+    def _runtime_behavior_requested(agent) -> bool:
+        text = str(getattr(agent, "active_user_request", "") or "").casefold()
+        return any(marker in text for marker in (
+            "game", "playable", "click", "keypress", "keyboard", "interaction",
+            "游戏", "可玩", "点击", "键盘", "交互",
+        ))
