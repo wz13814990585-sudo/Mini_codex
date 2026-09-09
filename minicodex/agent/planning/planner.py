@@ -1,6 +1,6 @@
 import json
 
-from ..metrics import TokenMetrics
+from ..observability import TokenMetrics
 from ..orchestration.message_protocol import validate_tool_message_protocol
 from .plan_quality import PlanNormalizer
 from .state import AgentPlan, PlanStep

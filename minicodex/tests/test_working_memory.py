@@ -1,8 +1,8 @@
-from ..agent.working_memory import (
+from ..agent.memory import (
     MemoryKind,
     WorkingMemory,
 )
-from ..agent.working_summary import (
+from ..agent.memory import (
     WorkingSummary,
 )
 from ..tools.results import (

@@ -10,6 +10,7 @@ from .progress import (
 )
 from .action_controller import ActionController
 from .finalization import FinalizationController
+from .recovery import RecoveryController
 
 __all__ = [
     "ProgressController",
@@ -20,4 +21,5 @@ __all__ = [
     "ValidationStatus",
     "ActionController",
     "FinalizationController",
+    "RecoveryController",
 ]

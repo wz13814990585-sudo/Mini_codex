@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ..tools.edit_verifier import (
+from ..agent.editing import (
     EditVerifier,
 )
 

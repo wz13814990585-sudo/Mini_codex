@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from ..agent.checkpoint import (
+from ..agent.editing import (
     CheckpointManager,
 )
-from ..tools.edit_verifier import (
+from ..agent.editing import (
     EditVerifier,
 )
 
@@ -553,4 +553,3 @@ def test_discard_unknown_checkpoint_returns_false(
         is False
     )
 
-    

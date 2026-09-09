@@ -715,7 +715,7 @@ class WorkingSummary:
             == 0
         ):
 
-            # Preserve Stage 5 compatibility.
+            # Preserve the established empty-summary result.
             return (
                 "No important execution facts "
                 "have been recorded yet."

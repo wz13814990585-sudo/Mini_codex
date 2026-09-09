@@ -1,6 +1,6 @@
-from ....agent.test_index import TestIndex
-from ....agent.test_target_resolver import TestTargetResolver
-from ....agent.validation_selector import ValidationSelector
+from ....agent.validation import TestIndex
+from ....agent.validation import TestTargetResolver
+from ....agent.validation import ValidationSelector
 
 
 def test_index_maps_ast_import_and_caches_by_revision(tmp_path):

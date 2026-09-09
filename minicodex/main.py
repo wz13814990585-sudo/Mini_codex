@@ -9,12 +9,11 @@ from .agent.memory import (
     attach_long_term_memory,
 )
 from .agent.planning import Planner, Replanner
-from .agent.repo_map import RepoMap
+from .agent.context import RepoMap, SymbolIndex
 from .agent.safety import (
     SandboxLimits,
     SandboxRunner,
 )
-from .agent.symbol_index import SymbolIndex
 from .agent.observability import (
     TraceRecorder,
     attach_runtime_tracing,
@@ -29,8 +28,7 @@ from .tools.editing import PatchFileTool, ReplaceLinesTool, ReplaceSymbolTool, W
 from .tools.execution import InstallPythonPackageTool, RunCommandTool, RunTestsTool
 from .tools.validation import ValidateBrowserAppTool, ValidateStaticWebTool
 from .tools.planning import CompletePlanStepTool, ReplanTool
-from .tools.git_status import GitStatusTool
-from .tools.git_diff import GitDiffTool
+from .tools.git import GitDiffTool, GitStatusTool
 
 
 PROJECT_ROOT = (

@@ -14,17 +14,8 @@ from .test_index import IndexedTest, TestIndex
 from .test_target_resolver import TestTargetResolution, TestTargetResolver
 from .regression_policy import RegressionPolicy, RegressionRequirement
 from .completion import CompletionDecision, CompletionGate, CompletionStatus, TaskOutcome
+from .completion_policy import TaskCompletionPolicy
 from .relevant_paths import RelevantPathResolver, RelevantPathSet
-
-
-def __getattr__(name):
-    """Load the Agent-state completion policy without creating init cycles."""
-
-    if name == "TaskCompletionPolicy":
-        from .completion_policy import TaskCompletionPolicy
-
-        return TaskCompletionPolicy
-    raise AttributeError(name)
 
 __all__ = [
     "ValidationEvidence",

@@ -8,7 +8,7 @@ from collections.abc import (
 )
 import time
 
-from ..agent.completion import (
+from ..agent.validation import (
     CompletionGate,
 )
 from ..agent.routing import TaskIntent

@@ -1,4 +1,4 @@
-from ....tools.validate_browser_app import ValidateBrowserAppTool
+from ....tools.validation import ValidateBrowserAppTool
 
 
 def test_browser_validator_is_optional_and_names_static_fallback(tmp_path):

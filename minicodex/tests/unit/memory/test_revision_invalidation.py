@@ -1,4 +1,4 @@
-from ....agent.working_memory import WorkingMemory
+from ....agent.memory import WorkingMemory
 from ....tools.results import ToolResult
 
 

@@ -6,7 +6,7 @@ from ..agent.validation import (
     ValidationOutcome,
     ValidationPipeline,
 )
-from ..tools.validate_static_web import (
+from ..tools.validation import (
     ValidateStaticWebTool,
 )
 

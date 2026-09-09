@@ -112,7 +112,7 @@ the workspace remains authoritative.
 `ToolRegistry` supports lightweight capabilities such as `filesystem.read`,
 `filesystem.write`, `code.search`, `code.edit`, `process.run`, `test.run`,
 `validation.static_web`, `validation.browser`, `dependency.install`, and
-`git.inspect`, with name-based compatibility for existing tools.
+`git.inspect`, with deterministic name-based defaults for built-in tools.
 
 CLI levels are `normal`, `verbose`, and `debug`. Normal hides Harness/provider
 noise and internal enums. Verbose retains execution/phase diagnostics. Debug
@@ -121,8 +121,10 @@ reports contain changed files and validation results only.
 
 ## Package ownership
 
-- `agent/`: the `MiniCodexAgent` facade, central `TaskState`, shared reason codes,
-  and temporary compatibility modules.
+- `agent/`: only the `MiniCodexAgent` facade, central `TaskState`, shared reason
+  codes, and package exports.
+- `agent/context/`: context budget and compaction plus repository-map and symbol
+  context used during navigation.
 - `agent/orchestration/`: loop control, provider turns, tool batches, planning and
   validation coordination, completion handling, and task reports.
 - `agent/routing/`: task intent, complexity, execution mode, and execution policy.
@@ -135,28 +137,26 @@ reports contain changed files and validation results only.
 - `agent/dependency/`: manifest-aware dependency resolution policy.
 - `agent/memory/`: task-local working memory and persistent memory integration.
 - `agent/safety/`: permission policy, fail-closed execution, and process sandboxing.
-- `agent/runtime/`: tool execution, cancellation, and asynchronous task mechanics.
+- `agent/runtime/`: tool execution, cancellation, asynchronous task mechanics,
+  and Git working-tree awareness.
 - `agent/observability/`: execution/token metrics, structured trace events and
   adapters, and output-level selection.
 - `tools/`: model-callable capabilities grouped into `filesystem`, `search`,
-  `editing`, `execution`, `validation`, and `planning`; tool-system core types stay
-  shallow in `base.py`, `registry.py`, and `results.py`.
+  `editing`, `execution`, `validation`, `planning`, and read-only `git`; only
+  tool-system core types stay shallow in `base.py`, `registry.py`, and
+  `results.py`.
 - `utils/`: domain-neutral helpers only, including workspace path resolution.
 
-## Dependency rules and compatibility
+## Dependency rules and canonical imports
 
 Dependency direction is deliberate: `utils` does not depend on agent domains;
 tools do not depend on orchestration; domain packages avoid importing the
 `MiniCodexAgent` facade; orchestration coordinates domain APIs; and `agent.py`
 acts as the composition root. Package `__init__.py` files expose intentional
 stable APIs. A few imports are lazy solely to prevent package-initialization
-cycles while preserving the identity of the canonical class or enum.
-
-Legacy module paths such as `agent/task_router.py`, `agent/tool_executor.py`,
-`agent/test_index.py`, and `tools/read_file.py` are thin re-export modules. They
-contain no alternate implementation and preserve downstream imports during the
-migration period. New application code imports from the canonical domain
-packages.
+cycles while preserving the identity of the canonical class or enum. Every
+concept has one canonical module path; the source tree contains no legacy
+module wrappers or compatibility import paths.
 
 `ExecutionMetrics` and the deterministic evaluation harness record intent,
 mode, success/outcome, false completion, wrong edit, LLM/tool/inspection/edit/

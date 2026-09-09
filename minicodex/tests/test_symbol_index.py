@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ..agent.symbol_index import (
+from ..agent.context import (
     SymbolIndex,
 )
 
@@ -375,10 +375,10 @@ def execute():
     )
 from pathlib import Path
 
-from ..agent.symbol_index import (
+from ..agent.context import (
     SymbolIndex,
 )
-from ..tools.search_symbol import (
+from ..tools.search import (
     SearchSymbolTool,
 )
 
@@ -541,13 +541,13 @@ def Runner():
 
 from pathlib import Path
 
-from ..agent.symbol_index import (
+from ..agent.context import (
     SymbolIndex,
 )
 from ..tools.registry import (
     ToolRegistry,
 )
-from ..tools.search_symbol import (
+from ..tools.search import (
     SearchSymbolTool,
 )
 
@@ -688,13 +688,13 @@ class Agent:
 
 from pathlib import Path
 
-from ..agent.symbol_index import (
+from ..agent.context import (
     SymbolIndex,
 )
-from ..tools.search_symbol import (
+from ..tools.search import (
     SearchSymbolTool,
 )
-from ..tools.read_file import (
+from ..tools.filesystem import (
     ReadFileTool,
 )
 

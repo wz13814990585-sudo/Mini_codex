@@ -2,32 +2,13 @@
 
 import json
 
-from dataclasses import dataclass
-
 from ...tools.results import ToolResult
 from ..editing.edit_failure import (
     EditFailureType,
     classify_edit_exception,
     reason_for_edit_failure,
 )
-
-
-@dataclass
-class PreparedToolCall:
-    """A tool call whose arguments have been parsed."""
-
-    tool_name: str
-    arguments: dict
-    error: ToolResult | None = None
-
-
-@dataclass
-class ToolExecution:
-    """Final result of one tool execution."""
-
-    tool_name: str
-    arguments: dict
-    result: ToolResult
+from .tool_types import PreparedToolCall, ToolExecution
 
 
 class ToolExecutor:

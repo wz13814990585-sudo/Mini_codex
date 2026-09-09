@@ -5,7 +5,7 @@ from __future__ import annotations
 from .safety import (
     SafetyDecision,
 )
-from ..runtime.tool_executor import (
+from ..runtime.tool_types import (
     PreparedToolCall,
     ToolExecution,
 )

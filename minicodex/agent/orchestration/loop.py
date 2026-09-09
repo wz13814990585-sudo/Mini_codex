@@ -411,19 +411,3 @@ def run_agent_loop(
         reason="The maximum number of agent steps was reached.",
     )
     return exhausted.output or "Task incomplete."
-
-
-# Compatibility re-exports. Validation policy is owned by the focused
-# orchestration component; existing integrations may continue importing these
-# names from agent.loop during the migration window.
-from .validation_orchestrator import (  # noqa: E402
-    acceptance_evidence_reminder,
-    active_plan_incomplete,
-    apply_validation_evidence,
-    can_complete_edit_task,
-    can_finish_edit_task,
-    completion_result,
-    evaluate_completion,
-    rollback_regressed_edit,
-    validation_evidence_key,
-)

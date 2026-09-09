@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from ..agent.checkpoint import (
+from ..agent.editing import (
     CheckpointManager,
 )
 from ..agent.orchestration.validation_orchestrator import (
@@ -10,16 +10,16 @@ from ..agent.orchestration.validation_orchestrator import (
 from ..agent.progress import (
     ProgressController,
 )
-from ..agent.recovery import (
+from ..agent.progress import (
     RecoveryController,
 )
-from ..agent.rollback import (
+from ..agent.editing import (
     RollbackEngine,
 )
 from ..agent.validation import (
     ValidationPipeline,
 )
-from ..agent.working_summary import (
+from ..agent.memory import (
     WorkingSummary,
 )
 from ..tools.results import (

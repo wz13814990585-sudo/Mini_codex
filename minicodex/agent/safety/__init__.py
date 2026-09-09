@@ -1,6 +1,8 @@
 """Safety policy, guarded execution, and process sandboxing."""
 
 from .safety import SafetyDecision, SafetyLevel, SafetyPolicy
+from .safety_executor import SafetyToolExecutor
+from .sandbox import SandboxLimits, SandboxResult, SandboxRunner
 
 __all__ = [
     "SafetyDecision",
@@ -11,19 +13,3 @@ __all__ = [
     "SandboxResult",
     "SandboxRunner",
 ]
-
-
-def __getattr__(name):
-    if name == "SafetyToolExecutor":
-        from .safety_executor import SafetyToolExecutor
-
-        return SafetyToolExecutor
-    if name in {"SandboxLimits", "SandboxResult", "SandboxRunner"}:
-        from .sandbox import SandboxLimits, SandboxResult, SandboxRunner
-
-        return {
-            "SandboxLimits": SandboxLimits,
-            "SandboxResult": SandboxResult,
-            "SandboxRunner": SandboxRunner,
-        }[name]
-    raise AttributeError(name)

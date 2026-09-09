@@ -866,7 +866,7 @@ class AsyncAgentTask:
                 cancellable_llm
             )
 
-        self.agent.tool_executor = (
+        self.agent.runtime = (
             CancellableToolExecutor(
                 executor=(
                     self._original_tool_executor
@@ -937,7 +937,7 @@ class AsyncAgentTask:
             is not None
         ):
 
-            self.agent.tool_executor = (
+            self.agent.runtime = (
                 self._original_tool_executor
             )
 

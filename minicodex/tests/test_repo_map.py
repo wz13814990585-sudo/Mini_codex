@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ..agent.repo_map import RepoMap
+from ..agent.context import RepoMap
 
 
 def test_repo_map_builds_basic_structure(
@@ -381,7 +381,7 @@ def test_repo_map_workspace_is_file(
 from pathlib import Path
 
 from ..agent.agent import MiniCodexAgent
-from ..agent.repo_map import RepoMap
+from ..agent.context import RepoMap
 from ..llm.types import (
     LLMResponse,
     TokenUsage,

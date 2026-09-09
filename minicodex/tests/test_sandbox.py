@@ -1,7 +1,7 @@
 import os
 import sys
 
-from ..agent.sandbox import (
+from ..agent.safety import (
     SandboxLimits,
     SandboxRunner,
 )

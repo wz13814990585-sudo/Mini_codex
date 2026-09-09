@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from ..agent.completion import (
+from ..agent.validation import (
     CompletionStatus,
 )
-from ..agent.loop import (
+from ..agent.orchestration.loop import (
     EDIT_TOOL_NAMES,
 )
 from ..agent.orchestration.validation_orchestrator import (

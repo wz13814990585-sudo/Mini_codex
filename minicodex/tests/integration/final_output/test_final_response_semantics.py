@@ -5,9 +5,9 @@ from ....agent.agent import MiniCodexAgent
 from ....llm.types import LLMResponse, TokenUsage
 from ....tools.base import BaseTool
 from ....tools.registry import ToolRegistry
-from ....tools.read_file import ReadFileTool
+from ....tools.filesystem import ReadFileTool
 from ....tools.results import ToolResult
-from ....tools.write_file import WriteFileTool
+from ....tools.editing import WriteFileTool
 
 
 def response(*, content=None, call_id=None, tool=None, arguments=None):

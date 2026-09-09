@@ -1,4 +1,4 @@
-from ...agent.task_router import TaskRouter
+from ...agent.routing import TaskRouter
 from ...evaluation.real_tasks import LIVE_METRICS, REAL_TASKS
 
 

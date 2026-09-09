@@ -5,8 +5,6 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import PurePosixPath
 
-from ..routing.execution_mode import ExecutionMode
-
 
 class RegressionRequirement(str, Enum):
     REQUIRED = "required"
@@ -30,7 +28,7 @@ class RegressionPolicy:
     def requirement_for(
         self,
         *,
-        mode: ExecutionMode,
+        mode,
         changed_paths=(),
         default: RegressionRequirement | None = None,
     ) -> RegressionRequirement:
@@ -40,7 +38,9 @@ class RegressionPolicy:
             if str(path).strip()
         )
 
-        if mode == ExecutionMode.COMPLEX:
+        mode_value = getattr(mode, "value", mode)
+
+        if mode_value == "complex":
             return RegressionRequirement.REQUIRED
 
         if paths and all(self._is_non_product(path) for path in paths):
@@ -49,14 +49,14 @@ class RegressionPolicy:
         if any(path.startswith(self._CORE_PREFIXES) for path in paths):
             return (
                 RegressionRequirement.RELEVANT_ONLY
-                if mode != ExecutionMode.COMPLEX
+                if mode_value != "complex"
                 else RegressionRequirement.REQUIRED
             )
 
-        if mode == ExecutionMode.STANDARD:
+        if mode_value == "standard":
             return RegressionRequirement.RELEVANT_ONLY
 
-        if mode == ExecutionMode.FAST and paths:
+        if mode_value == "fast" and paths:
             return RegressionRequirement.RELEVANT_ONLY
 
         return default or RegressionRequirement.UNKNOWN

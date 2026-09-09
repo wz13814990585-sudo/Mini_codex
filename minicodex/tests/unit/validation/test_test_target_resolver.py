@@ -1,4 +1,4 @@
-from ....agent.test_target_resolver import TestTargetResolver
+from ....agent.validation import TestTargetResolver
 
 
 def touch(root, relative):
@@ -8,10 +8,12 @@ def touch(root, relative):
 
 
 def test_minicodex_source_maps_to_existing_minicodex_test(tmp_path):
-    touch(tmp_path, "minicodex/tools/patch_file.py")
+    touch(tmp_path, "minicodex/tools/editing/patch_file.py")
     touch(tmp_path, "minicodex/tests/test_patch_file.py")
 
-    result = TestTargetResolver(tmp_path).resolve(("minicodex/tools/patch_file.py",))
+    result = TestTargetResolver(tmp_path).resolve(
+        ("minicodex/tools/editing/patch_file.py",)
+    )
 
     assert result.selected_path == "minicodex/tests/test_patch_file.py"
     assert result.acceptance_supported is True

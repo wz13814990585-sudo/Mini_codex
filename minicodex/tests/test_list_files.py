@@ -1,4 +1,4 @@
-from ..tools.list_files import ListFilesTool    
+from ..tools.filesystem import ListFilesTool
 from ..tools.results import ToolResult
 
 def test_list_files_returns_structured_entries(

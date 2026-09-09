@@ -1,4 +1,4 @@
-from ..tools.write_file import WriteFileTool
+from ..tools.editing import WriteFileTool
 from ..tools.results import ToolResult
 
 def test_write_file_reports_created(
@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pytest
 
-from ..tools.write_file import (
+from ..tools.editing import (
     WriteFileTool,
 )
 

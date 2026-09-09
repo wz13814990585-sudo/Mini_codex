@@ -6,15 +6,15 @@ from types import (
 
 import pytest
 
-from ..agent.async_runtime import (
+from ..agent.runtime import (
     AsyncAgentRunner,
     AsyncTaskStatus,
 )
-from ..agent.execution_control import (
+from ..agent.runtime import (
     CancellationToken,
     ExecutionCancelled,
 )
-from ..agent.trace import (
+from ..agent.observability import (
     TraceEventType,
     TraceRecorder,
 )

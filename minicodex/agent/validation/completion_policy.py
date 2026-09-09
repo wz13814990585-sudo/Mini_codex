@@ -11,7 +11,6 @@ from .completion import (
     TaskOutcome,
 )
 from .regression_policy import RegressionRequirement
-from ..task_state import AgentPhase
 
 
 class TaskCompletionPolicy:
@@ -53,7 +52,8 @@ class TaskCompletionPolicy:
         )
 
         task_state = getattr(agent, "task_state", None)
-        if task_state is not None and task_state.phase == AgentPhase.BLOCKED:
+        phase = getattr(task_state, "phase", None)
+        if getattr(phase, "value", phase) == "blocked":
             return replace(
                 decision,
                 status=CompletionStatus.NOT_READY,

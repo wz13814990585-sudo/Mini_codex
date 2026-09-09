@@ -1,4 +1,4 @@
-from ..agent.context_budget import (
+from ..agent.context import (
     ContextBudget,
     ContextPressure,
 )
@@ -157,7 +157,7 @@ def test_context_budget_zero_max_tokens_is_safe():
 from ..agent.context import (
     compact_messages_for_pressure,
 )
-from ..agent.context_budget import (
+from ..agent.context import (
     ContextPressure,
 )
 

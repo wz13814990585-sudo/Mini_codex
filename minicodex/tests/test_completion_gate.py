@@ -1,4 +1,4 @@
-from ..agent.completion import (
+from ..agent.validation import (
     CompletionGate,
     CompletionStatus,
 )

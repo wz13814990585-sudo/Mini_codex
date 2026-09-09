@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from ..base import BaseTool
-from .edit_verifier import EditVerifier
+from ...agent.editing import EditVerifier
 from ...utils.paths import resolve_workspace_path
 from ..results import ToolResult
 from ...agent.editing import EditFailureType

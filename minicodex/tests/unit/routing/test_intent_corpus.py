@@ -1,6 +1,6 @@
 import pytest
 
-from ....agent.execution_mode import ExecutionMode
+from ....agent.routing import ExecutionMode
 from ....agent.routing import TaskIntent, TaskRouter
 
 

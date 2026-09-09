@@ -96,7 +96,7 @@ class ProgressController:
         max_validation_no_progress: int = 2,
     ):
 
-        # ``progress_window`` is accepted for constructor compatibility only.
+        # ``progress_window`` is intentionally ignored by this controller.
         # Generic stall detection now belongs exclusively to ActionController.
         del progress_window
 

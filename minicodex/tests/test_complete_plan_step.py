@@ -1,4 +1,4 @@
-from ..tools.complete_plan_step import CompletePlanStepTool
+from ..tools.planning import CompletePlanStepTool
 from ..tools.results import ToolResult
 
 def test_complete_plan_step_returns_structured_result():

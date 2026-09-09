@@ -1,4 +1,4 @@
-from ..agent.long_term_memory import (
+from ..agent.memory import (
     LongTermMemoryStore,
 )
 

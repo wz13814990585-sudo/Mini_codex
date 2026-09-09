@@ -1,5 +1,5 @@
-from ..agent.plan_quality import PlanNormalizer
-from ..agent.state import PlanStep
+from ..agent.planning import PlanNormalizer
+from ..agent.planning import PlanStep
 
 
 def test_broad_semantic_step_is_marked_but_not_naively_split():

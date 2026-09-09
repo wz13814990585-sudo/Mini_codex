@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from ..agent.symbol_index import (
+from ..agent.context import (
     SymbolIndex,
 )
-from ..tools.replace_symbol import (
+from ..tools.editing import (
     ReplaceSymbolTool,
 )
 

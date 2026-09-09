@@ -1,11 +1,11 @@
 from ..agent.agent import MiniCodexAgent
-from ..agent.completion import CompletionStatus
+from ..agent.validation import CompletionStatus
 from ..agent.orchestration.validation_orchestrator import evaluate_completion
-from ..agent.loop import run_agent_loop
-from ..agent.plan_progress import PlanProgressReconciler
-from ..agent.state import AgentPlan, PlanStep
+from ..agent.orchestration.loop import run_agent_loop
+from ..agent.planning import PlanProgressReconciler
+from ..agent.planning import AgentPlan, PlanStep
 from ..tools.registry import ToolRegistry
-from ..tools.write_file import WriteFileTool
+from ..tools.editing import WriteFileTool
 from ..llm.types import LLMResponse, TokenUsage
 from types import SimpleNamespace
 import json

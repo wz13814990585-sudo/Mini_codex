@@ -1,16 +1,16 @@
 from dataclasses import dataclass
 
-from ..agent.trace import (
+from ..agent.observability import (
     TraceEventType,
     TraceRecorder,
 )
-from ..agent.trace_runtime import (
+from ..agent.observability import (
     TracingLLMClient,
     TracingRollbackEngine,
     TracingToolExecutor,
 )
 
-from ..agent.tool_executor import (
+from ..agent.runtime import (
     PreparedToolCall,
     ToolExecution,
 )

@@ -1,7 +1,7 @@
 import pytest
 
-from ..agent.execution_mode import ExecutionMode
-from ..agent.task_router import TaskRouter
+from ..agent.routing import ExecutionMode
+from ..agent.routing import TaskRouter
 
 
 @pytest.mark.parametrize(

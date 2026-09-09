@@ -1,7 +1,7 @@
 from ..base import BaseTool
 from ..results import ToolResult
 
-from ...agent.symbol_index import (
+from ...agent.context import (
     SymbolIndex,
 )
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ..tools.replace_lines import (
+from ..tools.editing import (
     ReplaceLinesTool,
 )
 

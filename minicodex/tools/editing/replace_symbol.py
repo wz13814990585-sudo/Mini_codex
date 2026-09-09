@@ -6,7 +6,7 @@ from ...utils.paths import resolve_workspace_path
 from .replace_lines import ReplaceLinesTool
 from ..results import ToolResult
 
-from ...agent.symbol_index import (
+from ...agent.context import (
     Symbol,
     SymbolIndex,
 )

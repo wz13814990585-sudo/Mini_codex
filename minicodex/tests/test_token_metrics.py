@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
 from ..agent.agent import MiniCodexAgent
-from ..agent.metrics import TokenMetrics
-from ..agent.planner import Planner
+from ..agent.observability import TokenMetrics
+from ..agent.planning import Planner
 from ..llm.types import LLMResponse, TokenUsage
 from ..tools.registry import ToolRegistry
 

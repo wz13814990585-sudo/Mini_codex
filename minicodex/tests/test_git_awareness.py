@@ -1,6 +1,6 @@
 import subprocess
 
-from ..agent.git_awareness import (
+from ..agent.runtime import (
     GitAwareness,
     GitRepositoryInspector,
 )

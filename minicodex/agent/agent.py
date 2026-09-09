@@ -11,7 +11,7 @@ from .editing import (
     RollbackCoordinator,
     RollbackEngine,
 )
-from .context_budget import (
+from .context import (
     ContextBudget,
 )
 from .progress import ActionController, FinalizationController
@@ -24,9 +24,10 @@ from .validation import (
 )
 from .dependency import DependencyResolver
 from .routing import ExecutionMode, ExecutionPolicy, TaskIntent, TaskRouter, policy_for
-from .git_awareness import (
+from .runtime import (
     GitAwareness,
     GitRepositoryInspector,
+    ToolExecutor,
 )
 from .orchestration.loop import (
     run_agent_loop,
@@ -46,28 +47,15 @@ from .observability import (
 )
 from .progress import ProgressController
 from .planning import AgentPlan, PlanProgressReconciler, StepEvidenceStore
-from .recovery import (
-    RecoveryController,
-)
+from .progress import RecoveryController
 from .safety import (
     SafetyPolicy,
     SafetyToolExecutor,
 )
 from .task_state import AgentPhase, TaskState
-from .runtime.tool_executor import (
-    ToolExecutor,
-)
 from .memory import (
     WorkingSummary,
 )
-
-from ..prompts.system import (
-    build_fast_system_prompt,
-    build_standard_system_prompt,
-    build_system_prompt,
-    build_turn_context,
-)
-
 
 class MiniCodexAgent:
 
@@ -718,7 +706,7 @@ class MiniCodexAgent:
         ]
 
     def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
-        """Capability filtering with compatibility for legacy test registries."""
+        """Filter capabilities, with a fallback for minimal registries."""
 
         try:
             return self.registry.get_schemas(capabilities=capabilities)
@@ -1173,18 +1161,7 @@ class MiniCodexAgent:
         self,
         **kwargs,
     ) -> str:
-
-        if (
-            self.execution_policy is not None
-            and self.execution_policy.compact_context
-        ):
-            return build_fast_system_prompt()
-        if (
-            self.execution_policy is not None
-            and self.execution_policy.mode == ExecutionMode.STANDARD
-        ):
-            return build_standard_system_prompt()
-        return build_system_prompt()
+        return self.turn_builder.prompt_builder.build(self, **kwargs)
 
     # =========================================================
     # Dynamic Turn Context
@@ -1194,176 +1171,15 @@ class MiniCodexAgent:
         self,
         plan=None,
         current_step=None,
-        remaining_agent_steps: (
-            int
-            | None
-        ) = None,
+        remaining_agent_steps: int | None = None,
         **kwargs,
     ) -> str:
-
-        # =====================================================
-        # Fresh Repository Map
-        # =====================================================
-
-        compact_context = bool(
-            self.execution_policy
-            and self.execution_policy.compact_context
-        )
-        if not compact_context:
-            self._refresh_repo_map()
-
-        # =====================================================
-        # Fresh Git State
-        # =====================================================
-
-        try:
-            if compact_context:
-                task_state = self.git_awareness.task_state()
-                touched = task_state.agent_touched_files
-                git_awareness_text = (
-                    "Agent-touched files: "
-                    + (", ".join(touched) if touched else "none yet")
-                )
-            else:
-                self.git_awareness.refresh()
-                git_awareness_text = self.git_awareness.render()
-        except Exception as e:
-            git_awareness_text = (
-                "Git awareness unavailable: "
-                f"{type(e).__name__}: {e}"
-            )
-
-        # =====================================================
-        # Safety Context
-        # =====================================================
-
-        try:
-            safety_policy_text = (
-                "Use dedicated edit tools for file mutations. Unsafe "
-                "destructive shell operations may be blocked."
-                if compact_context
-                else self.safety_policy.render()
-            )
-        except Exception as e:
-
-            safety_policy_text = (
-                "Safety policy unavailable: "
-                f"{type(e).__name__}: "
-                f"{e}"
-            )
-
-        # =====================================================
-        # Plan
-        # =====================================================
-
-        plan_text = (
-            self._plan_to_text(
-                plan
-            )
-            if plan
-            else (
-                "No explicit plan."
-            )
-        )
-
-        if current_step:
-
-            current_step_text = (
-                f"{current_step.id}. "
-                f"{current_step.description}"
-            )
-
-        else:
-
-            current_step_text = (
-                "No active plan step."
-            )
-
-        # =====================================================
-        # Build Context
-        # =====================================================
-
-        if compact_context:
-            validation = self.validation_pipeline.state
-            state = self.task_progress_state(remaining_agent_steps)
-            registered = set(getattr(self.registry, "_tools", {}) or {})
-            targets = tuple(
-                getattr(self.execution_route, "target_paths", ()) or ()
-            )
-            selection = self.validation_selector.select(
-                target_paths=targets,
-                registered_tools=registered,
-                revision=validation.edit_revision,
-                desired_purpose=(
-                    "acceptance" if not validation.acceptance_passed else "regression"
-                ),
-            )
-            action_text = (
-                self.action_controller.INSTRUCTION
-                if self.action_controller.action_required
-                else "Inspect minimally, then edit or validate."
-            )
-            return "\n\n".join(
-                [
-                    f"User request: {self.active_user_request or ''}",
-                    f"Execution mode: FAST (no plan). Phase: {state.phase.value}.",
-                    (
-                        "Target paths: " + (", ".join(targets) if targets else "not explicit")
-                    ),
-                    f"Remaining agent steps: {remaining_agent_steps}",
-                    (
-                        "Validation state: "
-                        f"revision={validation.edit_revision}, "
-                        f"has_edit={validation.has_edit}, "
-                        f"acceptance_passed={validation.acceptance_passed}."
-                    ),
-                    self.working_summary.render_relevant(targets, max_items=8)[-2000:],
-                    (
-                        f"Recommended acceptance validator: {selection.tool_name}"
-                        + (f" for {selection.path}" if selection and selection.path else "")
-                        if selection else "No dedicated acceptance validator selected."
-                    ),
-                    action_text,
-                    safety_policy_text,
-                ]
-            ).strip() + "\n"
-
-        return (
-            build_turn_context(
-                task_state_text=(
-                    "Task state: "
-                    f"mode={self.task_state.mode.value if self.task_state.mode else 'unknown'}, "
-                    f"phase={self.task_state.phase.value}, "
-                    f"edit_revision={self.task_state.edit_revision}, "
-                    f"validation_revision={self.task_state.validation_revision}."
-                ),
-                plan_text=(
-                    plan_text
-                ),
-                current_step_text=(
-                    current_step_text
-                ),
-                remaining_agent_steps=(
-                    remaining_agent_steps
-                ),
-                working_summary_text=(
-                    self.working_summary.render_relevant(
-                        tuple(getattr(self.execution_route, "target_paths", ()) or ()),
-                        max_items=14,
-                    )
-                ),
-                repo_map_text=(
-                    self.repo_map_text[:2000]
-                    if compact_context
-                    else self.repo_map_text
-                ),
-                git_awareness_text=(
-                    git_awareness_text
-                ),
-                safety_policy_text=(
-                    safety_policy_text
-                ),
-            )
+        del kwargs
+        return self.turn_builder.context_builder.build_detailed(
+            self,
+            plan=plan,
+            current_step=current_step,
+            remaining_agent_steps=remaining_agent_steps,
         )
 
     # =========================================================

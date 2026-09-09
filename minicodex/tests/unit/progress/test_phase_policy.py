@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from ....agent.completion import CompletionStatus, TaskOutcome
-from ....agent.completion_policy import TaskCompletionPolicy
-from ....agent.execution_mode import ExecutionMode
-from ....agent.execution_policy import policy_for
+from ....agent.validation import CompletionStatus, TaskOutcome
+from ....agent.validation import TaskCompletionPolicy
+from ....agent.routing import ExecutionMode
+from ....agent.routing import policy_for
 from ....agent.task_state import AgentPhase, TaskState
 from ....agent.validation import ValidationPipeline
 

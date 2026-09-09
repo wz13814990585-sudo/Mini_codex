@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..tools.install_python_package import (
+from ..tools.execution import (
     InstallPythonPackageTool,
 )
 

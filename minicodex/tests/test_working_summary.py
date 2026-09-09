@@ -1,4 +1,4 @@
-from ..agent.working_summary import WorkingSummary
+from ..agent.memory import WorkingSummary
 from ..tools.results import ToolResult
 
 

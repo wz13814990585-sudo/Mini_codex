@@ -54,7 +54,7 @@ class TaskState:
     outcome: TaskOutcome = TaskOutcome.INCOMPLETE
     latest_validation_outcome: ValidationOutcome | None = None
 
-    # V3 compatibility names.  They are computed views, not duplicate state.
+    # Alternate computed views; no duplicate revision state is stored.
     @property
     def validation_version(self) -> int:
         return self.validation_revision

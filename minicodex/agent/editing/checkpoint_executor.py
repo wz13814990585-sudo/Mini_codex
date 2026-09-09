@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .checkpoint import (
     CheckpointManager,
 )
-from ..runtime.tool_executor import (
+from ..runtime.tool_types import (
     PreparedToolCall,
     ToolExecution,
-    ToolExecutor,
 )
+if TYPE_CHECKING:
+    from ..runtime.tool_executor import ToolExecutor
 
 from ...tools.results import (
     ToolResult,

@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from ..agent.action_controller import ActionController
-from ..agent.execution_mode import ExecutionMode
-from ..agent.execution_policy import policy_for
-from ..agent.relevant_paths import RelevantPathResolver
+from ..agent.progress import ActionController
+from ..agent.routing import ExecutionMode
+from ..agent.routing import policy_for
+from ..agent.validation import RelevantPathResolver
 from ..agent.task_state import AgentPhase, TaskState
 
 

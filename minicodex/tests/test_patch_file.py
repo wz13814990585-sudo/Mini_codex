@@ -1,4 +1,4 @@
-from ..tools.patch_file import PatchFileTool
+from ..tools.editing import PatchFileTool
 from ..tools.results import ToolResult
 
 

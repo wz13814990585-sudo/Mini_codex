@@ -5,10 +5,10 @@ from .checkpoint import (
     CheckpointManager,
 )
 
-from ...tools.editing.edit_verifier import (
+from .edit_verifier import (
     EditVerifier,
 )
-from ...tools.paths import (
+from ...utils.paths import (
     resolve_workspace_path,
 )
 from ...tools.results import (

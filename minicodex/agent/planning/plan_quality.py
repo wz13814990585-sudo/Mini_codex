@@ -135,5 +135,5 @@ class PlanQualityValidator:
         return steps
 
 
-# Backward-compatible name retained for callers from Control Plane V1.
+# Public concise name for the plan quality normalizer.
 PlanNormalizer = PlanQualityValidator
