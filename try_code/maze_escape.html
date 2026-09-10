@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>迷宫逃生 · 火柴人</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: radial-gradient(circle at 50% 20%, #16213e 0%, #0a0e1a 70%);
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #e6f1ff;
+    padding: 16px;
+  }
+  .game-wrapper { text-align: center; }
+  h1 {
+    font-size: 30px;
+    letter-spacing: 6px;
+    color: #7ef9ff;
+    margin-bottom: 10px;
+    text-shadow: 0 0 16px rgba(126, 249, 255, 0.65);
+  }
+  .hud {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    margin-bottom: 10px;
+    font-size: 15px;
+    flex-wrap: wrap;
+  }
+  .hud span {
+    background: #14213d;
+    border: 1px solid #2b4a7d;
+    border-radius: 18px;
+    padding: 5px 14px;
+    letter-spacing: 1px;
+  }
+  .hud b { color: #ffd166; }
+  .stage { position: relative; display: inline-block; }
+  canvas {
+    display: block;
+    width: min(92vw, 560px);
+    height: auto;
+    background: #070b14;
+    border: 3px solid #2b4a7d;
+    border-radius: 10px;
+    box-shadow: 0 0 28px rgba(61, 125, 255, 0.35);
+    touch-action: none;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 14px;
+    padding: 24px;
+    background: rgba(6, 10, 20, 0.88);
+    border-radius: 10px;
+    text-align: center;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h2 { font-size: 24px; color: #7ef9ff; letter-spacing: 3px; }
+  .overlay p { font-size: 14px; line-height: 1.8; color: #9fb3d1; max-width: 380px; }
+  button {
+    font-family: inherit;
+    font-size: 16px;
+    letter-spacing: 2px;
+    color: #06121f;
+    background: linear-gradient(180deg, #7ef9ff, #35c7d8);
+    border: none;
+    border-radius: 22px;
+    padding: 10px 26px;
+    cursor: pointer;
+    font-weight: bold;
+    box-shadow: 0 0 18px rgba(126, 249, 255, 0.5);
+  }
+  button:active { transform: translateY(1px); }
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 52px);
+    grid-template-rows: repeat(2, 52px);
+    gap: 8px;
+    justify-content: center;
+    margin-top: 14px;
+  }
+  .dpad button {
+    background: #14213d;
+    color: #7ef9ff;
+    border: 1px solid #2b4a7d;
+    border-radius: 12px;
+    font-size: 18px;
+    box-shadow: none;
+    padding: 0;
+  }
+  .dpad .up { grid-column: 2; grid-row: 1; }
+  .dpad .left { grid-column: 1; grid-row: 2; }
+  .dpad .down { grid-column: 2; grid-row: 2; }
+  .dpad .right { grid-column: 3; grid-row: 2; }
+  .tips { margin-top: 10px; font-size: 12px; color: #6c83a5; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div class="game-wrapper">
+  <h1>迷宫逃生</h1>
+  <div class="hud">
+    <span>关卡 <b id="level">1</b></span>
+    <span>钥匙 <b id="keys">0/1</b></span>
+    <span>用时 <b id="time">0.0s</b></span>
+  </div>
+  <div class="stage">
+    <canvas id="game" width="640" height="640"></canvas>
+    <div class="overlay" id="overlay">
+      <h2 id="ovTitle">迷宫逃生 · 火柴人</h2>
+      <p id="ovText">方向键 / WASD 移动火柴人，捡起全部钥匙，再走到绿色出口逃生。按 R 可重开本关。</p>
+      <button id="ovBtn">开始游戏</button>
+    </div>
+  </div>
+  <div class="dpad">
+    <button class="up" data-dir="up">▲</button>
+    <button class="left" data-dir="left">◀</button>
+    <button class="down" data-dir="down">▼</button>
+    <button class="right" data-dir="right">▶</button>
+  </div>
+  <div class="tips">键盘：WASD / 方向键 · R 重开本关</div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  const W = 640;
+  const H = 640;
+  const canvas = document.getElementById('game');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const levelEl = document.getElementById('level');
+  const keysEl = document.getElementById('keys');
+  const timeEl = document.getElementById('time');
+  const overlay = document.getElementById('overlay');
+  const ovTitle = document.getElementById('ovTitle');
+  const ovText = document.getElementById('ovText');
+  const ovBtn = document.getElementById('ovBtn');
+
+  const STATE = { MENU: 0, PLAY: 1, WIN: 2 };
+  let state = STATE.MENU;
+
+  const DIRS = {
+    up: { dx: 0, dy: -1, wall: 0, opposite: 2 },
+    right: { dx: 1, dy: 0, wall: 1, opposite: 3 },
+    down: { dx: 0, dy: 1, wall: 2, opposite: 0 },
+    left: { dx: -1, dy: 0, wall: 3, opposite: 1 }
+  };
+  const DIR_KEYS = ['up', 'right', 'down', 'left'];
+  const MOVE_TIME = 120;
+
+  let cols = 11;
+  let rows = 11;
+  let cellSize = W / cols;
+  let grid = [];
+  let exitCell = { x: 0, y: 0 };
+  let keysOnMap = [];
+  let keysTotal = 1;
+  let keysLeft = 1;
+  let level = 1;
+  let elapsed = 0;
+  let bumpTimer = 0;
+  let held = [];
+  let lastFrame = 0;
+
+  const player = {
+    cx: 0, cy: 0, px: 0, py: 0,
+    fromX: 0, fromY: 0, toX: 0, toY: 0,
+    t: 1, moving: false, dir: 'down', phase: 0
+  };
+
+  let audioCtx = null;
+  function beep(freq, dur, type) {
+    try {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audioCtx = new AC();
+      }
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      const t0 = audioCtx.currentTime;
+      gain.gain.setValueAtTime(0.06, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.start(t0);
+      osc.stop(t0 + dur);
+    } catch (err) { /* audio is optional */ }
+  }
+
+  function idx(x, y) { return y * cols + x; }
+
+  function neighbors(cell) {
+    const list = [];
+    for (let i = 0; i < DIR_KEYS.length; i++) {
+      const d = DIRS[DIR_KEYS[i]];
+      const nx = cell.x + d.dx;
+      const ny = cell.y + d.dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      list.push(grid[idx(nx, ny)]);
+    }
+    return list;
+  }
+
+  function link(a, b) {
+    for (let i = 0; i < DIR_KEYS.length; i++) {
+      const d = DIRS[DIR_KEYS[i]];
+      if (a.x + d.dx === b.x && a.y + d.dy === b.y) {
+        a.walls[d.wall] = false;
+        b.walls[d.opposite] = false;
+        return;
+      }
+    }
+  }
+
+  function generateMaze() {
+    grid = [];
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        grid.push({ x: x, y: y, walls: [true, true, true, true], visited: false });
+      }
+    }
+    const stack = [];
+    let current = grid[0];
+    current.visited = true;
+    let visitedCount = 1;
+    const total = cols * rows;
+    while (visitedCount < total) {
+      const candidates = neighbors(current).filter(function (c) { return !c.visited; });
+      if (candidates.length) {
+        const next = candidates[(Math.random() * candidates.length) | 0];
+        link(current, next);
+        stack.push(current);
+        current = next;
+        current.visited = true;
+        visitedCount++;
+      } else if (stack.length) {
+        current = stack.pop();
+      } else {
+        break;
+      }
+    }
+  }
+
+  function distancesFromStart() {
+    const dist = new Array(cols * rows).fill(-1);
+    dist[0] = 0;
+    const queue = [grid[0]];
+    let head = 0;
+    while (head < queue.length) {
+      const cell = queue[head++];
+      const base = dist[idx(cell.x, cell.y)];
+      for (let i = 0; i < DIR_KEYS.length; i++) {
+        const dirName = DIR_KEYS[i];
+        const d = DIRS[dirName];
+        if (cell.walls[d.wall]) continue;
+        const nx = cell.x + d.dx;
+        const ny = cell.y + d.dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const ni = idx(nx, ny);
+        if (dist[ni] === -1) {
+          dist[ni] = base + 1;
+          queue.push(grid[ni]);
+        }
+      }
+    }
+    return dist;
+  }
+
+  function placeItems() {
+    const dist = distancesFromStart();
+    let far = 0;
+    let farCell = grid[grid.length - 1];
+    for (let i = 0; i < dist.length; i++) {
+      if (dist[i] > far) { far = dist[i]; farCell = grid[i]; }
+    }
+    exitCell = { x: farCell.x, y: farCell.y };
+
+    const pool = grid.filter(function (c) {
+      const d = dist[idx(c.x, c.y)];
+      return d >= Math.max(3, Math.floor(far * 0.35)) &&
+        !(c.x === 0 && c.y === 0) &&
+        !(c.x === exitCell.x && c.y === exitCell.y);
+    });
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    keysTotal = Math.min(3, 1 + Math.floor((level - 1) / 2));
+    keysTotal = Math.min(keysTotal, Math.max(1, pool.length));
+    keysOnMap = pool.slice(0, keysTotal).map(function (c) { return { x: c.x, y: c.y, taken: false }; });
+    keysLeft = keysOnMap.length;
+    keysTotal = keysOnMap.length;
+  }
+
+  function startLevel(reset) {
+    cols = Math.min(11 + (level - 1) * 2, 25);
+    rows = cols;
+    cellSize = W / cols;
+    generateMaze();
+    placeItems();
+    player.cx = 0; player.cy = 0;
+    player.fromX = 0; player.fromY = 0;
+    player.toX = 0; player.toY = 0;
+    player.px = cellSize * 0.5;
+    player.py = cellSize * 0.5;
+    player.t = 1; player.moving = false; player.dir = 'down'; player.phase = 0;
+    bumpTimer = 0;
+    if (reset) elapsed = 0;
+    levelEl.textContent = level;
+    updateKeysHud();
+    overlay.classList.add('hidden');
+    state = STATE.PLAY;
+    lastFrame = 0;
+  }
+
+  function updateKeysHud() {
+    keysEl.textContent = (keysTotal - keysLeft) + '/' + keysTotal;
+  }
+
+  function canMove(dirName) {
+    const d = DIRS[dirName];
+    const cell = grid[idx(player.cx, player.cy)];
+    if (cell.walls[d.wall]) return null;
+    const nx = player.cx + d.dx;
+    const ny = player.cy + d.dy;
+    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) return null;
+    return { x: nx, y: ny };
+  }
+
+  function tryStep(dirName) {
+    if (state !== STATE.PLAY || player.moving || bumpTimer > 0) return;
+    const target = canMove(dirName);
+    player.dir = dirName;
+    if (!target) {
+      bumpTimer = 130;
+      beep(180, 0.05, 'square');
+      return;
+    }
+    player.fromX = player.cx;
+    player.fromY = player.cy;
+    player.toX = target.x;
+    player.toY = target.y;
+    player.cx = target.x;
+    player.cy = target.y;
+    player.t = 0;
+    player.moving = true;
+  }
+
+  function onArrive() {
+    for (let i = 0; i < keysOnMap.length; i++) {
+      const k = keysOnMap[i];
+      if (!k.taken && k.x === player.cx && k.y === player.cy) {
+        k.taken = true;
+        keysLeft--;
+        updateKeysHud();
+        beep(880, 0.12, 'triangle');
+      }
+    }
+    if (player.cx === exitCell.x && player.cy === exitCell.y) {
+      if (keysLeft === 0) {
+        winLevel();
+      } else {
+        beep(240, 0.08, 'square');
+      }
+    }
+  }
+
+  function winLevel() {
+    state = STATE.WIN;
+    beep(660, 0.1, 'sine');
+    setTimeout(function () { beep(990, 0.16, 'sine'); }, 110);
+    ovTitle.textContent = '逃生成功！';
+    ovText.textContent = '第 ' + level + ' 关用时 ' + (elapsed / 1000).toFixed(1) +
+      ' 秒。下一关迷宫会更大、钥匙更多。';
+    ovBtn.textContent = '进入第 ' + (level + 1) + ' 关';
+    overlay.classList.remove('hidden');
+  }
+
+  function gameOverMenu() {
+    state = STATE.MENU;
+    ovTitle.textContent = '迷宫逃生 · 火柴人';
+    ovText.textContent = '方向键 / WASD 移动火柴人，捡起全部钥匙，再走到绿色出口逃生。按 R 可重开本关。';
+    ovBtn.textContent = '开始游戏';
+    overlay.classList.remove('hidden');
+  }
+
+  function drawFloor() {
+    ctx.fillStyle = '#070b14';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(43, 74, 125, 0.35)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= cols; x++) {
+      ctx.beginPath();
+      ctx.moveTo(x * cellSize, 0);
+      ctx.lineTo(x * cellSize, rows * cellSize);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= rows; y++) {
+      ctx.beginPath();
+      ctx.moveTo(0, y * cellSize);
+      ctx.lineTo(cols * cellSize, y * cellSize);
+      ctx.stroke();
+    }
+  }
+
+  function drawWalls() {
+    ctx.save();
+    ctx.strokeStyle = '#3d7dff';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(2, cellSize * 0.12);
+    ctx.shadowColor = 'rgba(61, 125, 255, 0.85)';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const c = grid[idx(x, y)];
+        const px = x * cellSize;
+        const py = y * cellSize;
+        if (c.walls[0]) { ctx.moveTo(px, py); ctx.lineTo(px + cellSize, py); }
+        if (c.walls[3]) { ctx.moveTo(px, py); ctx.lineTo(px, py + cellSize); }
+        if (x === cols - 1 && c.walls[1]) { ctx.moveTo(px + cellSize, py); ctx.lineTo(px + cellSize, py + cellSize); }
+        if (y === rows - 1 && c.walls[2]) { ctx.moveTo(px, py + cellSize); ctx.lineTo(px + cellSize, py + cellSize); }
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawExit() {
+    const px = exitCell.x * cellSize;
+    const py = exitCell.y * cellSize;
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 320);
+    ctx.save();
+    ctx.fillStyle = 'rgba(60, 255, 170, ' + (0.12 + pulse * 0.16) + ')';
+    ctx.fillRect(px + 2, py + 2, cellSize - 4, cellSize - 4);
+    ctx.strokeStyle = '#3cffaa';
+    ctx.lineWidth = Math.max(2, cellSize * 0.08);
+    ctx.shadowColor = 'rgba(60, 255, 170, 0.9)';
+    ctx.shadowBlur = 14 + pulse * 10;
+    const m = cellSize * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(px + m, py + cellSize - m);
+    ctx.lineTo(px + m, py + m);
+    ctx.lineTo(px + cellSize - m, py + m);
+    ctx.lineTo(px + cellSize - m, py + cellSize - m);
+    ctx.stroke();
+    ctx.restore();
+    if (cellSize > 22) {
+      ctx.save();
+      ctx.fillStyle = '#3cffaa';
+      ctx.font = 'bold ' + Math.max(8, cellSize * 0.28) + 'px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('EXIT', px + cellSize / 2, py + cellSize / 2);
+      ctx.restore();
+    }
+  }
+
+  function drawKey(cx, cy, size) {
+    ctx.save();
+    ctx.strokeStyle = '#ffd166';
+    ctx.fillStyle = '#ffd166';
+    ctx.lineWidth = Math.max(2, size * 0.14);
+    ctx.lineCap = 'round';
+    ctx.shadowColor = 'rgba(255, 209, 102, 0.9)';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(cx - size * 0.22, cy - size * 0.2, size * 0.2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.12, cy - size * 0.08);
+    ctx.lineTo(cx + size * 0.34, cy + size * 0.32);
+    ctx.moveTo(cx + size * 0.16, cy + size * 0.14);
+    ctx.lineTo(cx + size * 0.3, cy - size * 0.02);
+    ctx.moveTo(cx + size * 0.28, cy + size * 0.26);
+    ctx.lineTo(cx + size * 0.42, cy + size * 0.1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawStickman() {
+    const size = cellSize * 0.62;
+    const x = player.px;
+    const y = player.py;
+    const walking = player.moving;
+    const swing = walking ? Math.sin(player.phase) : 0;
+    const bob = walking ? Math.abs(Math.cos(player.phase)) * size * 0.03 : 0;
+
+    const hipY = y + size * 0.16 + bob;
+    const shoulderY = y - size * 0.1 + bob;
+    const headR = size * 0.15;
+    const headY = shoulderY - headR * 1.15;
+
+    ctx.save();
+    ctx.strokeStyle = '#7ef9ff';
+    ctx.fillStyle = '#7ef9ff';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(2, size * 0.085);
+    ctx.shadowColor = 'rgba(126, 249, 255, 0.9)';
+    ctx.shadowBlur = 12;
+
+    // 腿
+    ctx.beginPath();
+    ctx.moveTo(x, hipY);
+    ctx.lineTo(x + swing * size * 0.2, y + size * 0.42);
+    ctx.moveTo(x, hipY);
+    ctx.lineTo(x - swing * size * 0.2, y + size * 0.42);
+    // 身体
+    ctx.moveTo(x, shoulderY);
+    ctx.lineTo(x, hipY);
+    // 手臂
+    ctx.moveTo(x, shoulderY + size * 0.03);
+    ctx.lineTo(x - swing * size * 0.24, shoulderY + size * 0.22);
+    ctx.moveTo(x, shoulderY + size * 0.03);
+    ctx.lineTo(x + swing * size * 0.24, shoulderY + size * 0.22);
+    ctx.stroke();
+
+    // 头
+    ctx.beginPath();
+    ctx.arc(x, headY, headR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 朝向眼睛
+    let ex = 0;
+    let ey = 0;
+    if (player.dir === 'left') ex = -headR * 0.35;
+    if (player.dir === 'right') ex = headR * 0.35;
+    if (player.dir === 'up') ey = -headR * 0.35;
+    if (player.dir === 'down') ey = headR * 0.35;
+    ctx.beginPath();
+    ctx.arc(x + ex - headR * 0.28, headY + ey - headR * 0.1, headR * 0.14, 0, Math.PI * 2);
+    ctx.arc(x + ex + headR * 0.28, headY + ey - headR * 0.1, headR * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawVignette() {
+    const g = ctx.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.78);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function draw() {
+    drawFloor();
+    drawExit();
+    for (let i = 0; i < keysOnMap.length; i++) {
+      const k = keysOnMap[i];
+      if (k.taken) continue;
+      drawKey(k.x * cellSize + cellSize / 2, k.y * cellSize + cellSize / 2, cellSize);
+    }
+    drawStickman();
+    drawWalls();
+    drawVignette();
+  }
+
+  function update(dt) {
+    if (state !== STATE.PLAY) return;
+    elapsed += dt;
+    timeEl.textContent = (elapsed / 1000).toFixed(1) + 's';
+
+    if (player.moving) {
+      player.t += dt / MOVE_TIME;
+      player.phase += dt * 0.022;
+      if (player.t >= 1) {
+        player.t = 1;
+        player.moving = false;
+        onArrive();
+      }
+    } else {
+      if (bumpTimer > 0) bumpTimer -= dt;
+      else {
+        for (let i = 0; i < held.length; i++) {
+          if (canMove(held[i])) { tryStep(held[i]); break; }
+        }
+      }
+    }
+
+    const p = player.moving ? player.t : 1;
+    player.px = (player.fromX + (player.toX - player.fromX) * p + 0.5) * cellSize;
+    player.py = (player.fromY + (player.toY - player.fromY) * p + 0.5) * cellSize;
+  }
+
+  function loop(timestamp) {
+    if (!lastFrame) lastFrame = timestamp;
+    let dt = timestamp - lastFrame;
+    lastFrame = timestamp;
+    if (dt > 60) dt = 60;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---- 输入 ----
+  function dirFromKey(key) {
+    switch (key) {
+      case 'ArrowUp': case 'w': case 'W': return 'up';
+      case 'ArrowDown': case 's': case 'S': return 'down';
+      case 'ArrowLeft': case 'a': case 'A': return 'left';
+      case 'ArrowRight': case 'd': case 'D': return 'right';
+      default: return null;
+    }
+  }
+
+  function pressDir(dirName) {
+    if (!dirName) return;
+    if (state !== STATE.PLAY) return;
+    held = held.filter(function (d) { return d !== dirName; });
+    held.push(dirName);
+    tryStep(dirName);
+  }
+
+  function releaseDir(dirName) {
+    held = held.filter(function (d) { return d !== dirName; });
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'r' || e.key === 'R') {
+      if (state === STATE.PLAY || state === STATE.WIN) startLevel(true);
+      return;
+    }
+    const dirName = dirFromKey(e.key);
+    if (dirName) {
+      e.preventDefault();
+      pressDir(dirName);
+    } else if ((e.key === 'Enter' || e.key === ' ') && state !== STATE.PLAY) {
+      e.preventDefault();
+      onOverlayButton();
+    }
+  });
+
+  window.addEventListener('keyup', function (e) {
+    const dirName = dirFromKey(e.key);
+    if (dirName) releaseDir(dirName);
+  });
+
+  const padButtons = document.querySelectorAll('.dpad button');
+  for (let i = 0; i < padButtons.length; i++) {
+    (function (btn) {
+      const dirName = btn.getAttribute('data-dir');
+      btn.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        pressDir(dirName);
+      });
+      btn.addEventListener('pointerup', function () { releaseDir(dirName); });
+      btn.addEventListener('pointerleave', function () { releaseDir(dirName); });
+      btn.addEventListener('pointercancel', function () { releaseDir(dirName); });
+    })(padButtons[i]);
+  }
+
+  canvas.addEventListener('click', function () {
+    if (state === STATE.MENU) onOverlayButton();
+  });
+
+  function onOverlayButton() {
+    if (state === STATE.WIN) {
+      level++;
+      startLevel(true);
+    } else {
+      level = 1;
+      startLevel(true);
+    }
+  }
+
+  ovBtn.addEventListener('click', onOverlayButton);
+  window.addEventListener('blur', function () { held = []; });
+
+  // 初始化演示画面
+  generateMaze();
+  placeItems();
+  player.px = cellSize * 0.5;
+  player.py = cellSize * 0.5;
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
