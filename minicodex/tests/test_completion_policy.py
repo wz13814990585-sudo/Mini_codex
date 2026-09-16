@@ -110,7 +110,7 @@ def test_no_plan_does_not_block_completion():
 # =============================================================
 
 
-def test_incomplete_plan_blocks_green_validation():
+def test_incomplete_plan_is_diagnostic_not_completion_truth():
 
     agent = (
         make_agent(
@@ -133,12 +133,7 @@ def test_incomplete_plan_blocks_green_validation():
         is True
     )
 
-    assert (
-        can_finish_edit_task(
-            agent
-        )
-        is False
-    )
+    assert can_finish_edit_task(agent) is True
 
 
 # =============================================================
@@ -252,7 +247,7 @@ def test_completed_plan_does_not_bypass_missing_regression():
 # =============================================================
 
 
-def test_incomplete_plan_blocks_fully_green_revision():
+def test_incomplete_plan_cannot_veto_fully_green_revision():
 
     agent = (
         make_agent(
@@ -274,9 +269,4 @@ def test_incomplete_plan_blocks_fully_green_revision():
         True
     )
 
-    assert (
-        can_finish_edit_task(
-            agent
-        )
-        is False
-    )
+    assert can_finish_edit_task(agent) is True

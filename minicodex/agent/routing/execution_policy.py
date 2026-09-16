@@ -69,7 +69,7 @@ def policy_for(mode: ExecutionMode, *, needs_plan: bool | None = None) -> Execut
             from dataclasses import replace
             return replace(
                 policy, use_plan=True, max_plan_steps=3, enable_replan=True,
-                exposed_tool_names=policy.exposed_tool_names | {"complete_plan_step", "replan"},
+                exposed_tool_names=policy.exposed_tool_names | {"replan"},
             )
         return policy
 

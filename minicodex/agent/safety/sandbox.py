@@ -177,7 +177,7 @@ class SandboxRunner:
     Child code may still access OS resources that the current
     operating-system user can access.
 
-    Stage 12 Safety and Stage 17 Sandbox therefore solve
+    Policy safety and process sandboxing solve
     different problems.
     """
 

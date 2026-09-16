@@ -53,6 +53,7 @@ class TraceEventType(
     REPLAN_FINISHED = "replan_finished"
 
     PLAN_STEP_COMPLETED = "plan_step_completed"
+    RUNTIME_TRANSITION = "runtime_transition"
 
 
 # =============================================================

@@ -23,7 +23,9 @@ class CompletionTransition:
 
     @property
     def can_finish(self) -> bool:
-        return self.decision.can_complete and not self.plan_incomplete
+        # A plan is an execution aid. It is never business truth and cannot
+        # veto current-revision requirement and validation evidence.
+        return self.decision.can_complete
 
 
 def plan_is_incomplete(agent) -> bool:
@@ -50,9 +52,19 @@ def record_task_outcome(
     metrics = getattr(agent, "execution_metrics", None)
     if metrics is not None:
         metrics.finish(outcome.value, reason, reason_code)
-    state = getattr(agent, "task_state", None)
-    if state is not None:
-        state.finish(outcome)
+    apply_event = getattr(agent, "apply_runtime_event", None)
+    if callable(apply_event):
+        from ..task_state import RuntimeEventType
+
+        apply_event(
+            RuntimeEventType.TASK_BLOCKED if outcome == TaskOutcome.BLOCKED else RuntimeEventType.TASK_COMPLETED,
+            outcome=outcome,
+            reason=reason,
+        )
+    else:
+        state = getattr(agent, "task_state", None)
+        if state is not None:
+            state.finish(outcome)
 
 
 def validation_transition(

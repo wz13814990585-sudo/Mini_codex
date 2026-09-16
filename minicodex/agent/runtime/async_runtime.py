@@ -486,7 +486,7 @@ class AsyncAgentTask:
         Final lifecycle state is always emitted as the last
         terminal AsyncStreamEvent.
 
-        This reuses Stage 14 Trace instead of inventing a
+        This reuses the trace runtime instead of inventing a
         second observability format.
         """
 

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from ..progress import ProgressKind, ProgressSignal
 from ..reason_codes import ReasonCode
+from ..task_state import RuntimeEventType
 
 if TYPE_CHECKING:
     from ..orchestration.control_decision import ControlDecision
@@ -65,6 +66,9 @@ class RollbackCoordinator:
         requirements = getattr(agent, "task_requirements", None)
         if requirements is not None:
             requirements.invalidate_revision(rollback_revision)
+            sync_requirements = getattr(agent, "sync_requirements_state", None)
+            if callable(sync_requirements):
+                sync_requirements()
         if hasattr(agent, "_repo_map_initialized"):
             agent._repo_map_initialized = False
             agent._repo_map_revision = None
@@ -83,6 +87,14 @@ class RollbackCoordinator:
             metrics.record_rollback()
         if hasattr(agent, "rollback_revision"):
             agent.rollback_revision += 1
+        apply_event = getattr(agent, "apply_runtime_event", None)
+        if callable(apply_event):
+            apply_event(
+                RuntimeEventType.ROLLBACK_APPLIED,
+                edit_revision=rollback_revision,
+                rollback_revision=getattr(agent, "rollback_revision", 1),
+                checkpoint_id=checkpoint.checkpoint_id,
+            )
         agent.progress.reset()
         agent.recovery.mark_progress()
         controller = getattr(agent, "action_controller", None)

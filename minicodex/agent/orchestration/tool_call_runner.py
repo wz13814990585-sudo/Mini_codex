@@ -47,7 +47,11 @@ class ToolCallRunner:
             )
             return ToolCallRun(tool_name, arguments, result, restriction=restriction)
 
-        allowed, duplicate_reason = agent.progress.check_duplicate_tool_call(tool_name, arguments)
+        allowed, duplicate_reason = agent.progress.check_duplicate_tool_call(
+            tool_name,
+            arguments,
+            workspace_revision=getattr(agent.task_state, "edit_revision", 0),
+        )
         if not allowed:
             result = ToolResult(
                 success=False,

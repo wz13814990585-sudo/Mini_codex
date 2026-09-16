@@ -10,6 +10,7 @@ class StepStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
+    SUPERSEDED = "superseded"
 
 
 @dataclass
@@ -20,6 +21,8 @@ class PlanStep:
     acceptance_criteria: list[
         dict[str, Any]
     ] = field(default_factory=list)
+    expected_targets: tuple[str, ...] = ()
+    dependency_ids: tuple[int, ...] = ()
     requires_semantic_completion: bool = False
     quality_warnings: list[str] = field(default_factory=list)
 
@@ -76,6 +79,16 @@ class PlanStep:
             id=step_id,
             description=description,
             acceptance_criteria=criteria,
+            expected_targets=tuple(
+                str(path).strip()
+                for path in (payload.get("expected_targets", ()) or ())
+                if str(path).strip()
+            ),
+            dependency_ids=tuple(
+                int(value)
+                for value in (payload.get("dependency_ids", ()) or ())
+                if str(value).strip().isdigit()
+            ),
         )
 
 
@@ -143,6 +156,16 @@ class AgentPlan:
             return True
 
         return bool(self.steps) and all(
-            step.status == StepStatus.COMPLETED
+            step.status in {StepStatus.COMPLETED, StepStatus.SUPERSEDED}
             for step in self.steps
         )
+
+    def supersede_remaining(self) -> tuple[int, ...]:
+        """Close bookkeeping-only steps after task truth is already proven."""
+
+        superseded = []
+        for step in tuple(self.steps):
+            if step.status in {StepStatus.PENDING, StepStatus.IN_PROGRESS}:
+                step.status = StepStatus.SUPERSEDED
+                superseded.append(step.id)
+        return tuple(superseded)

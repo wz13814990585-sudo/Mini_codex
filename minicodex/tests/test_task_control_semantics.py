@@ -205,7 +205,7 @@ def test_mode_specific_completion_and_already_satisfied():
     assert complex_ready.status == CompletionStatus.READY
 
 
-def test_standard_requires_completed_plan_even_with_green_evidence():
+def test_standard_plan_bookkeeping_cannot_veto_green_evidence():
     completion = TaskCompletionPolicy()
     agent = completion_agent(
         ExecutionMode.STANDARD,
@@ -215,8 +215,8 @@ def test_standard_requires_completed_plan_even_with_green_evidence():
         plan=False,
     )
     decision = completion.evaluate(agent)
-    assert decision.status == CompletionStatus.NOT_READY
-    assert decision.outcome == TaskOutcome.INCOMPLETE
+    assert decision.status == CompletionStatus.READY
+    assert decision.outcome == TaskOutcome.EDITED_AND_VALIDATED
 
 
 def test_semantic_evidence_strength_rules():

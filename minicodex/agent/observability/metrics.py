@@ -45,6 +45,10 @@ class ExecutionMetrics:
     validation_runs: int = 0
     flaky_reruns: int = 0
     premature_rollbacks_prevented: int = 0
+    repeated_action_count: int = 0
+    no_progress_detections: int = 0
+    recovery_successes: int = 0
+    duration_seconds: float = 0.0
 
     def reset(self, execution_mode: str | None = None, *, intent: str | None = None) -> None:
         self.execution_mode = execution_mode
@@ -85,6 +89,10 @@ class ExecutionMetrics:
         self.validation_runs = 0
         self.flaky_reruns = 0
         self.premature_rollbacks_prevented = 0
+        self.repeated_action_count = 0
+        self.no_progress_detections = 0
+        self.recovery_successes = 0
+        self.duration_seconds = 0.0
 
     def record_tool(
         self,
@@ -150,6 +158,10 @@ class ExecutionMetrics:
         )
         self.semantic_judge_latency += float(getattr(telemetry, "latency_seconds", 0.0))
         self.semantic_judge_prompt_version = str(getattr(telemetry, "prompt_version", ""))
+
+    @property
+    def repeated_action_rate(self) -> float:
+        return self.repeated_action_count / self.tool_call_count if self.tool_call_count else 0.0
 
 
 @dataclass

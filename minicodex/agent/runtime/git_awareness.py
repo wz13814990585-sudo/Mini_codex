@@ -637,7 +637,7 @@ class GitRepositoryInspector:
         #
         # Ordinary `git diff` does not show them.
         #
-        # Stage 11 must still be able to describe newly-created
+        # Git awareness must still describe newly-created
         # Agent files relative to Git.
         # =====================================================
 

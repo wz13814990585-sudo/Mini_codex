@@ -32,6 +32,22 @@ BENCHMARKS = (
 
 
 FAILURE_BENCHMARKS = (
+    "plan_bookkeeping_does_not_block_completion",
+    "repeated_reconnaissance_detected",
+    "interactive_game_validate_then_stop",
+    "informational_route_never_edits",
+    "inspect_only_route_never_edits",
+    "already_satisfied_without_meaningless_edit",
+    "ambiguous_patch_focused_retry",
+    "stale_context_invalidated_after_edit",
+    "source_file_never_used_as_pytest_target",
+    "acceptance_separate_from_regression",
+    "unrelated_preexisting_failure_no_rollback",
+    "tool_timeout_is_inconclusive",
+    "external_edit_blocks_rollback",
+    "malformed_router_uses_conservative_fallback",
+    "max_step_final_reconciliation_prefers_completion",
+    "workspace_truth_overrides_memory",
     "stale_patch_targeted_read_retry",
     "validation_fail_fix_revalidate",
     "missing_dependency_manifest_resolve",

@@ -24,14 +24,27 @@ Informational requests normally see no tools. Model prose cannot complete a
 modify task: the task must edit and validate, or validate that the requested
 state already exists.
 
-## State, progress, and phases
+## State, events, progress, and phases
 
-`TaskState` is the compact orchestration read-model. It projects intent, mode,
-planning state, requirement IDs, request targets, relevant paths,
-edit/validation/rollback/plan revisions, completed steps, validation flags,
-pressure counters, budget, and outcome.
-Filesystem contents, tool results, validation evidence, and plan objects remain
-the sources of truth.
+`TaskRuntime` owns the authoritative `TaskState` for a run. Filesystem contents
+and normalized tool results are factual inputs; controllers are caches or
+specialists, not competing orchestration state. Significant changes become
+explicit `RuntimeEvent` values consumed by the pure `reduce_task_state`
+function:
+
+```text
+workspace/tool fact → RuntimeEvent → reducer → current TaskState
+                                             ↓
+                                      ContextBuilder
+                                             ↓
+                                     model decision
+```
+
+The state includes the run ID, intent, mode, phase, budget, targets,
+requirements, edit/validation/rollback/plan revisions, current evidence,
+progress pressure, recovery level, blocker, and outcome. Transitions are
+independently testable. `task_progress_state()` returns this state directly;
+it does not reconstruct truth by polling controllers.
 
 `AgentPhase` has seven states: `INSPECTING`, `ACTING`, `VALIDATING`, `FIXING`,
 `FINALIZING`, `DONE`, and `BLOCKED`. `ActionController` consumes a mandatory
@@ -47,24 +60,25 @@ not only counts. Contradictory same-revision results become unstable evidence.
 
 The shared flow is:
 
-1. Project current `TaskState` and build one provider turn.
-2. `TurnBuilder` delegates system text to `PromptBuilder`, phase-specific task
+1. Evaluate completion from current state and evidence.
+2. Apply bounded mode, plan, phase, and budget policy.
+3. `TurnBuilder` delegates system text to `PromptBuilder`, phase-specific task
    context to `ContextBuilder`, and schemas to `ToolSchemaProvider`.
-3. `ToolCallRunner` owns prepare → restrict → duplicate-check → safe execution
+4. `ToolCallRunner` owns prepare → restrict → revision-aware duplicate-check → safe execution
    for one call.
-4. `ToolBatchRunner` owns the complete ordered provider batch and emits exactly
+5. `ToolBatchRunner` owns the complete ordered provider batch and emits exactly
    one tool result for every declared call, including skipped calls before a
    control transition.
-5. `PlanOrchestrator` owns step attempt, local recovery, and replan transitions.
-6. `ValidationPipeline` normalizes tool output into current-revision facts,
+6. `PlanOrchestrator` owns step attempt, local recovery, and replan transitions.
+7. `ValidationPipeline` normalizes tool output into current-revision facts,
    baseline deltas, stable keys, failure identities, and instability;
    `ProgressController` describes only comparable trends.
-7. A compact stateless `SemanticRegressionJudge` runs only for a genuinely
+8. A compact stateless `SemanticRegressionJudge` runs only for a genuinely
    ambiguous cross-revision regression. Its recommendation cannot edit,
    rollback, bypass safety, or complete the task.
-8. Deterministic recovery permits bounded materially different repair before
+9. Deterministic recovery permits bounded materially different repair before
    `RollbackCoordinator` may restore a conflict-free checkpoint.
-9. `CompletionHandler` is the only termination owner. `TaskReportBuilder`
+10. `CompletionHandler` is the only termination owner. `TaskReportBuilder`
    renders the final coding report immediately, without another model call.
 
 Normal product flows:
@@ -74,6 +88,12 @@ Normal product flows:
 - `MODIFY + COMPLEX`: optional plan → iterative edit → acceptance → full regression → done.
 - `INSPECT_ONLY`: inspect → report, with zero edits.
 - `INFORMATIONAL`: answer directly.
+
+Plans contain outcome descriptions, expected targets, dependencies, acceptance
+criteria, status, and evidence. Evidence reconciles criteria automatically.
+`complete_plan_step` is not model-visible. When explicit requirements and
+proportional current-revision validation are satisfied, remaining bookkeeping-
+only steps are superseded and cannot keep the agent alive.
 
 ## Editing, recovery, and safety
 
@@ -121,7 +141,8 @@ manifest to unrelated tasks.
 
 ## Context, memory, capabilities, and UX
 
-`ContextBuilder` changes content by phase: inspecting sees targets/repository
+`ContextBuilder` is the single context path. It changes content by phase:
+inspecting sees targets/repository
 fragment; acting sees the edit hint and exact current state; validating sees
 changed targets and the recommended validator; fixing sees the latest failure
 paths; finalizing sees only missing evidence. Older tool payloads become short
@@ -141,10 +162,13 @@ not claim resumable in-flight tasks after a process crash. A restarted process
 must inspect the physical workspace and establish fresh validation; it cannot
 reuse pre-crash validation or rollback state.
 
-`ToolRegistry` supports lightweight capabilities such as `filesystem.read`,
+`ToolRegistry` exposes backend-neutral `ToolMetadata`: capabilities, risk,
+side-effect class, read-only status, timeout class, and backend. It supports
+lightweight capabilities such as `filesystem.read`,
 `filesystem.write`, `code.search`, `code.edit`, `process.run`, `test.run`,
 `validation.static_web`, `validation.browser`, `dependency.install`, and
-`git.inspect`, with deterministic name-based defaults for built-in tools.
+`git.inspect`, with deterministic name-based defaults for built-in tools. This
+is the future local/remote backend seam; MCP networking is not implemented.
 
 CLI levels are `normal`, `verbose`, and `debug`. Normal hides Harness/provider
 noise and internal enums. Verbose retains execution/phase diagnostics. Debug

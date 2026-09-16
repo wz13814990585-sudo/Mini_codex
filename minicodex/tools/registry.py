@@ -1,6 +1,35 @@
-"""Tool registry."""
+"""Capability-oriented tool registry."""
+
+from dataclasses import dataclass
+from enum import Enum
 
 from .base import BaseTool
+
+
+class SideEffectClass(str, Enum):
+    READ_ONLY = "read_only"
+    WORKSPACE_WRITE = "workspace_write"
+    PROCESS_EXECUTION = "process_execution"
+    DEPENDENCY_INSTALL = "dependency_install"
+    DESTRUCTIVE = "destructive"
+    EXTERNAL_SIDE_EFFECT = "external_side_effect"
+
+
+class ToolRisk(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+@dataclass(frozen=True)
+class ToolMetadata:
+    name: str
+    capabilities: frozenset[str]
+    risk: ToolRisk
+    side_effect: SideEffectClass
+    read_only: bool
+    timeout_class: str
+    backend: str
 
 
 class ToolRegistry:
@@ -52,6 +81,37 @@ class ToolRegistry:
         tool = self.get(tool_or_name) if isinstance(tool_or_name, str) else tool_or_name
         declared = frozenset(getattr(tool, "capabilities", ()) or ())
         return declared or frozenset(self._NAME_CAPABILITIES.get(tool.name, ()))
+
+    def metadata_for(self, tool_or_name) -> ToolMetadata:
+        """Return backend-neutral execution metadata for local or future tools."""
+
+        tool = self.get(tool_or_name) if isinstance(tool_or_name, str) else tool_or_name
+        capabilities = self.capabilities_for(tool)
+        if "dependency.install" in capabilities:
+            side_effect, risk, timeout_class = (
+                SideEffectClass.DEPENDENCY_INSTALL, ToolRisk.HIGH, "long"
+            )
+        elif "filesystem.write" in capabilities or "code.edit" in capabilities:
+            side_effect, risk, timeout_class = (
+                SideEffectClass.WORKSPACE_WRITE, ToolRisk.MEDIUM, "short"
+            )
+        elif "process.run" in capabilities or "test.run" in capabilities:
+            side_effect, risk, timeout_class = (
+                SideEffectClass.PROCESS_EXECUTION, ToolRisk.MEDIUM, "long"
+            )
+        else:
+            side_effect, risk, timeout_class = (
+                SideEffectClass.READ_ONLY, ToolRisk.LOW, "short"
+            )
+        return ToolMetadata(
+            name=tool.name,
+            capabilities=capabilities,
+            risk=risk,
+            side_effect=side_effect,
+            read_only=side_effect == SideEffectClass.READ_ONLY,
+            timeout_class=timeout_class,
+            backend=str(getattr(tool, "backend", "local")),
+        )
 
     def get_schemas(
         self,

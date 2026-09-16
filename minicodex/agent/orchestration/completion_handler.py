@@ -184,13 +184,26 @@ class CompletionHandler:
 
     @staticmethod
     def _reconcile_plan(agent) -> None:
-        """Give deterministic criteria one final chance before any exit."""
+        """Reconcile criteria, then supersede bookkeeping-only remainder."""
 
         if getattr(agent, "active_plan", None) is None:
             return
         reconcile = getattr(agent, "reconcile_plan_progress", None)
         if callable(reconcile):
             reconcile()
+        policy = getattr(agent, "completion_policy", None)
+        decision = policy.evaluate(agent) if policy is not None else None
+        plan = getattr(agent, "active_plan", None)
+        if decision is None or not decision.can_complete or plan is None or plan.is_completed():
+            return
+        supersede = getattr(plan, "supersede_remaining", None)
+        if callable(supersede):
+            superseded = supersede()
+            if superseded:
+                agent.plan_version += 1
+                sync = getattr(agent, "sync_plan_state", None)
+                if callable(sync):
+                    sync(superseded_steps=superseded)
 
     @staticmethod
     def _concrete_blocker(agent, content: str) -> str | None:

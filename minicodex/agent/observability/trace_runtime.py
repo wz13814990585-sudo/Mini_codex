@@ -798,9 +798,31 @@ def attach_runtime_tracing(
             )
         )
 
-    # =========================================================
-    # Task Run
-    # =========================================================
+    # Canonical runtime transitions
+
+    original_apply_runtime_event = getattr(agent, "apply_runtime_event", None)
+    if callable(original_apply_runtime_event):
+        def traced_runtime_event(self, kind, **data):
+            if getattr(kind, "value", "") == "task_started" and recorder.task_id:
+                data.setdefault("run_id", recorder.task_id)
+            state = original_apply_runtime_event(kind, **data)
+            _safe_emit(
+                recorder,
+                TraceEventType.RUNTIME_TRANSITION,
+                {
+                    "kind": getattr(kind, "value", str(kind)),
+                    "event_sequence": state.event_sequence,
+                    "phase": state.phase.value,
+                    "edit_revision": state.edit_revision,
+                    "validation_revision": state.validation_revision,
+                    "reason": data.get("reason"),
+                },
+            )
+            return state
+
+        agent.apply_runtime_event = MethodType(traced_runtime_event, agent)
+
+    # Task run
 
     original_run = (
         agent.run

@@ -480,7 +480,7 @@ class EvaluationHarness:
             false_completion=bool(
                 intent == TaskIntent.MODIFY
                 and final_outcome in {"edited_and_validated", "already_satisfied"}
-                and not (completion.can_complete and plan_completed)
+                and not completion.can_complete
             ),
             wrong_edit=bool(intent != TaskIntent.MODIFY and edit_count > 0),
             routing_llm_calls=int(metric("routing_llm_calls", 0) or 0),
@@ -498,6 +498,10 @@ class EvaluationHarness:
             premature_rollbacks_prevented=int(
                 metric("premature_rollbacks_prevented", 0) or 0
             ),
+            repeated_action_count=int(metric("repeated_action_count", 0) or 0),
+            repeated_action_rate=float(metric("repeated_action_rate", 0.0) or 0.0),
+            no_progress_detections=int(metric("no_progress_detections", 0) or 0),
+            recovery_successes=int(metric("recovery_successes", 0) or 0),
             duration_seconds=(
                 duration
             ),

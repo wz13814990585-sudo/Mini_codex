@@ -33,7 +33,7 @@ def compact_messages_for_pressure(
         Keep only the most recent tool round and
         aggressively shrink older payloads.
 
-    Stage 5 will later add Working Summary so that
+    Working Summary retains
     old information can be preserved semantically
     instead of only being truncated.
     """

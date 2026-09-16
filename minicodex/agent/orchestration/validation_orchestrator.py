@@ -34,7 +34,7 @@ def can_complete_edit_task(agent) -> bool:
 
 
 def can_finish_edit_task(agent) -> bool:
-    return not active_plan_incomplete(agent) and evaluate_completion(agent).can_complete
+    return evaluate_completion(agent).can_complete
 
 
 def acceptance_evidence_reminder(

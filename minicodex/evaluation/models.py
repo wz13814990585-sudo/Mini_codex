@@ -162,6 +162,10 @@ class EvaluationResult:
     repair_attempts: int = 0
     flaky_reruns: int = 0
     premature_rollbacks_prevented: int = 0
+    repeated_action_count: int = 0
+    repeated_action_rate: float = 0.0
+    no_progress_detections: int = 0
+    recovery_successes: int = 0
 
     duration_seconds: float = 0.0
 
@@ -275,6 +279,10 @@ class EvaluationSummary:
         )
 
     @property
+    def tokens_per_success(self) -> float:
+        return self.total_tokens / self.passed_cases if self.passed_cases else 0.0
+
+    @property
     def total_llm_calls(
         self,
     ) -> int:
@@ -377,6 +385,7 @@ class EvaluationSummary:
             "average_tokens": (
                 self.average_tokens
             ),
+            "tokens_per_success": self.tokens_per_success,
             "total_llm_calls": (
                 self.total_llm_calls
             ),

@@ -65,6 +65,8 @@ Return exactly this JSON format:
     "steps": [
         {{
             "description": "step 1",
+            "expected_targets": ["relative/path"],
+            "dependency_ids": [],
             "acceptance_criteria": [
                 {{"type": "file_exists", "path": "relative/path"}},
                 {{"type": "contains_all", "path": "relative/path", "texts": ["required marker"]}}
@@ -72,6 +74,8 @@ Return exactly this JSON format:
         }},
         {{
             "description": "semantic-only step 2",
+            "expected_targets": ["relative/path"],
+            "dependency_ids": [1],
             "acceptance_criteria": []
         }}
     ]

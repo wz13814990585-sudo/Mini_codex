@@ -29,7 +29,15 @@ class TaskCompletionPolicy:
                 full_validation_passed=False,
             )
 
-        state = pipeline.state
+        pipeline_state = pipeline.state
+        task_state = getattr(agent, "task_state", None)
+        # A started TaskRuntime is authoritative. Isolated legacy callers that
+        # construct only a ValidationPipeline continue to use that projection.
+        state = (
+            task_state
+            if task_state is not None and getattr(task_state, "run_id", "")
+            else pipeline_state
+        )
         policy = getattr(agent, "execution_policy", None)
         requirement = (
             agent.current_regression_requirement()
@@ -44,14 +52,17 @@ class TaskCompletionPolicy:
             edit_revision=state.edit_revision,
             has_edit=state.has_edit,
             acceptance_passed=state.acceptance_passed,
-            full_validation_passed=state.full_passed,
-            relevant_validation_passed=state.targeted_passed,
+            full_validation_passed=getattr(
+                state, "full_validation_passed", getattr(state, "full_passed", False)
+            ),
+            relevant_validation_passed=getattr(
+                state, "relevant_validation_passed", getattr(state, "targeted_passed", False)
+            ),
             require_acceptance=getattr(policy, "require_acceptance", True),
             regression_requirement=requirement,
             allow_already_satisfied=True,
         )
 
-        task_state = getattr(agent, "task_state", None)
         phase = getattr(task_state, "phase", None)
         if getattr(phase, "value", phase) == "blocked":
             return replace(
@@ -66,7 +77,18 @@ class TaskCompletionPolicy:
             decision.can_complete
             and requirements is not None
             and getattr(requirements, "items", None)
-            and not requirements.all_satisfied
+            and (
+                (
+                    task_state is not None
+                    and getattr(task_state, "run_id", "")
+                    and set(task_state.requirement_ids)
+                    != set(task_state.satisfied_requirement_ids)
+                )
+                or (
+                    not getattr(task_state, "run_id", "")
+                    and not requirements.all_satisfied
+                )
+            )
         ):
             missing = "; ".join(item.description for item in requirements.unsatisfied[:4])
             return replace(
@@ -76,30 +98,4 @@ class TaskCompletionPolicy:
                 reason=f"Task requirements lack current evidence: {missing}",
             )
 
-        plan = getattr(agent, "active_plan", None)
-        plan_required = bool(getattr(policy, "use_plan", plan is not None))
-        if decision.can_complete and plan_required and plan is None:
-            return replace(
-                decision,
-                status=CompletionStatus.NOT_READY,
-                outcome=TaskOutcome.INCOMPLETE,
-                reason="The routing policy requires a plan, but no valid active plan exists.",
-            )
-        if (
-            decision.can_complete
-            and plan_required
-            and plan is not None
-            and not plan.is_completed()
-        ):
-            return replace(
-                decision,
-                status=CompletionStatus.NOT_READY,
-                outcome=TaskOutcome.INCOMPLETE,
-                reason=(
-                    "Validation requirements are satisfied, but the active "
-                    "outcome plan still has unfinished steps."
-                ),
-            )
-        if decision.can_complete and task_state is not None:
-            task_state.mark_finalizing()
         return decision

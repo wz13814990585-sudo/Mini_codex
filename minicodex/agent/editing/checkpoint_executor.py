@@ -479,7 +479,7 @@ class CheckpointingToolExecutor:
             )
 
         # =====================================================
-        # Stage 11 Agent-Owned Edit Tracking
+        # Agent-owned edit tracking
         #
         # This must run even if checkpoint sealing failed,
         # because the file physically changed.

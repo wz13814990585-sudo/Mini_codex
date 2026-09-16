@@ -121,9 +121,7 @@ class ProgressController:
 
         # Counts survive interleaved calls until real progress
         # resets this controller.
-        self._tool_signature_counts: dict[
-            tuple[str, str], int
-        ] = {}
+        self._tool_signature_counts: dict[tuple[str, str, int], int] = {}
 
         # =====================================================
         # Last Observed Validation
@@ -194,6 +192,8 @@ class ProgressController:
         self,
         tool_name: str,
         arguments: dict,
+        *,
+        workspace_revision: int = 0,
     ) -> tuple[
         bool,
         str | None,
@@ -206,6 +206,7 @@ class ProgressController:
                 sort_keys=True,
                 ensure_ascii=False,
             ),
+            max(0, int(workspace_revision)),
         )
 
         signature_count = (

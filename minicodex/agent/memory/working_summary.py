@@ -13,11 +13,11 @@ class WorkingSummary:
     """
     Compact task-level factual execution history.
 
-    Stage 5 responsibility:
+    Summary responsibility:
 
         preserve recent factual execution events
 
-    Stage 15 WorkingMemory responsibility:
+    Working-memory responsibility:
 
         preserve latest-known structured task state
 
@@ -154,7 +154,7 @@ class WorkingSummary:
             arguments = {}
 
         # =====================================================
-        # Stage 15 Structured Working Memory
+        # Structured working memory
         #
         # Memory is a cache, not source of truth.
         #
@@ -734,7 +734,7 @@ class WorkingSummary:
         sections = []
 
         # =====================================================
-        # Stage 15 Current-State Memory
+        # Current-state memory
         # =====================================================
 
         if (
@@ -753,7 +753,7 @@ class WorkingSummary:
             )
 
         # =====================================================
-        # Stage 5 Recent History
+        # Recent history
         # =====================================================
 
         if self.items:

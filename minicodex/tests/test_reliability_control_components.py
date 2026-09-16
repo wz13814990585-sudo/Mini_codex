@@ -147,7 +147,7 @@ def test_benchmark_catalog_has_required_mode_mix_and_budgets():
     assert modes == {ExecutionMode.FAST, ExecutionMode.STANDARD, ExecutionMode.COMPLEX}
     assert all(case.max_inspections_before_action <= 3 for case in BENCHMARKS)
     assert all(not case.requires_plan for case in BENCHMARKS if case.expected_mode == ExecutionMode.FAST)
-    assert len(FAILURE_BENCHMARKS) == 4
+    assert len(FAILURE_BENCHMARKS) >= 16
     router = TaskRouter()
     assert all(
         router.route(case.prompt).mode == case.expected_mode

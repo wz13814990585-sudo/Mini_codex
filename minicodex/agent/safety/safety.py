@@ -103,7 +103,7 @@ class SafetyPolicy:
 
     Safety decisions belong to the Harness, not the LLM.
 
-    Stage 12 is NOT a full OS sandbox.
+    This policy is not a full OS sandbox.
 
     It protects the deterministic tool-call boundary.
 
@@ -315,7 +315,7 @@ class SafetyPolicy:
             allowed=True,
             reason=(
                 "Tool does not match a "
-                "restricted Stage 12 operation."
+                "restricted safety operation."
             ),
             rule=(
                 "default_safe"
@@ -834,7 +834,7 @@ class SafetyPolicy:
             allowed=True,
             reason=(
                 "Command does not match a known "
-                "Stage 12 blocked or caution rule."
+                "Safety policy blocked or cautioned this operation."
             ),
             rule=(
                 "command_safe"

@@ -40,7 +40,7 @@ class SymbolIndex:
     """
     AST-powered structural index for Python code.
 
-    Stage 7 intentionally extracts only high-value
+    The index intentionally extracts only high-value
     symbols rather than exposing the entire AST.
     """
 

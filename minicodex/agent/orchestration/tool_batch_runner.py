@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ..editing import EditFailureType
 from ..progress import ProgressKind, ProgressSignal
 from ..reason_codes import ReasonCode
+from ..task_state import AgentPhase, RuntimeEventType
 from .message_protocol import close_tool_batch_before_control_transition
 from .tool_call_runner import ToolCallRun, ToolCallRunner
 
@@ -44,6 +45,11 @@ class ToolBatchRunner:
         signals: list[ProgressSignal] = []
 
         for index, tool_call in enumerate(tool_calls):
+            self._emit_event(
+                agent,
+                RuntimeEventType.TOOL_STARTED,
+                tool_name=tool_call.function.name,
+            )
             run = self.call_runner.run(agent, tool_call)
             runs.append(run)
             tool_name, arguments, result = run.tool_name, run.arguments, run.result
@@ -64,12 +70,15 @@ class ToolBatchRunner:
             controller = getattr(agent, "action_controller", None)
             if run.restriction is not None:
                 if run.restriction.failure_type == "action_required_restriction":
-                    agent.task_state.require_action()
+                    self._emit_event(agent, RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.ACTING)
                 metrics = getattr(agent, "execution_metrics", None)
                 if metrics is not None and controller is not None:
                     metrics.action_required_trigger_count = controller.action_required_trigger_count
                 agent.plan_orchestrator.record_attempt_failure(current_plan_step)
                 self._append_observation(messages, tool_call.id, result, "Tool Restriction")
+                signal = ProgressSignal(ProgressKind.NONE, "Tool call was restricted.")
+                signals.append(signal)
+                self._observe(agent, tool_name, signal)
                 self._close(
                     messages,
                     tool_calls[index + 1 :],
@@ -81,8 +90,11 @@ class ToolBatchRunner:
                     restart=True, followup_message=run.restriction.reason,
                 )
 
+            metrics = getattr(agent, "execution_metrics", None)
             if run.duplicate_blocked:
                 agent.plan_orchestrator.record_attempt_failure(current_plan_step)
+                if metrics is not None:
+                    metrics.repeated_action_count += 1
                 print("\n[Duplicate Tool Blocked]")
             elif not result.success:
                 agent.plan_orchestrator.record_attempt_failure(current_plan_step)
@@ -116,7 +128,6 @@ class ToolBatchRunner:
                     )
                 )
             self._append_observation(messages, tool_call.id, result)
-            metrics = getattr(agent, "execution_metrics", None)
             if metrics is not None:
                 metrics.record_tool(
                     tool_name,
@@ -129,8 +140,11 @@ class ToolBatchRunner:
             retry_message = retry.observe(tool_name, arguments, result) if retry is not None else None
             if retry_message:
                 stale = str(result.data.get("edit_failure_type", result.data.get("failure_type", ""))) == EditFailureType.STALE_CONTEXT.value
-                agent.task_state.transition_for_tool(
-                    tool_name, success=result.success, stale_edit=stale
+                self._emit_event(
+                    agent,
+                    RuntimeEventType.RECOVERY_STARTED,
+                    level=1,
+                    failure_type="stale_context" if stale else "edit_failure",
                 )
                 signal = ProgressSignal(ProgressKind.NONE, "Bounded local edit recovery is required.")
                 signals.append(signal)
@@ -147,8 +161,12 @@ class ToolBatchRunner:
                 )
 
             is_validation = self._is_validation(tool_name, arguments)
-            if not is_validation and not (tool_name in EDIT_TOOL_NAMES and result.success):
-                agent.task_state.transition_for_tool(tool_name, success=result.success)
+            if (
+                not is_validation
+                and tool_name in EDIT_TOOL_NAMES
+                and not result.success
+            ):
+                self._emit_event(agent, RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.ACTING)
             if tool_name not in EDIT_TOOL_NAMES and hasattr(agent, "step_evidence"):
                 agent.step_evidence.record(
                     step_id=current_plan_step.id if current_plan_step else None,
@@ -165,6 +183,7 @@ class ToolBatchRunner:
                 if requirements is not None:
                     requirements.invalidate_revision(revision)
                     requirements.record_edit(path=str(arguments.get("path", "")), revision=revision)
+                    agent.sync_requirements_state()
                 agent.working_summary.advance_revision(revision)
                 agent._repo_map_initialized = False
                 agent._repo_map_revision = None
@@ -175,7 +194,12 @@ class ToolBatchRunner:
                         memory.invalidate_path(str(arguments.get("path", "")))
                     except Exception:
                         pass
-                agent.task_state.transition_for_tool(tool_name, success=True)
+                self._emit_event(
+                    agent,
+                    RuntimeEventType.EDIT_APPLIED,
+                    edit_revision=revision,
+                    path=str(arguments.get("path", "")),
+                )
                 if hasattr(agent, "step_evidence"):
                     agent.step_evidence.record(
                         step_id=current_plan_step.id if current_plan_step else None,
@@ -224,11 +248,17 @@ class ToolBatchRunner:
                     requirements = getattr(agent, "task_requirements", None)
                     if requirements is not None:
                         requirements.record_validation(evidence)
-                    agent.task_progress_state()
-                    agent.task_state.transition_for_tool(
-                        tool_name,
-                        success=result.success,
-                        validation_outcome=evidence.outcome,
+                        agent.sync_requirements_state()
+                    validation_state = agent.validation_pipeline.state
+                    self._emit_event(
+                        agent,
+                        RuntimeEventType.VALIDATION_OBSERVED,
+                        outcome=evidence.outcome,
+                        validation_revision=getattr(validation_state, "evidence_sequence", 0),
+                        acceptance_passed=validation_state.acceptance_passed,
+                        relevant_validation_passed=validation_state.targeted_passed,
+                        full_validation_passed=validation_state.full_passed,
+                        evidence_edit_revision=evidence.edit_revision,
                     )
                     _, completed = agent.plan_orchestrator.reconcile(agent)
                     print(
@@ -237,6 +267,12 @@ class ToolBatchRunner:
                         f"\nOutcome: {evidence.outcome.value}"
                     )
                     decision = agent.validation_orchestrator.apply(agent=agent, evidence=evidence)
+                    if (
+                        evidence.outcome.value == "passed"
+                        and agent.task_state.recovery_level > 0
+                        and metrics is not None
+                    ):
+                        metrics.recovery_successes += 1
                     signal = agent.latest_progress_signal or ProgressSignal(
                         ProgressKind.NONE, "Validation did not yield comparable progress."
                     )
@@ -331,6 +367,23 @@ class ToolBatchRunner:
         controller = getattr(agent, "action_controller", None)
         if controller is not None:
             controller.observe_action(tool_name, agent.task_progress_state(), signal)
+            metrics = getattr(agent, "execution_metrics", None)
+            if metrics is not None and signal.kind == ProgressKind.NONE:
+                metrics.no_progress_detections += 1
+            ToolBatchRunner._emit_event(
+                agent,
+                RuntimeEventType.TOOL_FINISHED,
+                tool_name=tool_name,
+                progress_kind=signal.kind.value,
+                consecutive_inspections=controller.consecutive_inspections,
+                consecutive_no_state_change=controller.consecutive_no_state_change,
+            )
+
+    @staticmethod
+    def _emit_event(agent, kind: RuntimeEventType, **data) -> None:
+        emit = getattr(agent, "apply_runtime_event", None)
+        if callable(emit):
+            emit(kind, **data)
 
     @staticmethod
     def _check_completion(agent, messages, remaining) -> str | None:

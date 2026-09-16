@@ -25,11 +25,11 @@ class RepoMap:
     """
     Build a compact structural map of the workspace.
 
-    Stage 6 only provides repository structure.
+    This component only provides repository structure.
 
     RepoMap does not read file contents and does not
     extract classes, functions, or other code symbols.
-    Symbol awareness belongs to Stage 7.
+    Symbol awareness belongs to the symbol index.
     """
 
     workspace: str | Path = "."
