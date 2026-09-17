@@ -12,6 +12,8 @@ from .evidence import (
 from .pipeline import ValidationPipeline
 from .ledger import ValidationLedger
 from .validator_resolver import ValidatorResolution, ValidatorResolver
+from .verification_spec import (BrowserVerificationSpec, CommandVerificationSpec, FileVerificationSpec,
+                                HttpVerificationSpec, SemanticVerificationSpec, TestVerificationSpec)
 from .test_index import IndexedTest, TestIndex
 from .test_target_resolver import TestTargetResolution, TestTargetResolver
 from .regression_policy import RegressionPolicy, RegressionRequirement
@@ -36,6 +38,12 @@ __all__ = [
     "ValidationLedger",
     "ValidatorResolution",
     "ValidatorResolver",
+    "BrowserVerificationSpec",
+    "CommandVerificationSpec",
+    "FileVerificationSpec",
+    "HttpVerificationSpec",
+    "SemanticVerificationSpec",
+    "TestVerificationSpec",
     "IndexedTest",
     "TestIndex",
     "TestTargetResolution",

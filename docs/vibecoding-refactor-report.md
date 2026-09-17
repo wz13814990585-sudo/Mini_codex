@@ -344,3 +344,26 @@ rg -n 'complete_plan_step|class ValidationState|compatibility shim' minicodex/ag
 18. 实际执行：`python -m pytest -q --tb=line`、`python -m compileall -q minicodex`、`git diff --check`。
 19. 最终结果：**559 passed in 13.23s**（服务端口测试以受控本机权限运行）；compileall 和 diff 空白检查通过。
 20. 剩余限制：没有在 CI/本次交付中运行付费真实模型；无法从安全 profile 命令推导服务启动 argv 时，resolver 会拒绝编造参数并保留该检查待模型提供精确调用。
+
+## 产品化与工作区可靠性收尾
+
+1. 本轮基于当前 `demo_game_try` HEAD 实现，未假定旧报告的入口或路径仍有效。
+2. 新增 `workspace.py`、typed `verification_spec.py`、`validate_semantic.py`、`real_repo_bench.py` 与工作区测试。
+3. 修改 CLI composition root、验证计划/解析/管道、WorkUnit 事件、README 及现有测试。
+4. 未删除用户代码；旧 selector 已在前一轮删除。
+5. `WorkspaceConfig` 区分 application root、target workspace、runtime/sandbox/trace root 和稳定 repository key。
+6. `minicodex` 默认使用当前目录，`--workspace PATH` 选择任意存在的目录，错误路径提供 argparse 错误。
+7. 所有在 CLI 注册的文件、编辑、命令、测试、Web、Git、索引、checkpoint 工具共享 selected workspace。
+8. Planner 不再因 capability 缺失丢弃 required rung；Resolver 返回 resolved/capability-missing/target-unresolved 状态，未证明检查继续阻断完成。
+9. `ValidationCheck.spec` 使用小型 typed union：文件、测试、命令、HTTP、浏览器、语义；observable 仍保留为需求层语言。
+10. Browser spec 必须提供 selector、动作和 post-action assertion；页面加载或自然语言 prose 不会伪装成互动证明。
+11. HTTP spec 提供 method/path/status/body，Resolver 仅用 profile 的安全 `{port}` 启动模板构造服务调用。
+12. `validation.semantic` 是只读工具：先做确定性字面内容证明，再使用无工具、受限 JSON judge；证据进入普通 Ledger。
+13. WorkUnit milestone 仅绑定 `milestone == "work_unit"` 的检查，task-level runtime/regression 不会误卡住 edit boundary。
+14. 有计划时 orchestration 优先 next required check；泛化 acceptance/full-regression 信息只保留无计划兼容路径。
+15. `RealRepoBench` 提供 20 个 Python/FastAPI/HTML/TypeScript 本地 fixture 定义，必须传入 provider-neutral model factory。
+16. 新增测试覆盖默认/外部 workspace、工具路径传播、缺失 browser capability、typed HTTP/browser、semantic readonly、RealRepoBench opt-in。
+17. 实际运行：`python -m pytest -q --tb=line`、`python -m compileall -q minicodex`、`git diff --check`。
+18. 结果：**566 passed in 13.17s**，编译与 diff 空白检查均通过。
+19. CI 仍只运行 deterministic pytest/compileall；RealVibeBench 与 RealRepoBench 均不在 CI 发起真实模型调用。
+20. 剩余限制：没有执行付费 provider 的 autonomous benchmark；复杂自然语言互动若无法安全导出 typed spec，会保持 unresolved 而非推测参数。

@@ -5,6 +5,7 @@ from pathlib import Path
 
 DEFAULT_IGNORED_DIRS = {
     ".git",
+    ".minicodex",
     ".idea",
     ".vscode",
     "__pycache__",

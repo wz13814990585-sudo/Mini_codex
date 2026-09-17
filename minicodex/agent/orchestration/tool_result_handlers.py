@@ -32,7 +32,7 @@ class EditResultHandler:
         emit(agent, RuntimeEventType.EDIT_APPLIED,
              edit_revision=revision, path=path,
              milestone_check_ids=tuple(check.id for check in agent.validation_pipeline.state.plan.checks
-                                      if check.required and check.purpose.value == "acceptance"),
+                                      if check.required and check.milestone == "work_unit"),
              diff_quality_issues=result.data.get("diff_quality_issues", ()))
         if hasattr(agent, "step_evidence"):
             agent.step_evidence.record(step_id=current_plan_step.id if current_plan_step else None,

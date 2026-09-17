@@ -161,7 +161,7 @@ class ToolEventAdapter:
             str(result.data.get("outcome", "")).casefold() in {"passed", "failed", "inconclusive"}
             and "errors" in result.data
         )
-        is_validation = (bool(capabilities & {"test.run", "validation.static_web", "validation.browser", "service.validate"})
+        is_validation = (bool(capabilities & {"test.run", "validation.static_web", "validation.browser", "service.validate", "validation.semantic"})
             or ("process.run" in capabilities and arguments.get("purpose") in {"acceptance", "regression"})
             or structured_validation_result
         )

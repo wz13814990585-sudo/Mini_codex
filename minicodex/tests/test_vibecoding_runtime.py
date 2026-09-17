@@ -220,7 +220,8 @@ def test_ladder_turns_required_rungs_into_plan_checks(tmp_path):
     readme = ValidationPlanner().build(TaskRequirements([TaskRequirement("R1", "update README", RequirementCategory.DOCUMENTATION,
         paths=("README.md",), observable="README explains token expiry")]), profile=session.profile,
         paths=("README.md",), request="Document token expiry")
-    assert [check.strength for check in readme.checks] == [EvidenceStrength.STRUCTURE]
+    assert [check.strength for check in readme.checks] == [EvidenceStrength.TARGETED]
+    assert readme.checks[0].capability == "validation.semantic"
 
 
 def test_session_reuses_knowledge_but_invalidates_external_changes(tmp_path):

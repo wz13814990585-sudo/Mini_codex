@@ -60,10 +60,12 @@ class ValidationPipeline:
                 tool_name = "validate_browser_app"
             elif "validation.static_web" in capabilities:
                 tool_name = "validate_static_web"
+            elif "validation.semantic" in capabilities:
+                tool_name = "validate_semantic"
             elif "process.run" in capabilities:
                 tool_name = "run_command"
 
-        if tool_name in {"validate_static_web", "validate_browser_app"}:
+        if tool_name in {"validate_static_web", "validate_browser_app", "validate_semantic"}:
 
             evidence = self._from_static_web(
                 arguments=arguments,
@@ -115,7 +117,9 @@ class ValidationPipeline:
             strength = int(result.data.get("evidence_strength", 0))
         elif tool_name == "validate_browser_app":
             strength = int(result.data.get("evidence_strength", 5))
-        if tool_name in {"validate_static_web", "validate_browser_app"}:
+        elif tool_name == "validate_semantic":
+            strength = int(result.data.get("evidence_strength", 0))
+        if tool_name in {"validate_static_web", "validate_browser_app", "validate_semantic"}:
             import hashlib
             import json
             specification = {k: v for k, v in arguments.items()
@@ -129,7 +133,7 @@ class ValidationPipeline:
                 strength = int(check.strength)
         evidence = replace(evidence, tool_name=original_name, check_id=check.id if check else "",
                            requirement_ids=check.requirement_ids if check else (), strength=strength,
-                           capability="service.validate" if "service.validate" in (capabilities or ()) else {"run_tests": "test.run", "run_command": "process.run", "validate_static_web": "validation.static_web", "validate_browser_app": "validation.browser"}.get(tool_name, ""),
+                           capability="service.validate" if "service.validate" in (capabilities or ()) else {"run_tests": "test.run", "run_command": "process.run", "validate_static_web": "validation.static_web", "validate_browser_app": "validation.browser", "validate_semantic": "validation.semantic"}.get(tool_name, ""),
                            agent_test_only=bool(result.data.get("agent_test_only", False)))
         evidence = self.state.record(evidence)
 

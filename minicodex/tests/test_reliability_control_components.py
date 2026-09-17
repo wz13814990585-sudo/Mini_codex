@@ -12,6 +12,7 @@ from ..agent.task_state import AgentPhase, TaskState
 from ..agent.routing import TaskRouter
 from ..agent.validation import ValidationOutcome
 from ..agent.validation import ValidatorResolver
+from ..agent.validation import BrowserVerificationSpec
 from ..agent.validation.plan import EvidenceStrength, ValidationCheck
 from ..agent.validation.evidence import ValidationPurpose
 from ..agent.memory import WorkingSummary
@@ -239,7 +240,8 @@ def test_validator_resolver_uses_check_capability(tmp_path):
     registry.register(BrowserTool())
     check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
                             capability="validation.browser", strength=EvidenceStrength.RUNTIME,
-                            observable="Score: 1")
+                            observable="Score: 1", spec=BrowserVerificationSpec(
+                                "game.html", "#score", "keypress", "ArrowLeft", "1"))
     resolved = ValidatorResolver(tmp_path).resolve(check, registry=registry, paths=("game.html",))
     assert resolved.tool_name == "browser_adapter"
     assert resolved.arguments["validation_check"] == "V1"

@@ -87,6 +87,20 @@ def validation_transition(
                 skipped_reason="deterministic completion evidence is sufficient",
             )
         return ControlDecision()
+    # A materialized plan is the production source of the next action.  Do
+    # this before legacy acceptance/regression projections can generalize it.
+    if next_action == ValidationNextAction.RUN_CHECK:
+        check = next_check
+        return ControlDecision(
+            restart=True,
+            followup_message=(
+                f"Run required validation check {check.id}: {check.observable or check.reason}. "
+                f"Use capability {check.capability}, strength {check.strength.name}, and validation_check='{check.id}'."
+                if check is not None else "Run the next required validation check."
+            ),
+            skipped_reason="a required validation check remains unproven",
+            reason_code=ReasonCode.ACCEPTANCE_MISSING,
+        )
     if (
         completion.status == CompletionStatus.NEEDS_RELEVANT_VALIDATION
         and completion.acceptance_passed
@@ -105,18 +119,6 @@ def validation_transition(
             restart=True,
             followup_message=acceptance_reminder,
             skipped_reason="validation requires acceptance evidence",
-            reason_code=ReasonCode.ACCEPTANCE_MISSING,
-        )
-    if next_action == ValidationNextAction.RUN_CHECK:
-        check = next_check
-        return ControlDecision(
-            restart=True,
-            followup_message=(
-                f"Run required validation check {check.id}: {check.observable or check.reason}. "
-                f"Use capability {check.capability}, strength {check.strength.name}, and validation_check='{check.id}'."
-                if check is not None else "Run the next required validation check."
-            ),
-            skipped_reason="a required validation check remains unproven",
             reason_code=ReasonCode.ACCEPTANCE_MISSING,
         )
     if next_action == ValidationNextAction.RUN_FULL_VALIDATION:

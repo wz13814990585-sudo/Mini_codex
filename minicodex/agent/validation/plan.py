@@ -3,6 +3,8 @@ from dataclasses import dataclass, replace
 from enum import IntEnum
 
 from .evidence import ValidationPurpose
+from .verification_spec import (CommandVerificationSpec, FileVerificationSpec,
+                                SemanticVerificationSpec, VerificationSpec, derive_http_spec)
 
 
 class EvidenceStrength(IntEnum):
@@ -28,6 +30,7 @@ class ValidationCheck:
     milestone: str = "task"
     reason: str = "Prove the requested outcome independently."
     observable: str = ""
+    spec: VerificationSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -47,13 +50,10 @@ class ValidationPlanner:
         checks = []
         from .ladder import VerificationLadder
         rungs = VerificationLadder().select(profile, paths, request, mode=mode, impact=impact) if profile is not None else ()
-        available = frozenset(available_capabilities or ())
         # A browser/service check is itself the acceptance proof when this
         # workspace has no focused test target.  Do not manufacture a second,
         # generic behaviour check that the same runtime observation cannot prove.
-        runtime_rung = next((rung for rung in rungs
-                             if rung.strength == EvidenceStrength.RUNTIME
-                             and (not available or rung.capability in available)), None)
+        runtime_rung = next((rung for rung in rungs if rung.strength == EvidenceStrength.RUNTIME), None)
         commands = dict(getattr(profile, "commands", ()) or ())
         has_focused_test = bool(commands.get("test") or getattr(impact, "tests", ()))
         for item in requirements.items:
@@ -64,17 +64,18 @@ class ValidationPlanner:
                 id=f"V{len(checks) + 1}", requirement_ids=(item.id,),
                 purpose=(ValidationPurpose.REGRESSION if item.category.value == "regression"
                          else ValidationPurpose.ACCEPTANCE),
-                capability=("validation.structure" if structural or semantic
+                capability=("validation.structure" if structural
+                            else "validation.semantic" if semantic
                             else runtime_acceptance.capability if runtime_acceptance else "validation.behavior"),
-                strength=(EvidenceStrength.STRUCTURE if structural or semantic
+                strength=(EvidenceStrength.STRUCTURE if structural
+                          else EvidenceStrength.TARGETED if semantic
                           else runtime_acceptance.strength if runtime_acceptance else EvidenceStrength.TARGETED),
                 revision=revision, milestone="work_unit" if len(paths) > 1 else "task",
                 reason=runtime_acceptance.reason if runtime_acceptance else item.description,
                 observable=item.observable,
+                spec=self._requirement_spec(item, runtime_acceptance),
             ))
         for rung in rungs:
-            if available and rung.capability not in available:
-                continue
             if rung.strength in {EvidenceStrength.STRUCTURE, EvidenceStrength.TARGETED} and rung.purpose == ValidationPurpose.ACCEPTANCE:
                 continue
             if rung.strength == EvidenceStrength.RUNTIME and not has_focused_test:
@@ -91,8 +92,21 @@ class ValidationPlanner:
                 target=rung.command if rung.capability == "process.run" else "",
                 capability=rung.capability, strength=rung.strength, revision=revision,
                 milestone="task", reason=rung.reason,
+                spec=CommandVerificationSpec(rung.command) if rung.capability == "process.run" and rung.command else None,
             ))
         return ValidationPlan(tuple(checks))
+
+    @staticmethod
+    def _requirement_spec(item, runtime_rung):
+        paths = tuple(item.paths)
+        path = paths[0] if paths else ""
+        if item.kind.value == "semantic":
+            return SemanticVerificationSpec(path, item.observable)
+        if runtime_rung and runtime_rung.capability == "service.validate":
+            return derive_http_spec(item.observable)
+        if item.kind.value == "structural":
+            return FileVerificationSpec(path, contains="" if "exists" in item.observable.casefold() else item.observable)
+        return None
 
 
 class RequirementEvidenceResolver:

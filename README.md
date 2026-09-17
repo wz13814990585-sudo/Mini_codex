@@ -109,6 +109,14 @@ python -m minicodex.main --output normal
 minicodex
 ```
 
+默认工作区是启动命令时的当前目录；也可显式指定任意本地仓库：
+
+```bash
+minicodex --workspace /path/to/project --output verbose
+# 或
+python -m minicodex.main --workspace ../another-project
+```
+
 启动后输入自然语言任务，例如：
 
 ```text
@@ -144,11 +152,11 @@ python -m pip install playwright
 playwright install chromium
 ```
 
-Playwright 可用时，MiniCodex 会自动注册浏览器验证工具；不可用时会继续使用静态验证。
+Playwright 可用时，MiniCodex 会自动注册浏览器验证工具。缺少它时，交互运行时证明会保持为未解决的 required check，不能被静态 HTML 验证替代或导致错误完成。
 
 ## 安全与执行边界
 
-- 当前 CLI 的工作区固定为本项目根目录，文件访问会经过路径规范化和工作区边界检查。
+- CLI 可针对任意选定的本地目录；文件访问、Git 检查、sandbox、索引和 checkpoint 都受该工作区边界约束。
 - 只读任务不会获得编辑或依赖安装能力。
 - 文件修改、命令执行和包安装都会经过权限与安全策略检查。
 - 命令在带有超时、输出大小、文件大小、CPU 和内存限制的 sandbox 中运行。
@@ -157,7 +165,7 @@ Playwright 可用时，MiniCodex 会自动注册浏览器验证工具；不可�
 
 ## 运行产物
 
-MiniCodex 会在项目根目录的 `.minicodex/` 下保存运行时数据：
+MiniCodex 会在**选定工作区**的 `.minicodex/` 下保存运行时数据；该目录会被 RepoMap 和索引忽略，不会作为项目源码或编辑目标：
 
 ```text
 .minicodex/
@@ -224,9 +232,15 @@ python -m compileall -q minicodex
 - 每个核心概念只有一个 canonical import path，不添加旧模块兼容包装层。
 - 模型负责语义判断；安全、预算、权限、验证证据与完成条件保持确定性。
 
+## 验证契约与当前限制
+
+每个需求先产生独立 `ValidationCheck`（必须证明什么），再映射为 typed `VerificationSpec`（文件、测试、命令、HTTP、浏览器或语义断言），最后由 `ValidatorResolver` 选择已注册的 validator（如何证明）。没有可用工具或没有可靠目标时，检查仍是 required，任务会报告阻断而不会把它悄悄删掉。语义验证是只读、无工具的受限评估；精确文字要求会优先走确定性内容证明。
+
+HarnessBench 是确定性的 CI 安全工具序列测试。`RealVibeBench` 是 provider-neutral、必须显式传入模型工厂的真实模型入口；CI 不调用它，也不调用任何付费 API。
+
 ## 当前限制
 
-- CLI 目前是单进程交互式会话，工作区固定为 MiniCodex 自身仓库。
+- CLI 目前仍是单进程交互式会话；任务中断后不会续跑。
 - 进行中的任务状态和 checkpoint 只存在于当前进程内，进程崩溃后不能续跑。
 - 浏览器验证依赖可选的 Playwright 和本机 Chromium。
 - 模型服务、网络状态、第三方包源和操作系统权限仍可能导致任务失败。
