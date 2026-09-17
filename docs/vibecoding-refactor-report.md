@@ -367,3 +367,13 @@ rg -n 'complete_plan_step|class ValidationState|compatibility shim' minicodex/ag
 18. 结果：**566 passed in 13.17s**，编译与 diff 空白检查均通过。
 19. CI 仍只运行 deterministic pytest/compileall；RealVibeBench 与 RealRepoBench 均不在 CI 发起真实模型调用。
 20. 剩余限制：没有执行付费 provider 的 autonomous benchmark；复杂自然语言互动若无法安全导出 typed spec，会保持 unresolved 而非推测参数。
+
+## RealRepoBench 与晚期验证绑定
+
+- RealRepoBench 现有 26 个明确的 Python、API、Web/键盘、TypeScript 任务；每个任务带独立文件内容、Python 断言或结构 oracle，而不是“文件存在”或代理完成文本。
+- `EvaluationCheckRunner` 支持 `command_succeeds`、`python_assertion` 与 `pytest_passes`。Python oracle 使用独立子进程和 `-B`，避免编辑后陈旧 bytecode 影响结果。
+- 新增 `VerificationSpecBinder`：检查初始可保持 abstract；在 WorkspaceSession 的已检查路径、源代码、影响测试可用后，才绑定 Browser/HTTP/Test typed spec。没有可靠 selector、状态或 route 时保持 unresolved。
+- 新增 `ProjectExecutionEnvironment`：优先发现目标工作区 `.venv`/`venv` Python，并供 RunTests 与 dependency install 使用，避免意外安装到 MiniCodex 解释器。
+- 有 materialized ValidationPlan 时，DecisionPolicy 只以当前 required check 的 evidence 决策；布尔验证状态仅为无计划兼容路径/投影。
+- `.minicodex` 同时被 RepoMap 忽略并受 Safety 保护，不能作为普通 edit target。
+- 本轮实际执行 `python -m pytest -q --tb=line`（受控本机端口权限）→ **569 passed in 13.78s**；`python -m compileall -q minicodex` 与 `git diff --check` 均通过。未执行任何真实 provider 模型基准。

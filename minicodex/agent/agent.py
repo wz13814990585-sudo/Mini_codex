@@ -23,6 +23,7 @@ from .validation import (
     TaskCompletionPolicy,
     ValidationPipeline,
     ValidatorResolver,
+    VerificationSpecBinder,
     SemanticRegressionJudge,
 )
 from .dependency import DependencyResolver
@@ -348,6 +349,7 @@ class MiniCodexAgent:
         self.latest_symbol_recovery_paths: tuple[str, ...] = ()
         self.relevant_path_resolver = RelevantPathResolver(self.workspace)
         self.validator_resolver = ValidatorResolver(self.workspace, test_index=self.workspace_session.test_index)
+        self.verification_spec_binder = VerificationSpecBinder()
         for tool in getattr(self.registry, "_tools", {}).values():
             if hasattr(tool, "symbol_index"):
                 tool.symbol_index = self.workspace_session.symbol_index
@@ -689,6 +691,12 @@ class MiniCodexAgent:
             paths=getattr(self.execution_route, "target_paths", ()), request=user_input,
             mode=self.execution_policy.mode, impact=change_impact,
             available_capabilities=getattr(self.registry, "available_capabilities", ()))
+        requirements_by_id = {item.id: item for item in self.task_requirements.items}
+        self.validation_pipeline.state.plan = type(self.validation_pipeline.state.plan)(tuple(
+            self.verification_spec_binder.bind(check, requirements_by_id.get(check.requirement_ids[0]),
+                session=self.workspace_session, impact=change_impact).check
+            if check.requirement_ids and requirements_by_id.get(check.requirement_ids[0]) else check
+            for check in self.validation_pipeline.state.plan.checks))
         self.runtime_control.reset(planning_active=False)
         self.runtime_control.control_llm_calls = (
             self.execution_metrics.routing_llm_calls

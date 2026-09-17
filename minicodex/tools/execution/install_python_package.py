@@ -12,6 +12,7 @@ from ...agent.safety import (
     SandboxLimits,
     SandboxRunner,
 )
+from ...agent.context.project_execution_environment import ProjectExecutionEnvironment
 
 from ..base import BaseTool
 from ..results import ToolResult
@@ -80,7 +81,7 @@ class InstallPythonPackageTool(BaseTool):
         self.timeout = max(1, int(timeout))
         self.python_executable = str(
             python_executable
-            or sys.executable
+            or ProjectExecutionEnvironment.discover(self.workspace).python_executable
         )
         self.sandbox = sandbox or SandboxRunner(
             workspace=self.workspace,

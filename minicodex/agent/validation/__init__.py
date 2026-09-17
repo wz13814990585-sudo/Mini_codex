@@ -14,6 +14,7 @@ from .ledger import ValidationLedger
 from .validator_resolver import ValidatorResolution, ValidatorResolver
 from .verification_spec import (BrowserVerificationSpec, CommandVerificationSpec, FileVerificationSpec,
                                 HttpVerificationSpec, SemanticVerificationSpec, TestVerificationSpec)
+from .verification_spec_binder import BindingResult, VerificationSpecBinder
 from .test_index import IndexedTest, TestIndex
 from .test_target_resolver import TestTargetResolution, TestTargetResolver
 from .regression_policy import RegressionPolicy, RegressionRequirement
@@ -44,6 +45,8 @@ __all__ = [
     "HttpVerificationSpec",
     "SemanticVerificationSpec",
     "TestVerificationSpec",
+    "BindingResult",
+    "VerificationSpecBinder",
     "IndexedTest",
     "TestIndex",
     "TestTargetResolution",

@@ -10,8 +10,15 @@ from ..agent.validation.plan import EvidenceStrength, ValidationCheck, Validatio
 from ..agent.validation.evidence import ValidationPurpose
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolver
 from ..evaluation.real_repo_bench import fixtures, run_real_repo_bench
+from ..evaluation.checks import EvaluationCheckRunner
+from ..evaluation.models import EvaluationCheck
 from ..tools.registry import ToolRegistry
 from ..tools.validation.validate_semantic import ValidateSemanticTool
+from ..agent.context import ProjectExecutionEnvironment
+from ..tools.execution import RunTestsTool
+from ..agent.safety import SafetyPolicy
+from ..agent.validation import VerificationSpecBinder
+from ..agent.context.workspace_session import WorkspaceSession
 
 
 def test_workspace_config_defaults_to_current_directory(monkeypatch, tmp_path):
@@ -92,3 +99,40 @@ def test_semantic_validation_is_read_only_and_deterministic_when_claim_is_litera
     result = tool.execute("README.md", "Token expiry is 15 minutes.")
     assert result.data["outcome"] == "passed"
     assert readme.read_text() == "Token expiry is 15 minutes."
+
+
+def test_target_project_virtualenv_is_preferred_for_test_execution(tmp_path):
+    python = tmp_path / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\n")
+    environment = ProjectExecutionEnvironment.discover(tmp_path)
+    assert environment.python_executable == str(python)
+    assert RunTestsTool(workspace=tmp_path).python_executable == str(python)
+
+
+def test_independent_python_oracle_does_not_pass_for_existing_wrong_file(tmp_path):
+    target = tmp_path / "src" / "pkg" / "maths.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def double(value): return value + 2\n")
+    check = EvaluationCheck("python_assertion", command="from pkg.maths import double; assert double(3) == 6")
+    assert not EvaluationCheckRunner().run(check=check, workspace=tmp_path, output="Task completed successfully.").passed
+    target.write_text("def double(value): return value * 2\n")
+    assert EvaluationCheckRunner().run(check=check, workspace=tmp_path, output="false positive irrelevant").passed
+
+
+def test_runtime_directory_is_not_an_ordinary_edit_target(tmp_path):
+    decision = SafetyPolicy(workspace=tmp_path).assess("write_file", {"path": ".minicodex/traces/latest.jsonl"})
+    assert not decision.allowed
+
+
+def test_browser_spec_is_bound_only_after_inspected_dom_facts_are_available(tmp_path):
+    (tmp_path / "index.html").write_text("<div id='state'>idle</div><script>document.onkeydown = () => {}</script>")
+    session = WorkspaceSession(tmp_path)
+    session.refresh()
+    requirement = TaskRequirement("R1", "left movement", RequirementCategory.BEHAVIOR,
+        paths=("index.html",), observable="Pressing ArrowLeft moves the active piece left.")
+    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="validation.browser",
+        strength=EvidenceStrength.RUNTIME)
+    bound = VerificationSpecBinder().bind(check, requirement, session=session).check.spec
+    assert isinstance(bound, BrowserVerificationSpec)
+    assert bound.expected_text == "left"

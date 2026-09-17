@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 from .models import (
     CheckResult,
@@ -25,6 +28,9 @@ class EvaluationCheckRunner:
         "file_not_contains",
         "output_contains",
         "output_not_contains",
+        "command_succeeds",
+        "python_assertion",
+        "pytest_passes",
     }
 
     def run(
@@ -69,6 +75,9 @@ class EvaluationCheckRunner:
             )
             .resolve()
         )
+
+        if check.kind in {"command_succeeds", "python_assertion", "pytest_passes"}:
+            return self._run_process_check(check, workspace_path)
 
         # =====================================================
         # Output Checks
@@ -392,3 +401,33 @@ class EvaluationCheckRunner:
                 expected
             ),
         )
+
+    @staticmethod
+    def _run_process_check(check: EvaluationCheck, workspace: Path) -> CheckResult:
+        if check.kind == "python_assertion":
+            # Avoid benchmark results being contaminated by a stale timestamp-
+            # based bytecode cache after an agent edits a fixture rapidly.
+            argv = [sys.executable, "-B", "-c", check.command or check.expected or ""]
+        elif check.kind == "pytest_passes":
+            target = check.path or check.command or "benchmark_oracle"
+            argv = [sys.executable, "-m", "pytest", "-q", target]
+        else:
+            import shlex
+            try:
+                argv = shlex.split(check.command or check.expected or "")
+            except ValueError:
+                argv = []
+        if not argv:
+            return CheckResult(check.kind, False, check.description or "Oracle command is missing.", error="missing_command")
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (str(workspace / "src"), str(workspace), os.environ.get("PYTHONPATH", ""))))}
+        try:
+            completed = subprocess.run(argv, cwd=workspace, env=env, text=True, capture_output=True,
+                                       timeout=check.timeout_seconds or 15, check=False)
+            passed = completed.returncode == 0
+            actual = (completed.stdout + completed.stderr)[-2000:]
+            return CheckResult(check.kind, passed, check.description or f"Oracle {check.kind} should pass.",
+                               path=check.path, expected=check.expected, actual=actual,
+                               error=None if passed else f"exit_code={completed.returncode}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return CheckResult(check.kind, False, check.description or f"Oracle {check.kind} could not run.",
+                               path=check.path, error=f"{type(exc).__name__}: {exc}")

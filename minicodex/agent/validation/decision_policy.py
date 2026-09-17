@@ -18,6 +18,18 @@ class ValidationDecisionPolicy:
             or self.state.latest_evidence
         )
 
+        # Materialized plans are the production validation state machine.  The
+        # boolean path below exists solely for pre-plan legacy fixtures.
+        if self.state.plan.checks:
+            if current is not None and current.unstable:
+                return ValidationNextAction.INVESTIGATE_INCONCLUSIVE
+            if current is not None and current.outcome == ValidationOutcome.INCONCLUSIVE:
+                return ValidationNextAction.INVESTIGATE_INCONCLUSIVE
+            if current is not None and current.outcome == ValidationOutcome.FAILED:
+                return ValidationNextAction.FIX_FAILURE
+            return (ValidationNextAction.RUN_CHECK if self.next_required_check() is not None
+                    else ValidationNextAction.TASK_VALIDATED)
+
         if current is not None and current.unstable:
             return ValidationNextAction.INVESTIGATE_INCONCLUSIVE
 

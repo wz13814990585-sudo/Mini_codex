@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ..base import BaseTool
 from ..results import ToolResult
 from ...utils.paths import resolve_workspace_path
+from ...agent.routing.structured_output import parse_bounded_json_object
 
 
 class ValidateSemanticTool(BaseTool):
@@ -42,8 +42,10 @@ class ValidateSemanticTool(BaseTool):
         try:
             response = self.llm.chat(messages=[{"role": "system", "content": "You are a read-only semantic validator."},
                                                 {"role": "user", "content": prompt}], tools=None)
-            data = json.loads(getattr(response.message, "content", ""))
-            outcome = str(data.get("outcome", "inconclusive")).casefold()
+            data = parse_bounded_json_object(getattr(response.message, "content", ""), max_chars=2_000)
+            if set(data) != {"outcome", "reason"}:
+                raise ValueError("semantic schema must contain outcome and reason")
+            outcome = str(data["outcome"]).casefold()
             if outcome not in {"passed", "failed", "inconclusive"}:
                 outcome = "inconclusive"
             return ToolResult(True, str(data.get("reason", "Semantic assessment."))[:500],

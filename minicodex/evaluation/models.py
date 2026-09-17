@@ -27,6 +27,11 @@ class EvaluationCheck:
 
     description: str | None = None
 
+    # Independent oracle payload.  These fields are deliberately not inferred
+    # from agent output or its validation ledger.
+    command: str | None = None
+    timeout_seconds: float | None = None
+
 
 # =============================================================
 # Check Result

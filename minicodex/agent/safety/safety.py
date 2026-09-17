@@ -416,7 +416,7 @@ class SafetyPolicy:
         protected_root = normalized.split("/", 1)[0] if normalized else ""
         if protected_root in {
             ".venv", "venv", "node_modules", "vendor", "dist", "build",
-            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".minicodex",
         } and normalized.casefold() not in self.user_request.casefold():
             return SafetyDecision(
                 SafetyLevel.BLOCKED, False,

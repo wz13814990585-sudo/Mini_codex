@@ -11,6 +11,7 @@ from ...agent.safety import (
 from ..base import BaseTool
 from ..results import ToolResult
 from ...agent.validation import TestTargetResolver
+from ...agent.context.project_execution_environment import ProjectExecutionEnvironment
 
 
 MAX_FAILURE_DETAIL_LINES = 40
@@ -78,6 +79,7 @@ class RunTestsTool(
             SandboxRunner
             | None
         ) = None,
+        python_executable: str | None = None,
     ):
 
         self.workspace = (
@@ -93,6 +95,7 @@ class RunTestsTool(
                 timeout
             ),
         )
+        self.python_executable = str(python_executable or ProjectExecutionEnvironment.discover(self.workspace).python_executable)
 
         self.sandbox = (
             sandbox
@@ -209,7 +212,7 @@ class RunTestsTool(
         # =====================================================
 
         command = [
-            sys.executable,
+            self.python_executable,
             "-m",
             "pytest",
             "-p",
