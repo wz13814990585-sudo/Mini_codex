@@ -31,6 +31,8 @@ class ValidationCheck:
     reason: str = "Prove the requested outcome independently."
     observable: str = ""
     spec: VerificationSpec | None = None
+    spec_source: str = ""
+    spec_bound_revision: int | None = None
 
 
 @dataclass(frozen=True)

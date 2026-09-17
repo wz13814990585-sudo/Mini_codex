@@ -58,6 +58,11 @@ class ToolExecutor:
             if raw_arguments is None:
                 raw_arguments = "{}"
 
+            if len(raw_arguments) > self.MAX_TOOL_ARGUMENT_CHARS:
+                return PreparedToolCall(tool_name=tool_name, arguments={}, error=ToolResult(
+                    success=False, summary=f"Arguments for tool '{tool_name}' exceed the size limit.",
+                    data={"tool_name": tool_name, "failure_type": "argument_too_large", "max_chars": self.MAX_TOOL_ARGUMENT_CHARS}))
+
             arguments = json.loads(
                 raw_arguments
             )
@@ -121,10 +126,46 @@ class ToolExecutor:
                 ),
             )
 
+        schema_error = self._schema_error(tool_name, arguments)
+        if schema_error:
+            return PreparedToolCall(tool_name=tool_name, arguments={}, error=ToolResult(
+                success=False, summary=f"Arguments for tool '{tool_name}' failed schema validation.",
+                data={"tool_name": tool_name, "failure_type": "schema_validation"}, error=schema_error))
+
         return PreparedToolCall(
             tool_name=tool_name,
             arguments=arguments,
         )
+
+    def _schema_error(self, tool_name, arguments):
+        try:
+            schema = self.registry.get(tool_name).parameters
+        except Exception:
+            return None
+        properties, required = schema.get("properties", {}), schema.get("required", ())
+        missing = [name for name in required if name not in arguments]
+        if missing:
+            return f"missing required argument(s): {', '.join(missing)}"
+        # These Harness-level bindings are accepted by every validator even
+        # when a backend tool schema does not repeat them.
+        unknown = set(arguments) - set(properties) - {"purpose", "validation_check"}
+        # A deliberately empty properties mapping is used by lightweight
+        # adapters to mean an open-ended interface.  Preserve that standard
+        # JSON-Schema behaviour; production tools declare their accepted
+        # fields and therefore remain closed at this boundary.
+        is_closed = bool(properties) or schema.get("additionalProperties") is False
+        if unknown and is_closed:
+            return f"unknown argument(s): {', '.join(sorted(unknown))}"
+        for name, value in arguments.items():
+            field = properties.get(name, {})
+            expected = field.get("type")
+            if expected == "string" and not isinstance(value, str): return f"{name} must be a string"
+            if expected == "integer" and (isinstance(value, bool) or not isinstance(value, int)): return f"{name} must be an integer"
+            if expected == "number" and (isinstance(value, bool) or not isinstance(value, (int, float))): return f"{name} must be a number"
+            if expected == "array" and not isinstance(value, list): return f"{name} must be an array"
+            if expected == "object" and not isinstance(value, dict): return f"{name} must be an object"
+            if "enum" in field and value not in field["enum"]: return f"{name} must be one of {field['enum']}"
+        return None
 
     # =========================================================
     # Execute Prepared Tool Call
@@ -223,3 +264,4 @@ class ToolExecutor:
             arguments=prepared.arguments,
             result=result,
         )
+    MAX_TOOL_ARGUMENT_CHARS = 1_000_000

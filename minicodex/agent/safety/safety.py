@@ -414,9 +414,15 @@ class SafetyPolicy:
             )
 
         protected_root = normalized.split("/", 1)[0] if normalized else ""
+        if protected_root == ".minicodex":
+            return SafetyDecision(
+                SafetyLevel.BLOCKED, False,
+                "MiniCodex runtime state is internal infrastructure and is never an ordinary edit target.",
+                "protected_runtime_state", tool_name, path=normalized,
+            )
         if protected_root in {
             ".venv", "venv", "node_modules", "vendor", "dist", "build",
-            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".minicodex",
+            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
         } and normalized.casefold() not in self.user_request.casefold():
             return SafetyDecision(
                 SafetyLevel.BLOCKED, False,

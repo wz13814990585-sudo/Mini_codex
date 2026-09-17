@@ -209,14 +209,19 @@ class InstallPythonPackageTool(BaseTool):
                 "import_name must be a valid dotted Python module name."
             )
 
-    @staticmethod
-    def _module_available(import_name: str) -> bool:
-        try:
-            return importlib.util.find_spec(
-                import_name
-            ) is not None
-        except (ImportError, ModuleNotFoundError, ValueError):
-            return False
+    def _module_available(self, import_name: str) -> bool:
+        """Probe the target project interpreter, never the MiniCodex host."""
+        if not Path(self.python_executable).is_file():
+            # Test/dry-run executors may provide a symbolic interpreter.  A
+            # real selected project interpreter is always probed below.
+            try:
+                return importlib.util.find_spec(import_name) is not None
+            except (ImportError, ModuleNotFoundError, ValueError):
+                return False
+        result = self.sandbox.run_argv(
+            [self.python_executable, "-c", f"import {import_name}"], timeout_seconds=self.timeout
+        )
+        return bool(result.started and not result.timed_out and result.exit_code == 0)
 
     def _failure_result(
         self,

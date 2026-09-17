@@ -19,6 +19,7 @@ from ..tools.execution import RunTestsTool
 from ..agent.safety import SafetyPolicy
 from ..agent.validation import VerificationSpecBinder
 from ..agent.context.workspace_session import WorkspaceSession
+from ..agent.runtime.tool_executor import ToolExecutor
 
 
 def test_workspace_config_defaults_to_current_directory(monkeypatch, tmp_path):
@@ -136,3 +137,24 @@ def test_browser_spec_is_bound_only_after_inspected_dom_facts_are_available(tmp_
     bound = VerificationSpecBinder().bind(check, requirement, session=session).check.spec
     assert isinstance(bound, BrowserVerificationSpec)
     assert bound.expected_text == "left"
+
+
+def test_http_binder_ranks_login_route_above_unrelated_health_route(tmp_path):
+    (tmp_path / "routes.py").write_text("@app.get('/health')\ndef health(): return {}\n@app.post('/login')\ndef login(): return {}\n")
+    session = WorkspaceSession(tmp_path)
+    session.refresh()
+    requirement = TaskRequirement("R1", "invalid login", RequirementCategory.BEHAVIOR,
+        paths=("routes.py",), observable="invalid login password returns 401")
+    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="service.validate")
+    result = VerificationSpecBinder().bind(check, requirement, session=session)
+    assert isinstance(result.check.spec, HttpVerificationSpec)
+    assert result.check.spec.path == "/login"
+    assert result.check.spec_bound_revision == session.revision
+
+
+def test_tool_executor_rejects_oversized_or_unknown_arguments(tmp_path):
+    registry = ToolRegistry()
+    registry.register(ValidateSemanticTool(tmp_path))
+    executor = ToolExecutor(registry)
+    assert executor.prepare("validate_semantic", "{" + "x" * executor.MAX_TOOL_ARGUMENT_CHARS + "}").error
+    assert executor.prepare("validate_semantic", '{"path":"README.md","claim":"x","unexpected":true}').error

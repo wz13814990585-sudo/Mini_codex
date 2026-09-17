@@ -377,3 +377,14 @@ rg -n 'complete_plan_step|class ValidationState|compatibility shim' minicodex/ag
 - 有 materialized ValidationPlan 时，DecisionPolicy 只以当前 required check 的 evidence 决策；布尔验证状态仅为无计划兼容路径/投影。
 - `.minicodex` 同时被 RepoMap 忽略并受 Safety 保护，不能作为普通 edit target。
 - 本轮实际执行 `python -m pytest -q --tb=line`（受控本机端口权限）→ **569 passed in 13.78s**；`python -m compileall -q minicodex` 与 `git diff --check` 均通过。未执行任何真实 provider 模型基准。
+
+## 最终预真实测试集成收尾
+
+- `ValidationCheck` 记录 spec 的来源和绑定 revision；`VerificationSpecBinder` 会在验证前针对当前 `WorkspaceSession` revision 重新绑定非显式 spec，避免 edit 后沿用陈旧 route、DOM 或测试目标。
+- HTTP 绑定会对已检查的候选 route 按 requirement/observable 词和 method 评分；最高分唯一时才选择，避免健康检查等无关路由抢占登录验证。
+- `ContextBuilder` 将 resolver 的 `resolved`、`capability_missing`、`target_unresolved` 明确呈现；未解析状态不会生成空工具调用。
+- 目标项目执行环境优先使用其虚拟环境，并识别 `uv.lock` 和 `poetry.lock` 的运行前缀；依赖 probe 通过目标解释器执行，只有符号化测试解释器才使用安全的本地回退。
+- `.minicodex` 作为专用运行时状态目录始终禁止通过普通编辑工具写入，即使用户请求文本提到该路径。
+- ToolExecutor 拒绝超过 1 MB 的参数、缺失 required 字段、具名生产 schema 的未知字段及基础类型/enum 不匹配。空 properties 的第三方开放适配器遵循 JSON Schema 的默认开放语义；编辑缺失 path 保留既有 checkpoint precondition 错误分类。
+- RealRepoBench 的 `benchmark_oracle/` 文件写入 agent workspace 外的独立 oracle 目录，agent 无法靠修改测试夹具取得通过。
+- 本轮没有运行真实 provider；实际执行 `python -m pytest -q --tb=line` → **572 passed in 12.86s**，`python -m compileall -q minicodex` 与 `git diff --check` 均通过。

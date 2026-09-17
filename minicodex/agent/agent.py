@@ -418,6 +418,21 @@ class MiniCodexAgent:
 
         return "."
 
+    def ensure_bound_check(self, check):
+        """Bind/rebind only the check about to be validated for this revision."""
+        if check is None or not check.requirement_ids:
+            return check
+        requirement = next((item for item in self.task_requirements.items if item.id == check.requirement_ids[0]), None)
+        if requirement is None:
+            return check
+        impact = ChangeImpactResolver().resolve(self.workspace_session, getattr(self.execution_route, "target_paths", ()))
+        result = self.verification_spec_binder.bind(check, requirement, session=self.workspace_session, impact=impact)
+        if result.check is not check:
+            plan = self.validation_pipeline.state.plan
+            self.validation_pipeline.state.plan = type(plan)(tuple(
+                result.check if item.id == check.id else item for item in plan.checks))
+        return result.check
+
     # =========================================================
     # Next Edit Revision
     # =========================================================

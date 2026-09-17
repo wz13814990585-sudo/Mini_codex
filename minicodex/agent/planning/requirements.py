@@ -118,7 +118,7 @@ invent repository facts."""
             TaskRequirement("R1", str(user_request)[:500], category=fallback_category,
                             paths=tuple(target_paths), observable=str(user_request)[:500])
         ])
-        clauses = [re.sub(r"^\s*\d+[.)]\s*", "", s).strip() for s in re.split(r"\n+|;\s*|\s+and\s+", user_request)]
+        clauses = [re.sub(r"^\s*\d+[.)]\s*", "", s).strip() for s in re.split(r"\n+|;\s*|；\s*|、|\s+and\s+|\s+(?:并且|同时|以及)\s+", user_request)]
         clauses = [s for s in clauses if s]
         if 1 < len(clauses) <= self.max_requirements:
             fallback = TaskRequirements([TaskRequirement(
@@ -150,7 +150,7 @@ invent repository facts."""
                     category = RequirementCategory(str(raw["category"]).strip().casefold())
                 except ValueError as exc:
                     raise StructuredOutputError("invalid requirement category") from exc
-                paths = tuple(str(path).strip() for path in raw["paths"] if str(path).strip())[:10]
+                paths = tuple(path for path in (self._normalize_path_hint(value) for value in raw["paths"]) if path)[:10]
                 try:
                     kind = RequirementKind(str(raw["kind"]).strip().casefold())
                 except ValueError as exc:
@@ -168,3 +168,13 @@ invent repository facts."""
         except Exception:
             self.last_telemetry = RequirementsTelemetry(calls=1, latency_seconds=time.monotonic() - started)
             return fallback
+
+    @staticmethod
+    def _normalize_path_hint(value) -> str:
+        raw = str(value or "").strip().replace("\\", "/")
+        if not raw or raw.startswith("/") or re.match(r"^[A-Za-z]:/", raw):
+            return ""
+        normalized = "/".join(part for part in raw.split("/") if part not in {"", "."})
+        if not normalized or any(part == ".." for part in normalized.split("/")):
+            return ""
+        return normalized

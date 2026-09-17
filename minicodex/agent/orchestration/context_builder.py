@@ -50,16 +50,25 @@ class ContextBuilder:
             if next_check is None:
                 sections.append("No required validation check remains.")
             else:
+                ensure_bound = getattr(agent, "ensure_bound_check", None)
+                if callable(ensure_bound):
+                    next_check = ensure_bound(next_check)
                 resolver = getattr(agent, "validator_resolver", None)
                 recommendation = resolver.resolve(
                     next_check, registry=agent.registry,
                     profile=session.profile if session else None, paths=targets,
                     revision=session.revision if session else state.edit_revision,
                 ) if resolver else None
-                action = (f"Run {recommendation.tool_name} with {recommendation.arguments!r}."
-                          if recommendation else "Inspect only enough to resolve this exact check; do not substitute another one.")
+                status = getattr(recommendation, "status", None)
+                if recommendation and getattr(status, "value", status) == "resolved":
+                    action = f"Run {recommendation.tool_name} with {recommendation.arguments!r}."
+                elif recommendation:
+                    action = f"Resolution={getattr(status, 'value', status)}: {recommendation.reason}"
+                else:
+                    action = "Inspect only enough to resolve this exact check; do not substitute another one."
                 sections.append(f"Next required check {next_check.id}: {next_check.observable or next_check.reason}; "
-                                f"strength={next_check.strength.name}; capability={next_check.capability}. {action}")
+                                f"strength={next_check.strength.name}; capability={next_check.capability}; "
+                                f"binding={next_check.spec_source or 'unbound'}@{next_check.spec_bound_revision}. {action}")
         elif state.phase == AgentPhase.FIXING:
             evidence = ledger.latest_evidence
             details = getattr(evidence, "details", {}) or {}

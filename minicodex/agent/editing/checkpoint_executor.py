@@ -75,13 +75,37 @@ class CheckpointingToolExecutor:
         raw_arguments: str,
     ) -> PreparedToolCall:
 
-        return (
-            self.executor
-            .prepare(
-                tool_name=tool_name,
-                raw_arguments=raw_arguments,
-            )
+        prepared = self.executor.prepare(
+            tool_name=tool_name,
+            raw_arguments=raw_arguments,
         )
+        # The generic schema guard runs before this wrapper.  Keep the
+        # edit-specific invariant authoritative, so a missing target is
+        # consistently reported as a checkpoint precondition rather than a
+        # generic schema failure.
+        if (
+            tool_name in CHECKPOINTED_EDIT_TOOLS
+            and prepared.error is not None
+            and prepared.error.data.get("failure_type") == "schema_validation"
+            and "missing required argument(s): path" in (prepared.error.error or "")
+        ):
+            return PreparedToolCall(
+                tool_name=tool_name,
+                arguments={},
+                error=ToolResult(
+                    success=False,
+                    summary=(
+                        f"Edit tool '{tool_name}' was blocked because no "
+                        "explicit target path was provided."
+                    ),
+                    data={
+                        "tool_name": tool_name,
+                        "failure_type": "checkpoint_precondition",
+                    },
+                    error="Safe edit execution requires an explicit 'path'.",
+                ),
+            )
+        return prepared
 
     # =========================================================
     # Execute

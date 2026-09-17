@@ -198,6 +198,8 @@ class ValidatorResolver:
             executable = shlex.split(argv)
         except ValueError:
             return None
-        return {"argv": executable, "port": 0, "path": spec.path, "method": spec.method,
-                "expected_status": spec.expected_status, "expected_text": spec.expected_text,
-                "json_body": spec.json_body}
+        arguments = {"argv": executable, "port": 0, "path": spec.path, "method": spec.method,
+                     "expected_status": spec.expected_status, "expected_text": spec.expected_text}
+        if spec.json_body is not None:
+            arguments["json_body"] = spec.json_body
+        return arguments

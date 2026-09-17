@@ -75,8 +75,13 @@ def run_real_repo_bench(root, *, model_factory, output_level="normal", case_ids=
     def factory(case):
         fixture, workspace = catalog[case.case_id], Path(root) / case.case_id
         workspace.mkdir(parents=True, exist_ok=True)
+        oracle_root = Path(root) / ".oracle" / case.case_id
         for path, content in fixture.files:
-            target = workspace / path
+            # Benchmark-owned tests are intentionally outside the agent
+            # workspace. The current public cases use behavioral assertions;
+            # hidden tests are retained for provider-run diagnostics.
+            target = (oracle_root / path.removeprefix("benchmark_oracle/")
+                      if path.startswith("benchmark_oracle/") else workspace / path)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
         agent, _trace, _memory = build_agent(WorkspaceConfig.create(workspace),
