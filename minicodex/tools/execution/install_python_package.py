@@ -37,8 +37,8 @@ class InstallPythonPackageTool(BaseTool):
     name = "install_python_package"
 
     description = (
-        "Install a missing Python package into the same Python "
-        "environment that runs MiniCodex, then verify its import. "
+        "Install a missing Python package into the selected target-project "
+        "environment, then verify its import using that same environment. "
         "Use only after a concrete ModuleNotFoundError or failed "
         "import. Provide the distribution name as package and the "
         "Python module name as import_name (for example package="
@@ -83,6 +83,11 @@ class InstallPythonPackageTool(BaseTool):
             python_executable
             or ProjectExecutionEnvironment.discover(self.workspace).python_executable
         )
+        self.environment = ProjectExecutionEnvironment.discover(self.workspace)
+        if python_executable:
+            from dataclasses import replace
+            self.environment = replace(self.environment, python_executable=self.python_executable,
+                                       python_command_prefix=(self.python_executable,), command_available=True)
         self.sandbox = sandbox or SandboxRunner(
             workspace=self.workspace,
             limits=SandboxLimits(
@@ -119,17 +124,17 @@ class InstallPythonPackageTool(BaseTool):
                 },
             )
 
-        install_result = self.sandbox.run_argv(
-            [
-                self.python_executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                package,
-            ],
-            timeout_seconds=self.timeout,
-        )
+        install_argv = self.environment.pip_install_argv(package)
+        if not self.environment.command_available or install_argv is None:
+            return ToolResult(
+                success=False,
+                summary="Target project dependency installation is unavailable without changing project dependency state.",
+                data={"package": package, "import_name": import_name, "installed": False,
+                      "import_verified": False, "failure_type": "environment_unavailable",
+                      "environment": self.environment.summary(), "argv": list(install_argv or ())},
+                error="The selected uv/poetry environment requires explicit dependency policy; no lockfile was changed.",
+            )
+        install_result = self.sandbox.run_argv(list(install_argv), timeout_seconds=self.timeout)
 
         if not install_result.started or install_result.timed_out:
             return self._failure_result(
@@ -212,14 +217,17 @@ class InstallPythonPackageTool(BaseTool):
     def _module_available(self, import_name: str) -> bool:
         """Probe the target project interpreter, never the MiniCodex host."""
         if not Path(self.python_executable).is_file():
-            # Test/dry-run executors may provide a symbolic interpreter.  A
-            # real selected project interpreter is always probed below.
+            # A symbolic interpreter is only used by deterministic unit-test
+            # adapters; real discovered project environments are always
+            # executed through module_probe_argv below.
             try:
                 return importlib.util.find_spec(import_name) is not None
             except (ImportError, ModuleNotFoundError, ValueError):
                 return False
+        if not self.environment.command_available:
+            return False
         result = self.sandbox.run_argv(
-            [self.python_executable, "-c", f"import {import_name}"], timeout_seconds=self.timeout
+            list(self.environment.module_probe_argv(import_name)), timeout_seconds=self.timeout
         )
         return bool(result.started and not result.timed_out and result.exit_code == 0)
 
@@ -265,6 +273,8 @@ class InstallPythonPackageTool(BaseTool):
             "package": package,
             "import_name": import_name,
             "interpreter": self.python_executable,
+            "environment": self.environment.summary(),
+            "argv": list(getattr(result, "argv", ()) or ()),
             "installed": installed,
             "already_available": False,
             "import_verified": import_verified,

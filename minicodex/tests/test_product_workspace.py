@@ -1,11 +1,12 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 from ..main import build_agent
 from ..workspace import WorkspaceConfig
 from ..agent.planning.requirements import RequirementCategory, TaskRequirement, TaskRequirements
-from ..agent.validation import BrowserVerificationSpec, HttpVerificationSpec
+from ..agent.validation import BrowserVerificationSpec, HttpVerificationSpec, TestVerificationSpec
 from ..agent.validation.plan import EvidenceStrength, ValidationCheck, ValidationPlanner
 from ..agent.validation.evidence import ValidationPurpose
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolver
@@ -20,13 +21,16 @@ from ..agent.safety import SafetyPolicy
 from ..agent.validation import VerificationSpecBinder
 from ..agent.context.workspace_session import WorkspaceSession
 from ..agent.runtime.tool_executor import ToolExecutor
+from ..agent.progress import ActionController
+from ..agent.routing import ExecutionMode, policy_for
+from ..agent.task_state import AgentPhase, TaskState
 
 
 def test_workspace_config_defaults_to_current_directory(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     config = WorkspaceConfig.create()
     assert config.workspace_root == tmp_path.resolve()
-    assert config.runtime_root == tmp_path / ".minicodex"
+    assert config.runtime_root == Path.home() / ".minicodex" / "workspaces" / config.repository_key
     assert config.repository_key.startswith(f"{tmp_path.name}-")
 
 
@@ -111,6 +115,21 @@ def test_target_project_virtualenv_is_preferred_for_test_execution(tmp_path):
     assert RunTestsTool(workspace=tmp_path).python_executable == str(python)
 
 
+def test_project_execution_environment_uses_available_uv_command(monkeypatch, tmp_path):
+    (tmp_path / "uv.lock").write_text("")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/uv" if name == "uv" else None)
+    environment = ProjectExecutionEnvironment.discover(tmp_path)
+    assert environment.command_available
+    assert environment.pytest_argv("tests/test_app.py") == ("uv", "run", "pytest", "tests/test_app.py")
+
+
+def test_project_execution_environment_reports_missing_poetry(monkeypatch, tmp_path):
+    (tmp_path / "poetry.lock").write_text("")
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    environment = ProjectExecutionEnvironment.discover(tmp_path)
+    assert not environment.command_available
+
+
 def test_independent_python_oracle_does_not_pass_for_existing_wrong_file(tmp_path):
     target = tmp_path / "src" / "pkg" / "maths.py"
     target.parent.mkdir(parents=True)
@@ -119,6 +138,17 @@ def test_independent_python_oracle_does_not_pass_for_existing_wrong_file(tmp_pat
     assert not EvaluationCheckRunner().run(check=check, workspace=tmp_path, output="Task completed successfully.").passed
     target.write_text("def double(value): return value * 2\n")
     assert EvaluationCheckRunner().run(check=check, workspace=tmp_path, output="false positive irrelevant").passed
+
+
+def test_hidden_pytest_oracle_runs_outside_agent_workspace(tmp_path):
+    workspace = tmp_path / "workspace"; oracle = tmp_path / "oracle"
+    (workspace / "src" / "pkg").mkdir(parents=True); oracle.mkdir()
+    (workspace / "src" / "pkg" / "value.py").write_text("def answer(): return 42\n")
+    (oracle / "test_value.py").write_text("from pkg.value import answer\ndef test_answer(): assert answer() == 42\n")
+    check = EvaluationCheck("pytest_passes", path="test_value.py")
+    result = EvaluationCheckRunner().run(check=check, workspace=workspace, oracle_root=oracle, output="")
+    assert result.passed
+    assert not (workspace / "test_value.py").exists()
 
 
 def test_runtime_directory_is_not_an_ordinary_edit_target(tmp_path):
@@ -158,3 +188,58 @@ def test_tool_executor_rejects_oversized_or_unknown_arguments(tmp_path):
     executor = ToolExecutor(registry)
     assert executor.prepare("validate_semantic", "{" + "x" * executor.MAX_TOOL_ARGUMENT_CHARS + "}").error
     assert executor.prepare("validate_semantic", '{"path":"README.md","claim":"x","unexpected":true}').error
+
+
+def test_bound_test_spec_is_executed_exactly_and_stale_target_is_unresolved(tmp_path):
+    test = tmp_path / "tests" / "test_auth.py"
+    test.parent.mkdir()
+    test.write_text("def test_invalid_password(): pass\n")
+    class Tests:
+        name = "tests"
+        capabilities = frozenset({"test.run"})
+    registry = ToolRegistry(); registry.register(Tests())
+    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
+        spec=TestVerificationSpec("app/auth.py", "tests/test_auth.py::test_invalid_password"))
+    resolved = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolved.status == ResolutionStatus.RESOLVED
+    assert resolved.arguments["path"] == "tests/test_auth.py::test_invalid_password"
+    test.unlink()
+    assert ValidatorResolver(tmp_path).resolve(check, registry=registry).status == ResolutionStatus.TARGET_UNRESOLVED
+
+
+def test_unresolved_validation_allows_one_relevant_read_but_resolved_does_not():
+    class Read:
+        name = "read_file"
+        capabilities = frozenset({"filesystem.read"})
+    registry = ToolRegistry(); registry.register(Read())
+    controller = ActionController(registry)
+    policy = policy_for(ExecutionMode.STANDARD)
+    state = TaskState(phase=AgentPhase.VALIDATING, relevant_paths=("app/routes.py",))
+    controller.update_context(state=state, policy=policy, remaining_budget=5,
+        next_required_check_id="V1", validator_resolution_status="target_unresolved",
+        validation_paths=("app/routes.py",))
+    assert controller.restriction_reason("read_file", {"path": "app/routes.py"}, policy) is None
+    assert controller.restriction_reason("read_file", {"path": "app/routes.py"}, policy)
+    controller.update_context(state=state, policy=policy, remaining_budget=5,
+        next_required_check_id="V1", validator_resolution_status="resolved")
+    assert controller.restriction_reason("read_file", {"path": "app/routes.py"}, policy)
+
+
+def test_browser_runtime_spec_requires_post_action_assertion(tmp_path):
+    class Browser:
+        name = "browser"
+        capabilities = frozenset({"validation.browser"})
+    registry = ToolRegistry(); registry.register(Browser())
+    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="validation.browser",
+        spec=BrowserVerificationSpec("index.html", "#move", "click"))
+    assert ValidatorResolver(tmp_path).resolve(check, registry=registry).status == ResolutionStatus.TARGET_UNRESOLVED
+
+
+def test_http_status_binding_accepts_normal_success_and_conflict_codes(tmp_path):
+    profile = SimpleNamespace(commands=(("start", "python app.py {port}"),))
+    for status in (200, 201, 204, 409, 422):
+        spec = HttpVerificationSpec("POST", "/items", status)
+        check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="service.validate", spec=spec)
+        registry = ToolRegistry()
+        registry.register(type("Service", (), {"name": "service", "capabilities": frozenset({"service.validate"})})())
+        assert ValidatorResolver(tmp_path).resolve(check, registry=registry, profile=profile).arguments["expected_status"] == status

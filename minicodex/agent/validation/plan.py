@@ -62,6 +62,7 @@ class ValidationPlanner:
             structural = item.kind.value == "structural"
             semantic = item.kind.value == "semantic"
             runtime_acceptance = runtime_rung if not (structural or semantic or has_focused_test) else None
+            spec = self._requirement_spec(item, runtime_acceptance)
             checks.append(ValidationCheck(
                 id=f"V{len(checks) + 1}", requirement_ids=(item.id,),
                 purpose=(ValidationPurpose.REGRESSION if item.category.value == "regression"
@@ -75,7 +76,11 @@ class ValidationPlanner:
                 revision=revision, milestone="work_unit" if len(paths) > 1 else "task",
                 reason=runtime_acceptance.reason if runtime_acceptance else item.description,
                 observable=item.observable,
-                spec=self._requirement_spec(item, runtime_acceptance),
+                spec=spec,
+                # Planner-derived contracts are stable requirement contracts,
+                # not repository observations. Their provenance must never
+                # render as an ambiguous unbound@None state.
+                spec_source="requirement" if spec is not None else "",
             ))
         for rung in rungs:
             if rung.strength in {EvidenceStrength.STRUCTURE, EvidenceStrength.TARGETED} and rung.purpose == ValidationPurpose.ACCEPTANCE:
@@ -84,11 +89,10 @@ class ValidationPlanner:
                 continue
             if rung.strength == EvidenceStrength.REGRESSION and not (rung.command or getattr(impact, "tests", ())):
                 continue
-            requirement_ids = (tuple(item.id for item in requirements.items
-                                    if item.kind.value == "behavioral")
-                               if rung.strength == EvidenceStrength.RUNTIME else ())
-            if rung.strength == EvidenceStrength.RUNTIME and not requirement_ids:
-                continue
+            # Runtime/regression ladder checks are broad task evidence. They
+            # must not borrow one requirement's typed spec and accidentally
+            # satisfy every unrelated behavioral requirement.
+            requirement_ids = ()
             checks.append(ValidationCheck(
                 f"V{len(checks) + 1}", requirement_ids, rung.purpose,
                 target=rung.command if rung.capability == "process.run" else "",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from ..base import BaseTool
 from ..results import ToolResult
@@ -40,6 +41,7 @@ class ValidateSemanticTool(BaseTool):
                   "Return JSON only: {\"outcome\":\"passed|failed|inconclusive\",\"reason\":\"brief\"}.\n"
                   f"CLAIM:\n{claim[:1500]}\nTARGET_CONTENT:\n{content}")
         try:
+            started = time.monotonic()
             response = self.llm.chat(messages=[{"role": "system", "content": "You are a read-only semantic validator."},
                                                 {"role": "user", "content": prompt}], tools=None)
             data = parse_bounded_json_object(getattr(response.message, "content", ""), max_chars=2_000)
@@ -48,9 +50,15 @@ class ValidateSemanticTool(BaseTool):
             outcome = str(data["outcome"]).casefold()
             if outcome not in {"passed", "failed", "inconclusive"}:
                 outcome = "inconclusive"
+            usage = getattr(response, "usage", None)
+            telemetry = {"calls": 1, "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                         "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                         "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+                         "latency_seconds": time.monotonic() - started,
+                         "model": str(getattr(self.llm, "model", ""))}
             return ToolResult(True, str(data.get("reason", "Semantic assessment."))[:500],
                               {"path": path, "outcome": outcome, "errors": [] if outcome != "failed" else ["semantic claim not satisfied"],
-                               "evidence_strength": 2 if outcome == "passed" else 0})
+                               "evidence_strength": 2 if outcome == "passed" else 0, "semantic_judge_telemetry": telemetry})
         except Exception:
             return ToolResult(True, "Semantic judge returned no reliable structured result",
                               {"path": path, "outcome": "inconclusive", "errors": [], "evidence_strength": 0})

@@ -388,3 +388,15 @@ rg -n 'complete_plan_step|class ValidationState|compatibility shim' minicodex/ag
 - ToolExecutor 拒绝超过 1 MB 的参数、缺失 required 字段、具名生产 schema 的未知字段及基础类型/enum 不匹配。空 properties 的第三方开放适配器遵循 JSON Schema 的默认开放语义；编辑缺失 path 保留既有 checkpoint precondition 错误分类。
 - RealRepoBench 的 `benchmark_oracle/` 文件写入 agent workspace 外的独立 oracle 目录，agent 无法靠修改测试夹具取得通过。
 - 本轮没有运行真实 provider；实际执行 `python -m pytest -q --tb=line` → **572 passed in 12.86s**，`python -m compileall -q minicodex` 与 `git diff --check` 均通过。
+
+## 后架构执行闭环
+
+- 验证循环现在在 prompt 渲染之前准备当前 required check。`TARGET_UNRESOLVED` 仅允许一次限定到 requirement/spec/relevant path 的 read/search；`RESOLVED` 仍禁止侦察，`CAPABILITY_MISSING` 和 `UNSUPPORTED` 在验证/收尾阶段成为确定性 blocker，而不是文本循环。
+- `TestVerificationSpec` 由 `ValidatorResolver` 直接映射为精确 `run_tests(path=...)`；目标不存在会报告 stale/target-unresolved，不会重新猜测。多 requirement 的 task-level rung 不再借用第一个 requirement 的 spec 作为共享证明。
+- requirement-derived spec 标记为 `requirement`，repository/test-index spec 标记 revision；ContextBuilder 只渲染 orchestration 已准备的 snapshot，不再隐式改写 ValidationPlan。
+- 浏览器 runtime spec 需要动作和明确 post-action assertion；浏览器工具支持 text、visible、value、attribute、class、style 的小型断言集合。HTTP status 提取支持 100–599，路由评分不含 login 专用加分。
+- `ProjectExecutionEnvironment` 提供 python/pytest/probe/install argv；`uv`/`poetry` 只有在 executable 可用时执行，测试工具使用实际 pytest argv，install 不会为 uv/poetry 静默改 lockfile。runtime root 默认迁出 target repository 至用户级 MiniCodex workspaces。
+- 评测 Python/pytest oracle 采用 target environment；hidden pytest 文件只在 Harness 的 oracle root 可见且会实际执行。EvaluationResult 增加确定性 failure category。WorkspaceSession 的 bounded scan 先纳入 target/recent paths，并保持 fingerprint 排序避免将优先级变动误判为编辑；dirty source refresh 只更新受影响 import facts。
+- Semantic validator 的内层 judge telemetry（调用数、token、延迟、模型）进入既有 ExecutionMetrics；结构化失败仍为 inconclusive。
+- 本轮新增产品级测试覆盖 target-unresolved inspection 限制、精确 test spec、browser assertion 缺失、通用 HTTP status、uv/poetry 可用性、runtime root 与外置 hidden oracle。
+- 实际运行：`python -m pytest -q --tb=line` → **579 passed in 13.09s**。未运行真实 provider 自动基准；未运行 Playwright browser integration（可选依赖/浏览器运行时不作为本次 CI 前提）。

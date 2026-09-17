@@ -19,6 +19,7 @@ class ActionController:
         "You have enough context. Make a concrete edit, run the required "
         "validation, or report a concrete blocker."
     )
+    UNRESOLVED_INSPECTION_LIMIT = 1
 
     def __init__(self, registry=None) -> None:
         self.registry = registry
@@ -42,6 +43,11 @@ class ActionController:
         self.action_required_trigger_count = 0
         self.has_edit = bool(state and state.edit_revision > 0)
         self.acceptance_missing = True
+        self.next_required_check_id = ""
+        self.validator_resolution_status = ""
+        self.unresolved_reason = ""
+        self.validation_paths = ()
+        self.validation_inspections = 0
         self.current_mode = None
         self.remaining_budget: int | None = None
         self.phase = getattr(state, "phase", AgentPhase.INSPECTING)
@@ -57,7 +63,11 @@ class ActionController:
         state: TaskState,
         policy,
         remaining_budget: int,
-        acceptance_missing: bool,
+        acceptance_missing: bool | None = None,
+        next_required_check_id: str = "",
+        validator_resolution_status: object = "",
+        unresolved_reason: str = "",
+        validation_paths=(),
     ) -> None:
         """Expose current deterministic task context without adding pressure."""
 
@@ -66,11 +76,22 @@ class ActionController:
         if self.last_progress_key is None:
             self.last_progress_key = state.progress_key()
         self.has_edit = state.edit_revision > 0
+        # This is retained only for UI/legacy callers. A materialized plan is
+        # represented below by its exact next required check.
         self.acceptance_missing = bool(acceptance_missing)
         self.current_mode = getattr(policy, "mode", None)
         self.remaining_budget = max(0, int(remaining_budget))
         self.phase = state.phase
         self.target_paths = state.relevant_paths or state.target_paths
+        status = getattr(validator_resolution_status, "value", validator_resolution_status)
+        same_obligation = (next_required_check_id == self.next_required_check_id
+                           and status == self.validator_resolution_status)
+        self.next_required_check_id = str(next_required_check_id or "")
+        self.validator_resolution_status = str(status or "")
+        self.unresolved_reason = str(unresolved_reason or "")
+        self.validation_paths = tuple(dict.fromkeys(validation_paths or self.target_paths))
+        if not same_obligation:
+            self.validation_inspections = 0
 
     def observe_action(
         self,
@@ -129,14 +150,32 @@ class ActionController:
         capabilities = self._capabilities(tool_name)
         is_read = "file.read" in capabilities
 
-        if self.phase == AgentPhase.FINALIZING and self._inspection(tool_name):
+        if self.phase in {AgentPhase.VALIDATING, AgentPhase.FINALIZING} and self._inspection(tool_name):
+            if self.validator_resolution_status == "target_unresolved":
+                if self.validation_inspections >= self.UNRESOLVED_INSPECTION_LIMIT:
+                    self._activate()
+                    return (
+                        f"Validation check {self.next_required_check_id or 'current'} remains unresolved after "
+                        "one targeted inspection. Rebind it, resolve a capability, or report the concrete blocker."
+                    )
+                path = str((arguments or {}).get("path", "") or "").strip()
+                if path and self.validation_paths and path not in self.validation_paths:
+                    return (
+                        f"Only proof-directed inspection for {self.next_required_check_id or 'the current check'} is "
+                        f"allowed ({', '.join(self.validation_paths)}), not {path}."
+                    )
+                # The restriction boundary is invoked exactly once per tool
+                # call. Count the granted inspection here so a model cannot
+                # turn unresolved binding into open-ended reconnaissance.
+                self.validation_inspections += 1
+                return None
+            if self.validator_resolution_status in {"capability_missing", "unsupported"}:
+                return (
+                    f"Validation check {self.next_required_check_id or 'current'} is {self.validator_resolution_status}; "
+                    "source inspection cannot resolve this environment/blocker state."
+                )
             return (
-                "The task is finalizing. Only a necessary edit, missing "
-                "validation, plan completion, or a concrete blocker is allowed."
-            )
-        if self.phase == AgentPhase.VALIDATING and self._inspection(tool_name):
-            return (
-                "The current revision is ready for validation. Run the relevant "
+                "The current revision has an executable validation target. Run the relevant "
                 "validator instead of unrelated reconnaissance."
             )
         if self.phase == AgentPhase.FIXING:
@@ -215,6 +254,8 @@ class ActionController:
         if self.phase in {AgentPhase.ACTING, AgentPhase.FIXING}:
             return 1
         if self.phase in {AgentPhase.VALIDATING, AgentPhase.FINALIZING}:
+            if self.validator_resolution_status == "target_unresolved":
+                return self.UNRESOLVED_INSPECTION_LIMIT
             return 0
         return configured
     # Kept as compatibility-facing classification constants for metrics. Core

@@ -128,6 +128,10 @@ class ToolEventAdapter:
                 revision=current_revision,
                 capabilities=capabilities,
             )
+            telemetry = result.data.get("semantic_judge_telemetry")
+            if telemetry:
+                from types import SimpleNamespace
+                metrics.record_semantic_judge(SimpleNamespace(**telemetry))
 
         retry = getattr(agent, "edit_retry", None)
         retry_message = retry.observe(tool_name, arguments, result) if retry is not None else None

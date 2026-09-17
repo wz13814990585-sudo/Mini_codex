@@ -20,10 +20,12 @@ class FinalizationController:
     def __init__(self):
         self.active = False
         self.reconciled = False
+        self.allow_proof_inspection = False
 
     def reset(self) -> None:
         self.active = False
         self.reconciled = False
+        self.allow_proof_inspection = False
 
     def enter_if_needed(self, remaining_steps: int, policy) -> bool:
         if remaining_steps <= getattr(policy, "finalization_threshold", 2):
@@ -33,6 +35,6 @@ class FinalizationController:
         return False
 
     def restriction_reason(self, tool_name: str) -> str | None:
-        if self.active and tool_name in self.BLOCKED_TOOLS:
+        if self.active and tool_name in self.BLOCKED_TOOLS and not self.allow_proof_inspection:
             return self.INSTRUCTION
         return None

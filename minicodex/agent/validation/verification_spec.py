@@ -15,6 +15,7 @@ class FileVerificationSpec:
 
 @dataclass(frozen=True)
 class TestVerificationSpec:
+    __test__ = False
     source_path: str = ""
     test_target: str = ""
 
@@ -40,6 +41,9 @@ class BrowserVerificationSpec:
     action: str = ""
     value: str = ""
     expected_text: str = ""
+    assertion_kind: str = ""
+    assertion_target: str = ""
+    expected_value: str = ""
 
 
 @dataclass(frozen=True)
@@ -54,8 +58,9 @@ VerificationSpec = (FileVerificationSpec | TestVerificationSpec | CommandVerific
 
 def derive_http_spec(observable: str) -> HttpVerificationSpec | None:
     """Bounded extraction of the small HTTP contract language we support."""
-    match = re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(/[^\s,→]+).*?\b(\d{3})\b", observable, re.I)
+    match = re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(/[^\s,→]+).*?\b([1-5]\d{2})\b", observable, re.I)
     if not match:
         return None
     method, path, status = match.groups()
-    return HttpVerificationSpec(method.upper(), path.rstrip(".,;") or "/", int(status))
+    parsed_status = int(status)
+    return HttpVerificationSpec(method.upper(), path.rstrip(".,;") or "/", parsed_status) if 100 <= parsed_status <= 599 else None

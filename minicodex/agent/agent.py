@@ -62,6 +62,7 @@ from .safety import (
 )
 from .task_state import AgentPhase, RuntimeEventType, TaskRuntime, TaskState
 from .validation.plan import ValidationPlanner
+from .validation.decision_policy import ValidationDecisionPolicy
 from .context.workspace_session import ChangeImpactResolver, WorkspaceSession
 from .memory import (
     WorkingSummary,
@@ -420,7 +421,10 @@ class MiniCodexAgent:
 
     def ensure_bound_check(self, check):
         """Bind/rebind only the check about to be validated for this revision."""
-        if check is None or not check.requirement_ids:
+        # A typed spec is a contract for exactly one requirement.  Task-level
+        # checks can still aggregate evidence, but may not borrow the first
+        # requirement's spec and claim it proves all of them.
+        if check is None or len(check.requirement_ids) != 1:
             return check
         requirement = next((item for item in self.task_requirements.items if item.id == check.requirement_ids[0]), None)
         if requirement is None:
@@ -432,6 +436,42 @@ class MiniCodexAgent:
             self.validation_pipeline.state.plan = type(plan)(tuple(
                 result.check if item.id == check.id else item for item in plan.checks))
         return result.check
+
+    def validation_paths_for(self, check) -> tuple[str, ...]:
+        """Small, deterministic inspection scope for one unresolved check."""
+        paths = list(getattr(self.task_state, "relevant_paths", ()) or ())
+        if check is not None:
+            for requirement_id in getattr(check, "requirement_ids", ()):
+                requirement = next((item for item in self.task_requirements.items if item.id == requirement_id), None)
+                paths.extend(getattr(requirement, "paths", ()) if requirement else ())
+            spec = getattr(check, "spec", None)
+            paths.extend(filter(None, (getattr(spec, "path", ""), getattr(spec, "source_path", ""))))
+        return tuple(dict.fromkeys(str(path) for path in paths if str(path).strip()))
+
+    def prepare_next_validation_check(self):
+        """Prepare the one current obligation before prompt rendering.
+
+        Binding is intentionally an orchestration transition, never a hidden
+        side effect of ContextBuilder.  The resulting snapshot is also the
+        ActionController's authority for tightly bounded proof inspection.
+        """
+        check = ValidationDecisionPolicy(self.validation_pipeline.state).next_required_check()
+        if check is None:
+            self.current_validation_check = None
+            self.current_validator_resolution = None
+            return None, None
+        check = self.ensure_bound_check(check)
+        session = self.workspace_session
+        resolution = self.validator_resolver.resolve(
+            check,
+            registry=self.registry,
+            profile=session.profile,
+            paths=self.validation_paths_for(check),
+            revision=session.revision,
+        )
+        self.current_validation_check = check
+        self.current_validator_resolution = resolution
+        return check, resolution
 
     # =========================================================
     # Next Edit Revision
@@ -582,6 +622,7 @@ class MiniCodexAgent:
 
     def refresh_workspace_facts(self):
         session = self.workspace_session
+        session.prioritize(getattr(self.execution_route, "target_paths", ()) or getattr(self.task_state, "relevant_paths", ()))
         external_candidate = session._fingerprint is not None
         owned_dirty = bool(getattr(session, "_dirty_paths", ()))
         if session.refresh(periodic=True) and external_candidate and not owned_dirty and self.task_state.run_id:
@@ -710,7 +751,7 @@ class MiniCodexAgent:
         self.validation_pipeline.state.plan = type(self.validation_pipeline.state.plan)(tuple(
             self.verification_spec_binder.bind(check, requirements_by_id.get(check.requirement_ids[0]),
                 session=self.workspace_session, impact=change_impact).check
-            if check.requirement_ids and requirements_by_id.get(check.requirement_ids[0]) else check
+            if len(check.requirement_ids) == 1 and requirements_by_id.get(check.requirement_ids[0]) else check
             for check in self.validation_pipeline.state.plan.checks))
         self.runtime_control.reset(planning_active=False)
         self.runtime_control.control_llm_calls = (

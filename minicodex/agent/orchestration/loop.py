@@ -89,12 +89,24 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
         )
 
     controller = getattr(agent, "action_controller", None)
+    prepared_validation = None
+    prepare_validation = getattr(agent, "prepare_next_validation_check", None)
+    if callable(prepare_validation):
+        prepared_validation = prepare_validation()
+    check, resolution = prepared_validation or (None, None)
+    validation_paths_for = getattr(agent, "validation_paths_for", None)
+    validation_paths = (validation_paths_for(check) if callable(validation_paths_for) else
+                        tuple(getattr(agent.task_state, "relevant_paths", ()) or ()))
     if controller is not None:
         controller.update_context(
             state=agent.task_progress_state(remaining),
             policy=agent.execution_policy,
             remaining_budget=remaining,
-            acceptance_missing=not agent.task_state.acceptance_passed,
+            acceptance_missing=None,
+            next_required_check_id=getattr(check, "id", ""),
+            validator_resolution_status=getattr(resolution, "status", ""),
+            unresolved_reason=getattr(resolution, "reason", ""),
+            validation_paths=validation_paths,
         )
 
     finalization = getattr(agent, "finalization", None)
@@ -105,6 +117,10 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
     ):
         print("\n[Finalization Mode]")
         agent.apply_runtime_event(RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.FINALIZING)
+        finalization.allow_proof_inspection = (
+            getattr(getattr(resolution, "status", ""), "value", getattr(resolution, "status", ""))
+            == "target_unresolved"
+        )
         if agent.active_plan is not None:
             current, completed = agent.plan_orchestrator.reconcile(agent)
             if completed:

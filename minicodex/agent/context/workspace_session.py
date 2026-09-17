@@ -64,6 +64,7 @@ class WorkspaceSession:
         self.conventions = CodebaseConventions()
         self.imports = {}
         self.recent_paths = ()
+        self.priority_paths = ()
         self.test_index = TestIndex(self.workspace)
         self.symbol_index = SymbolIndex(self.workspace)
         self._fingerprint = None
@@ -73,6 +74,11 @@ class WorkspaceSession:
         self._structural_dirty = False
         self._unchanged_checks = 0
         self.external_check_interval = 8
+
+    def prioritize(self, paths) -> None:
+        """Bias the next bounded scan toward explicit/current task artifacts."""
+        normalized = tuple(str(path).replace("\\", "/").lstrip("./") for path in paths or () if str(path).strip())
+        self.priority_paths = tuple(dict.fromkeys((*normalized, *self.recent_paths, *self.priority_paths)))[:80]
 
     def refresh(self, *, full=False, periodic=False):
         """Refresh dirty agent paths now; sample external changes infrequently."""
@@ -85,12 +91,20 @@ class WorkspaceSession:
                 return False
         self._unchanged_checks = 0
         paths = []
+        seen = set()
+        for relative in self.priority_paths:
+            candidate = self.workspace / relative
+            if candidate.is_file() and not candidate.is_symlink():
+                paths.append(relative)
+                seen.add(relative)
         for base, dirs, files in os.walk(self.workspace, followlinks=False):
             dirs[:] = sorted(d for d in dirs if d not in DEFAULT_IGNORED_DIRS and not d.startswith("."))
             for name in sorted(files):
                 path = Path(base) / name
-                if not path.is_symlink():
-                    paths.append(path.relative_to(self.workspace).as_posix())
+                relative = path.relative_to(self.workspace).as_posix()
+                if not path.is_symlink() and relative not in seen:
+                    paths.append(relative)
+                    seen.add(relative)
                 if len(paths) >= 1500:
                     break
             if len(paths) >= 1500:
@@ -102,6 +116,9 @@ class WorkspaceSession:
                 fingerprint.append((p, s.st_mtime_ns, s.st_size))
             except OSError:
                 pass
+        # Scan order may be relevance-prioritized; identity/freshness must not
+        # treat a different traversal order as an external repository edit.
+        fingerprint.sort()
         if tuple(fingerprint) == self._fingerprint:
             self.changed_paths = ()
             return False
@@ -150,7 +167,9 @@ class WorkspaceSession:
         self.build_count += 1
         if any(Path(path).name in {"pyproject.toml", "package.json", "requirements.txt", "setup.py"} for path in changed):
             self.profile = self._profile()
-        self.conventions = self._scan_sources()
+        source_changes = tuple(path for path in changed if path.endswith((".py", ".js", ".jsx", ".ts", ".tsx")))
+        if source_changes:
+            self.conventions = self._scan_sources(source_changes, incremental=True)
         return True
 
     def _read(self, path):
@@ -206,14 +225,19 @@ class WorkspaceSession:
                               test_roots, tests, tuple(commands),
                               tuple(p for p in paths if "config" in Path(p).name)[:12])
 
-    def _scan_sources(self):
-        observations, examples = set(), []
-        self.imports = {}
-        for path in (p for p in self.paths if p.endswith((".py", ".js", ".jsx", ".ts", ".tsx"))):
+    def _scan_sources(self, paths=None, *, incremental=False):
+        observations = set(self.conventions.observations) if incremental else set()
+        examples = list(self.conventions.example_paths) if incremental else []
+        if not incremental:
+            self.imports = {}
+        scan_paths = paths or self.paths
+        ordered = tuple(dict.fromkeys((*self.priority_paths, *self.recent_paths, *scan_paths)))
+        for path in (p for p in ordered if p in self.paths and p.endswith((".py", ".js", ".jsx", ".ts", ".tsx"))):
             if len(examples) >= 80:
                 break
             text = self._read(path)
-            examples.append(path)
+            if path not in examples:
+                examples.append(path)
             deps = []
             if path.endswith(".py"):
                 try:

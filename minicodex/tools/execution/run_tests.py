@@ -95,7 +95,11 @@ class RunTestsTool(
                 timeout
             ),
         )
-        self.python_executable = str(python_executable or ProjectExecutionEnvironment.discover(self.workspace).python_executable)
+        self.environment = ProjectExecutionEnvironment.discover(self.workspace)
+        self.python_executable = str(python_executable or self.environment.python_executable)
+        if python_executable:
+            self.environment = ProjectExecutionEnvironment(self.workspace, self.python_executable,
+                self.environment.package_manager, (self.python_executable,), (self.python_executable, "-m", "pytest"), True)
 
         self.sandbox = (
             sandbox
@@ -211,10 +215,13 @@ class RunTestsTool(
         # pytest argv
         # =====================================================
 
+        if not self.environment.command_available:
+            return ToolResult(success=False, summary="Project test environment is unavailable.", data={
+                "path": normalized_path, "purpose": normalized_purpose, "outcome": "inconclusive",
+                "failure_type": "environment_unavailable", "environment": self.environment.summary(),
+            }, error="The detected project command is not installed.")
         command = [
-            self.python_executable,
-            "-m",
-            "pytest",
+            *self.environment.pytest_argv(),
             "-p",
             "no:debugging",
             normalized_path,

@@ -20,7 +20,8 @@ class RepoFixture:
 def _python_bug(case_id="python_double_bug"):
     return RepoFixture(EvaluationCase(case_id,
         "Fix src/pkg/maths.py so double(value) returns value * 2. Preserve the public function name and signature.",
-        (EvaluationCheck("python_assertion", command="from pkg.maths import double; assert double(0)==0; assert double(3)==6; assert double(-4)==-8"),),
+        (EvaluationCheck("python_assertion", command="from pkg.maths import double; assert double(0)==0; assert double(3)==6; assert double(-4)==-8"),
+         EvaluationCheck("pytest_passes", path="test_double.py", description="Hidden focused oracle must pass.")),
         tags=("python", "bug_fix")),
         (("src/pkg/maths.py", "def double(value):\n    return value + 2\n"),
          ("benchmark_oracle/test_double.py", "from pkg.maths import double\ndef test_double(): assert double(7) == 14\n")))
@@ -86,6 +87,9 @@ def run_real_repo_bench(root, *, model_factory, output_level="normal", case_ids=
             target.write_text(content, encoding="utf-8")
         agent, _trace, _memory = build_agent(WorkspaceConfig.create(workspace),
             llm=model_factory(case, workspace), output_level=output_level)
+        # The harness reads this private attachment after the agent run. It is
+        # never registered as a workspace/tool root.
+        agent._benchmark_oracle_root = oracle_root
         return agent
     return EvaluationHarness(agent_factory=factory).run_suite(
         run_name="real_repo_bench", cases=[fixture.case for fixture in selected])

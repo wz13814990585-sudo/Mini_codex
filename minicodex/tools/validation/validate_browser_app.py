@@ -26,6 +26,8 @@ class ValidateBrowserAppTool(BaseTool):
             "click_selector": {"type": "string", "description": "Optional selector to click."},
             "keypress": {"type": "string", "description": "Optional Playwright key name."},
             "keypress_selector": {"type": "string", "description": "Optional keypress target."},
+            "assertion_kind": {"type": "string", "enum": ["text", "visible", "value", "attribute", "class", "style"], "description": "Post-action assertion type."},
+            "expected_value": {"type": "string", "description": "Expected post-action assertion value."},
         },
         "required": ["path"],
     }
@@ -46,6 +48,8 @@ class ValidateBrowserAppTool(BaseTool):
         click_selector: str = "",
         keypress: str = "",
         keypress_selector: str = "",
+        assertion_kind: str = "",
+        expected_value: str = "",
     ) -> ToolResult:
         target = resolve_workspace_path(self.workspace, path)
         if not target.is_file():
@@ -88,14 +92,28 @@ class ValidateBrowserAppTool(BaseTool):
                         page.locator(keypress_selector).press(keypress)
                     else:
                         page.keyboard.press(keypress)
-                if expected_text:
+                assertion_kind = assertion_kind or ("text" if expected_text else "")
+                expected_value = expected_value or expected_text
+                if assertion_kind == "text":
                     actual = (
                         page.locator(selector).first.inner_text()
                         if selector and page.locator(selector).count()
                         else page.locator("body").inner_text()
                     )
-                    if expected_text not in actual:
-                        errors.append(f"expected text not found: {expected_text}")
+                    if expected_value not in actual:
+                        errors.append(f"expected text not found: {expected_value}")
+                elif assertion_kind == "visible" and not page.locator(selector).first.is_visible():
+                    errors.append(f"selector is not visible: {selector}")
+                elif assertion_kind == "value" and page.locator(selector).first.input_value() != expected_value:
+                    errors.append(f"expected value not found: {expected_value}")
+                elif assertion_kind == "class" and expected_value not in (page.locator(selector).first.get_attribute("class") or "").split():
+                    errors.append(f"expected class not found: {expected_value}")
+                elif assertion_kind == "attribute":
+                    name, _, value = expected_value.partition("=")
+                    if not name or page.locator(selector).first.get_attribute(name) != value:
+                        errors.append(f"expected attribute not found: {expected_value}")
+                elif assertion_kind == "style" and expected_value not in (page.locator(selector).first.get_attribute("style") or ""):
+                    errors.append(f"expected style not found: {expected_value}")
                 browser.close()
         except Exception as error:
             return ToolResult(
@@ -110,7 +128,7 @@ class ValidateBrowserAppTool(BaseTool):
                 error=f"{type(error).__name__}: {error}",
             )
         result = self._result(path, "failed" if errors else "passed", errors)
-        result.data["evidence_strength"] = 5 if expected_text and (click_selector or keypress) else 2 if expected_text else 0
+        result.data["evidence_strength"] = 5 if assertion_kind and expected_value and (click_selector or keypress) else 0
         return result
 
     @staticmethod

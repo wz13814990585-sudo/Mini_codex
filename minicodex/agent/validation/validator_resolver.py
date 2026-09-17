@@ -11,7 +11,7 @@ import shlex
 from .plan import EvidenceStrength, ValidationCheck
 from .test_target_resolver import TestTargetResolver
 from .verification_spec import (BrowserVerificationSpec, CommandVerificationSpec, FileVerificationSpec,
-                                HttpVerificationSpec, SemanticVerificationSpec)
+                                HttpVerificationSpec, SemanticVerificationSpec, TestVerificationSpec)
 
 
 class ResolutionStatus(str, Enum):
@@ -44,6 +44,13 @@ class ValidatorResolver:
         check_paths = tuple(dict.fromkeys((*paths, *self._paths_from_observable(check.observable))))
         common = {"purpose": check.purpose.value, "validation_check": check.id}
         spec = check.spec
+        if isinstance(spec, TestVerificationSpec):
+            if not spec.test_target or not self.test_target_resolver._exists(spec.test_target):
+                return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
+                                        "The bound focused test target is absent or stale for this workspace revision.")
+            return self._resolve_capability(candidates, "test.run", check, common,
+                                            {"path": spec.test_target},
+                                            "The binder-selected TestVerificationSpec is the exact test target.")
         if isinstance(spec, CommandVerificationSpec):
             return self._resolve_capability(candidates, "process.run", check, common,
                                             {"command": spec.command}, "The spec binds a configured command.")
@@ -55,14 +62,19 @@ class ValidatorResolver:
             return self._resolve_capability(candidates, "service.validate", check, common, service,
                                             "The typed HTTP contract supplies method, path, and expected status.")
         if isinstance(spec, BrowserVerificationSpec):
-            if not spec.action or not spec.selector:
+            assertion_kind = spec.assertion_kind or ("text" if spec.expected_text else "")
+            assertion_target = spec.assertion_target or spec.selector
+            expected_value = spec.expected_value or spec.expected_text
+            if not spec.action or not spec.selector or not assertion_kind or not assertion_target or not expected_value:
                 return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
                                         "Interactive browser proof needs an action, selector, and post-action assertion.")
             action_args = ({"keypress": spec.value, "keypress_selector": spec.selector}
                            if spec.action == "keypress" else {"click_selector": spec.selector})
             return self._resolve_capability(candidates, "validation.browser", check, common,
-                                            {"path": spec.path, "selector": spec.selector,
-                                             "expected_text": spec.expected_text, **action_args},
+                                            {"path": spec.path, "selector": assertion_target,
+                                             "expected_text": spec.expected_text,
+                                             "assertion_kind": assertion_kind,
+                                             "expected_value": expected_value, **action_args},
                                             "The typed browser interaction defines the exact assertion.")
         if isinstance(spec, FileVerificationSpec):
             name = self._first(candidates, "validation.static_web") if spec.path.endswith(".html") else None
@@ -164,7 +176,7 @@ class ValidatorResolver:
 
     @staticmethod
     def _service_arguments(observable, profile):
-        match = re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(/[^\s,→]+).*?\b(\d{3})\b", observable, re.I)
+        match = re.search(r"\b(GET|POST|PUT|PATCH|DELETE)\s+(/[^\s,→]+).*?\b([1-5]\d{2})\b", observable, re.I)
         commands = dict(getattr(profile, "commands", ()) or ())
         argv = commands.get("start") or commands.get("dev")
         if not match or not argv or "{port}" not in argv:
@@ -176,6 +188,8 @@ class ValidatorResolver:
         if not executable:
             return None
         method, path, status = match.groups()
+        if not 100 <= int(status) <= 599:
+            return None
         return {
             "argv": executable,
             # Zero is the validator's documented ephemeral-port sentinel.  It

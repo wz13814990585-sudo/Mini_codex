@@ -177,6 +177,7 @@ class EvaluationResult:
     redundant_reads: int = 0
     redundant_searches: int = 0
     wrong_validation_target: bool = False
+    failure_category: str | None = None
     cost_usd: float | None = None
 
     duration_seconds: float = 0.0

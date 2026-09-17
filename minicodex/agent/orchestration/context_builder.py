@@ -50,15 +50,13 @@ class ContextBuilder:
             if next_check is None:
                 sections.append("No required validation check remains.")
             else:
-                ensure_bound = getattr(agent, "ensure_bound_check", None)
-                if callable(ensure_bound):
-                    next_check = ensure_bound(next_check)
-                resolver = getattr(agent, "validator_resolver", None)
-                recommendation = resolver.resolve(
-                    next_check, registry=agent.registry,
-                    profile=session.profile if session else None, paths=targets,
-                    revision=session.revision if session else state.edit_revision,
-                ) if resolver else None
+                prepared = (getattr(agent, "current_validation_check", None),
+                            getattr(agent, "current_validator_resolution", None))
+                if prepared[0] is None or prepared[0].id != next_check.id:
+                    # Rendering must not bind/rebind or mutate the ledger.
+                    # The orchestration loop prepares this snapshot first.
+                    prepared = (next_check, None)
+                next_check, recommendation = prepared
                 status = getattr(recommendation, "status", None)
                 if recommendation and getattr(status, "value", status) == "resolved":
                     action = f"Run {recommendation.tool_name} with {recommendation.arguments!r}."
@@ -77,7 +75,22 @@ class ContextBuilder:
                             f"failure paths: {', '.join(paths) if paths else 'current validation target'}. "
                             "Recover locally before broad search.")
         elif state.phase == AgentPhase.FINALIZING:
-            sections.append("Remaining required checks: " + (", ".join(check.id for check in missing) or "none") + ".")
+            if next_check is None:
+                sections.append("No required validation checks remain; finalize only from recorded evidence.")
+            else:
+                resolution = getattr(agent, "current_validator_resolution", None)
+                if getattr(getattr(agent, "current_validation_check", None), "id", None) != next_check.id:
+                    resolution = None
+                status = getattr(getattr(resolution, "status", ""), "value", getattr(resolution, "status", ""))
+                if status == "resolved":
+                    action = f"Run {resolution.tool_name} with {resolution.arguments!r}."
+                elif status == "target_unresolved":
+                    action = f"Inspect one relevant path ({', '.join(getattr(agent, 'validation_paths_for', lambda _: targets)(next_check)) or 'none'}) and rebind this same check."
+                else:
+                    action = "Create the deterministic blocker; do not inspect or invent another validator."
+                sections.append(f"Next required check {next_check.id}: {next_check.observable or next_check.reason}; "
+                                f"binding={next_check.spec_source or 'unbound'}@{next_check.spec_bound_revision}; "
+                                f"resolution={status or 'unprepared'}: {getattr(resolution, 'reason', '')}. {action}")
         if current_plan_step is not None and state.phase in {AgentPhase.ACTING, AgentPhase.FIXING}:
             sections.append(f"Current plan outcome: {current_plan_step.id}. {current_plan_step.description}")
         summary = agent.working_summary.render_relevant(targets, max_items=4)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import subprocess
-import sys
+from ..agent.context.project_execution_environment import ProjectExecutionEnvironment
 
 from .models import (
     CheckResult,
@@ -39,6 +39,7 @@ class EvaluationCheckRunner:
         check: EvaluationCheck,
         workspace,
         output: str,
+        oracle_root=None,
     ) -> CheckResult:
 
         if (
@@ -77,7 +78,7 @@ class EvaluationCheckRunner:
         )
 
         if check.kind in {"command_succeeds", "python_assertion", "pytest_passes"}:
-            return self._run_process_check(check, workspace_path)
+            return self._run_process_check(check, workspace_path, oracle_root=oracle_root)
 
         # =====================================================
         # Output Checks
@@ -403,14 +404,22 @@ class EvaluationCheckRunner:
         )
 
     @staticmethod
-    def _run_process_check(check: EvaluationCheck, workspace: Path) -> CheckResult:
+    def _run_process_check(check: EvaluationCheck, workspace: Path, *, oracle_root=None) -> CheckResult:
+        environment = ProjectExecutionEnvironment.discover(workspace)
+        if not environment.command_available:
+            return CheckResult(check.kind, False, check.description or "Target project environment is unavailable.",
+                               path=check.path, error="environment_unavailable")
         if check.kind == "python_assertion":
             # Avoid benchmark results being contaminated by a stale timestamp-
             # based bytecode cache after an agent edits a fixture rapidly.
-            argv = [sys.executable, "-B", "-c", check.command or check.expected or ""]
+            argv = [*environment.python_argv("-B", "-c", check.command or check.expected or "")]
         elif check.kind == "pytest_passes":
-            target = check.path or check.command or "benchmark_oracle"
-            argv = [sys.executable, "-m", "pytest", "-q", target]
+            target = check.path or check.command or ""
+            if oracle_root is not None and target:
+                target = str((Path(oracle_root) / target).resolve())
+            if not target:
+                return CheckResult(check.kind, False, check.description or "Hidden pytest oracle target is missing.", error="missing_oracle_target")
+            argv = [*environment.pytest_argv("-p", "no:debugging", "-q", target)]
         else:
             import shlex
             try:
@@ -419,7 +428,10 @@ class EvaluationCheckRunner:
                 argv = []
         if not argv:
             return CheckResult(check.kind, False, check.description or "Oracle command is missing.", error="missing_command")
-        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (str(workspace / "src"), str(workspace), os.environ.get("PYTHONPATH", ""))))}
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (str(workspace / "src"), str(workspace), os.environ.get("PYTHONPATH", "")))),
+               # Oracles need deterministic project behavior, not arbitrary
+               # host pytest plugins (some are process-wide/debugger plugins).
+               "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
         try:
             completed = subprocess.run(argv, cwd=workspace, env=env, text=True, capture_output=True,
                                        timeout=check.timeout_seconds or 15, check=False)

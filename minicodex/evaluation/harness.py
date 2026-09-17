@@ -176,6 +176,7 @@ class EvaluationHarness:
             "workspace",
             ".",
         )
+        oracle_root = getattr(agent, "_benchmark_oracle_root", None)
 
         # =====================================================
         # Deterministic Checks
@@ -193,6 +194,7 @@ class EvaluationHarness:
                     check=check,
                     workspace=workspace,
                     output=output,
+                    oracle_root=oracle_root,
                 )
             )
 
@@ -422,6 +424,11 @@ class EvaluationHarness:
             and token_budget_passed
             and duration_budget_passed
         )
+        failure_category = self._failure_category(
+            passed=passed, error=error, checks_passed=checks_passed,
+            completion_ready=completion_ready, edit_count=edit_count,
+            validation_state=validation_state, metrics=execution_metrics,
+        )
 
         return EvaluationResult(
             case_id=(
@@ -511,6 +518,7 @@ class EvaluationHarness:
             redundant_reads=int(metric("redundant_reads", 0)),
             redundant_searches=int(metric("redundant_searches", 0)),
             wrong_validation_target=bool(metric("wrong_validation_target_count", 0)),
+            failure_category=failure_category,
             cost_usd=metric("cost_usd"),
             duration_seconds=(
                 duration
@@ -522,6 +530,27 @@ class EvaluationHarness:
                 case.tags
             ),
         )
+
+    @staticmethod
+    def _failure_category(*, passed, error, checks_passed, completion_ready, edit_count, validation_state, metrics):
+        if passed:
+            return None
+        if error:
+            return "environment_failure"
+        if not checks_passed and completion_ready:
+            return "false_completion"
+        if not edit_count:
+            return "no_edit"
+        reason = str(getattr(metrics, "final_reason_code", "") or "")
+        if "capability" in reason:
+            return "capability_missing"
+        if getattr(metrics, "max_steps_exhausted", False):
+            return "max_steps"
+        if int(getattr(metrics, "redundant_reads", 0) or 0) + int(getattr(metrics, "redundant_searches", 0) or 0) > 0:
+            return "repeated_inspection"
+        if not completion_ready:
+            return "validation_target_failure"
+        return "oracle_failure"
 
 
 # =============================================================
