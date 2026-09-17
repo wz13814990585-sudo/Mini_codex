@@ -43,6 +43,16 @@ class TaskCompletionPolicy:
         )
         ledger = pipeline.state
         validation_plan = getattr(ledger, "plan", ValidationPlan())
+        if validation_plan.checks:
+            required_regression = [c for c in validation_plan.checks
+                                   if c.required and c.purpose.value == "regression"]
+            requirement = (
+                RegressionRequirement.REQUIRED
+                if any(c.strength.value >= 6 for c in required_regression)
+                else RegressionRequirement.RELEVANT_ONLY
+                if required_regression
+                else RegressionRequirement.NOT_APPLICABLE
+            )
         acceptance = ledger.acceptance_passed
         if validation_plan.checks:
             acceptance_checks = [c for c in validation_plan.checks if c.required and c.purpose.value == "acceptance"]

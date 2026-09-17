@@ -19,6 +19,7 @@ class ReplaceSymbolTool(
 ):
 
     name = "replace_symbol"
+    capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
         "Replace a Python class, function, method, or async "

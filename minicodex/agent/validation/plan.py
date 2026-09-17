@@ -1,7 +1,6 @@
 """Requirement-bound verification contracts, independent of tool names."""
 from dataclasses import dataclass, replace
 from enum import IntEnum
-import re
 
 from .evidence import ValidationPurpose
 
@@ -28,6 +27,7 @@ class ValidationCheck:
     revision: int = 0
     milestone: str = "task"
     reason: str = "Prove the requested outcome independently."
+    observable: str = ""
 
 
 @dataclass(frozen=True)
@@ -42,28 +42,56 @@ class ValidationPlan:
 
 
 class ValidationPlanner:
-    def build(self, requirements, *, revision=0, profile=None, paths=(), request=""):
+    def build(self, requirements, *, revision=0, profile=None, paths=(), request="", mode=None,
+              impact=None, available_capabilities=None):
         checks = []
+        from .ladder import VerificationLadder
+        rungs = VerificationLadder().select(profile, paths, request, mode=mode, impact=impact) if profile is not None else ()
+        available = frozenset(available_capabilities or ())
+        # A browser/service check is itself the acceptance proof when this
+        # workspace has no focused test target.  Do not manufacture a second,
+        # generic behaviour check that the same runtime observation cannot prove.
+        runtime_rung = next((rung for rung in rungs
+                             if rung.strength == EvidenceStrength.RUNTIME
+                             and (not available or rung.capability in available)), None)
+        commands = dict(getattr(profile, "commands", ()) or ())
+        has_focused_test = bool(commands.get("test") or getattr(impact, "tests", ()))
         for item in requirements.items:
             structural = item.kind.value == "structural"
-            browser_runtime = (any(p.endswith(".html") for p in item.paths)
-                               and re.search(r"game|playable|keypress|keyboard|click|游戏|交互", item.description, re.I))
+            semantic = item.kind.value == "semantic"
+            runtime_acceptance = runtime_rung if not (structural or semantic or has_focused_test) else None
             checks.append(ValidationCheck(
                 id=f"V{len(checks) + 1}", requirement_ids=(item.id,),
                 purpose=(ValidationPurpose.REGRESSION if item.category.value == "regression"
                          else ValidationPurpose.ACCEPTANCE),
-                target=item.validation_target,
-                capability="validation.browser" if browser_runtime else "validation.structure" if structural else "validation.behavior",
-                strength=EvidenceStrength.RUNTIME if browser_runtime else EvidenceStrength.STRUCTURE if structural else EvidenceStrength.TARGETED,
-                revision=revision, reason=item.description,
+                capability=("validation.structure" if structural or semantic
+                            else runtime_acceptance.capability if runtime_acceptance else "validation.behavior"),
+                strength=(EvidenceStrength.STRUCTURE if structural or semantic
+                          else runtime_acceptance.strength if runtime_acceptance else EvidenceStrength.TARGETED),
+                revision=revision, milestone="work_unit" if len(paths) > 1 else "task",
+                reason=runtime_acceptance.reason if runtime_acceptance else item.description,
+                observable=item.observable,
             ))
-        if profile is not None and checks:
-            from .ladder import VerificationLadder
-            for rung in VerificationLadder().select(profile, paths, request):
-                if rung.command and rung.strength in {EvidenceStrength.LINT, EvidenceStrength.BUILD}:
-                    checks.append(ValidationCheck(f"V{len(checks) + 1}", (), ValidationPurpose.REGRESSION,
-                        target=rung.command, capability="process.run", strength=rung.strength,
-                        revision=revision, reason=rung.reason))
+        for rung in rungs:
+            if available and rung.capability not in available:
+                continue
+            if rung.strength in {EvidenceStrength.STRUCTURE, EvidenceStrength.TARGETED} and rung.purpose == ValidationPurpose.ACCEPTANCE:
+                continue
+            if rung.strength == EvidenceStrength.RUNTIME and not has_focused_test:
+                continue
+            if rung.strength == EvidenceStrength.REGRESSION and not (rung.command or getattr(impact, "tests", ())):
+                continue
+            requirement_ids = (tuple(item.id for item in requirements.items
+                                    if item.kind.value == "behavioral")
+                               if rung.strength == EvidenceStrength.RUNTIME else ())
+            if rung.strength == EvidenceStrength.RUNTIME and not requirement_ids:
+                continue
+            checks.append(ValidationCheck(
+                f"V{len(checks) + 1}", requirement_ids, rung.purpose,
+                target=rung.command if rung.capability == "process.run" else "",
+                capability=rung.capability, strength=rung.strength, revision=revision,
+                milestone="task", reason=rung.reason,
+            ))
         return ValidationPlan(tuple(checks))
 
 

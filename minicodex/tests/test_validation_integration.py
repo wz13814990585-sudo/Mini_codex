@@ -4,9 +4,6 @@ from types import SimpleNamespace
 from ..agent.validation import (
     CompletionStatus,
 )
-from ..agent.orchestration.tool_event_adapter import (
-    EDIT_TOOL_NAMES,
-)
 from ..agent.orchestration.validation_orchestrator import (
     apply_validation_evidence,
     can_complete_edit_task,
@@ -138,17 +135,10 @@ def failed_result(
 # =============================================================
 
 
-def test_all_stage8_edit_tools_are_classified():
-
-    assert (
-        EDIT_TOOL_NAMES
-        == {
-            "patch_file",
-            "replace_lines",
-            "replace_symbol",
-            "write_file",
-        }
-    )
+def test_edit_tools_declare_capability():
+    from ..tools.editing import PatchFileTool, ReplaceLinesTool, ReplaceSymbolTool, WriteFileTool
+    assert all("code.edit" in tool.capabilities for tool in
+               (PatchFileTool, ReplaceLinesTool, ReplaceSymbolTool, WriteFileTool))
 
 
 # =============================================================

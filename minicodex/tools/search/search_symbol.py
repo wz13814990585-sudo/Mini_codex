@@ -14,6 +14,7 @@ class SearchSymbolTool(
 ):
 
     name = "search_symbol"
+    capabilities = frozenset({"code.search", "code.symbol"})
 
     description = (
         "Search Python code symbols using the AST-based "

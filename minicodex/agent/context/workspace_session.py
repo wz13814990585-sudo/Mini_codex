@@ -69,8 +69,21 @@ class WorkspaceSession:
         self._fingerprint = None
         self.build_count = 0
         self.changed_paths = ()
+        self._dirty_paths: set[str] = set()
+        self._structural_dirty = False
+        self._unchanged_checks = 0
+        self.external_check_interval = 8
 
-    def refresh(self):
+    def refresh(self, *, full=False, periodic=False):
+        """Refresh dirty agent paths now; sample external changes infrequently."""
+        if self._fingerprint is not None and self._dirty_paths and not self._structural_dirty:
+            return self._refresh_dirty()
+        if self._fingerprint is not None and periodic and not full and not self._structural_dirty:
+            self._unchanged_checks += 1
+            if self._unchanged_checks < self.external_check_interval:
+                self.changed_paths = ()
+                return False
+        self._unchanged_checks = 0
         paths = []
         for base, dirs, files in os.walk(self.workspace, followlinks=False):
             dirs[:] = sorted(d for d in dirs if d not in DEFAULT_IGNORED_DIRS and not d.startswith("."))
@@ -101,11 +114,44 @@ class WorkspaceSession:
         self.build_count += 1
         self.profile = self._profile()
         self.conventions = self._scan_sources()
+        self._dirty_paths.clear()
+        self._structural_dirty = False
         return True
 
-    def invalidate(self, path):
-        self._fingerprint = None
-        self.recent_paths = tuple(dict.fromkeys((path, *self.recent_paths)))[:20]
+    def invalidate(self, path, *, structural=False):
+        """Record an owned mutation without discarding the whole session index."""
+        normalized = str(path).strip().replace("\\", "/").lstrip("./")
+        if not normalized:
+            self._structural_dirty = True
+            return
+        self._dirty_paths.add(normalized)
+        self._structural_dirty = self._structural_dirty or structural
+        self.recent_paths = tuple(dict.fromkeys((normalized, *self.recent_paths)))[:20]
+
+    def _refresh_dirty(self):
+        before = {p: (mtime, size) for p, mtime, size in self._fingerprint}
+        after = dict(before)
+        for path in self._dirty_paths:
+            try:
+                stat = (self.workspace / path).stat()
+            except OSError:
+                after.pop(path, None)
+            else:
+                after[path] = (stat.st_mtime_ns, stat.st_size)
+        changed = tuple(sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path)))
+        self._dirty_paths.clear()
+        if not changed:
+            self.changed_paths = ()
+            return False
+        self.changed_paths = changed
+        self._fingerprint = tuple(sorted((path, *facts) for path, facts in after.items()))
+        self.paths = tuple(path for path, _, _ in self._fingerprint)
+        self.revision += 1
+        self.build_count += 1
+        if any(Path(path).name in {"pyproject.toml", "package.json", "requirements.txt", "setup.py"} for path in changed):
+            self.profile = self._profile()
+        self.conventions = self._scan_sources()
+        return True
 
     def _read(self, path):
         try:

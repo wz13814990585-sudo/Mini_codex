@@ -11,6 +11,7 @@ class WriteFileTool(
 ):
 
     name = "write_file"
+    capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
         "Create a new text file or overwrite an existing "

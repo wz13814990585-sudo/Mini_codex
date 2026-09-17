@@ -87,14 +87,16 @@ def test_needs_plan_overrides_mode_default_without_changing_resource_owner():
 
 def test_requirements_extraction_and_evidence_are_revision_aware():
     llm = StubLLM({"requirements": [
-        {"description": "failed login is 401", "category": "behavior", "paths": ["auth.py"]},
-        {"description": "coverage exists", "category": "test", "paths": ["tests/test_auth.py"]},
-        {"description": "README updated", "category": "documentation", "paths": ["README.md"]},
+        {"description": "failed login is 401", "category": "behavior", "kind": "behavioral", "paths": ["auth.py"], "observable": "POST /login with invalid password returns 401"},
+        {"description": "coverage exists", "category": "test", "kind": "behavioral", "paths": ["tests/test_auth.py"], "observable": "auth coverage test passes"},
+        {"description": "README updated", "category": "documentation", "kind": "semantic", "paths": ["README.md"], "observable": "README explains token expiry"},
     ]})
     requirements = RequirementsExtractor(llm).extract(
         "Fix auth, add tests, and update README", mode=ExecutionMode.STANDARD
     )
     assert len(requirements.items) == 3
+    assert requirements.items[0].observable.endswith("401")
+    assert requirements.items[2].kind.value == "semantic"
     from minicodex.agent.validation.plan import ValidationPlanner, RequirementEvidenceResolver
     pipeline = ValidationPipeline()
     pipeline.state.plan = ValidationPlanner().build(requirements)

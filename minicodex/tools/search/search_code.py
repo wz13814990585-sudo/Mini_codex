@@ -12,6 +12,7 @@ DEFAULT_MAX_RESULTS = 40
 
 
 class SearchCodeTool(BaseTool):
+    capabilities = frozenset({"code.search"})
 
     name = "search_code"
 

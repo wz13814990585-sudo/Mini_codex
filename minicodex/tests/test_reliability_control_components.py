@@ -11,7 +11,9 @@ from ..agent.observability import ExecutionMetrics
 from ..agent.task_state import AgentPhase, TaskState
 from ..agent.routing import TaskRouter
 from ..agent.validation import ValidationOutcome
-from ..agent.validation import ValidationSelector
+from ..agent.validation import ValidatorResolver
+from ..agent.validation.plan import EvidenceStrength, ValidationCheck
+from ..agent.validation.evidence import ValidationPurpose
 from ..agent.memory import WorkingSummary
 from ..llm.types import LLMResponse, TokenUsage
 from ..evaluation.reliability_cases import BENCHMARKS, FAILURE_BENCHMARKS
@@ -65,6 +67,7 @@ class ScriptedLLM:
 
 class SequencedTestsTool(BaseTool):
     name = "run_tests"
+    capabilities = frozenset({"test.run"})
     description = "Focused tests"
     parameters = {"type": "object", "properties": {}}
 
@@ -92,6 +95,7 @@ class SequencedTestsTool(BaseTool):
 
 class NeverRunCommand(BaseTool):
     name = "run_command"
+    capabilities = frozenset({"process.run"})
     description = "Command"
     parameters = {"type": "object", "properties": {}}
 
@@ -153,7 +157,14 @@ def test_benchmark_catalog_has_required_mode_mix_and_budgets():
 
 
 def test_action_controller_is_phase_aware():
-    controller = ActionController()
+    registry = ToolRegistry()
+    registry.register(ReadFileTool("."))
+    class SearchTool:
+        name = "search_code"
+        capabilities = frozenset({"code.search"})
+    registry.register(SearchTool())
+    registry.register(SequencedTestsTool())
+    controller = ActionController(registry)
     policy = policy_for(ExecutionMode.STANDARD)
     state = TaskState(phase=AgentPhase.VALIDATING, edit_revision=1)
     controller.reset(state)
@@ -220,19 +231,18 @@ def test_dependency_resolver_declared_undeclared_and_standalone(tmp_path):
     assert standalone.standalone is True
 
 
-def test_validation_selector_has_browser_extension_point():
-    selector = ValidationSelector()
-    static = selector.select(
-        target_paths=("try_code/game.html",),
-        registered_tools={"validate_static_web"},
-    )
-    assert static.tool_name == "validate_static_web"
-    browser = selector.select(
-        target_paths=("try_code/game.html",),
-        registered_tools={"validate_static_web", "validate_browser_app"},
-        runtime_behavior=True,
-    )
-    assert browser.tool_name == "validate_browser_app"
+def test_validator_resolver_uses_check_capability(tmp_path):
+    class BrowserTool:
+        name = "browser_adapter"
+        capabilities = frozenset({"validation.browser"})
+    registry = ToolRegistry()
+    registry.register(BrowserTool())
+    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
+                            capability="validation.browser", strength=EvidenceStrength.RUNTIME,
+                            observable="Score: 1")
+    resolved = ValidatorResolver(tmp_path).resolve(check, registry=registry, paths=("game.html",))
+    assert resolved.tool_name == "browser_adapter"
+    assert resolved.arguments["validation_check"] == "V1"
 
 
 def test_working_summary_prioritizes_target_and_actionable_facts():

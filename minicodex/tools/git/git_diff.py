@@ -13,6 +13,7 @@ class GitDiffTool(
 ):
 
     name = "git_diff"
+    capabilities = frozenset({"git.inspect"})
 
     description = (
         "Inspect the current Git diff without modifying the "

@@ -322,3 +322,25 @@ rg -n 'complete_plan_step|class ValidationState|compatibility shim' minicodex/ag
   ToolEventAdapter 保留领域协调，未再创建第二套执行 Harness。
 - 离线用例规模较小，不能仅凭 555 项测试与 15 个脚本场景声称已经满足所有生产环境。
 
+## 第二轮可靠性收尾（当前 HEAD）
+
+1. 已在当前 `demo_game_try` 工作树检查 HEAD（`e96f772`），未基于旧报告假设实现。
+2. 新增 `validator_resolver.py`、`tool_result_handlers.py`、`real_vibebench.py` 与 CI workflow。
+3. 修改需求、验证、会话、编排、能力元数据及其测试；具体清单以本次 Git diff 为准。
+4. 删除过时的 `validation/selector.py`，没有保留第二套选择器。
+5. `TaskRequirement` 统一为 description/category/kind/paths/observable；提取 schema 与提示词要求相同字段。
+6. `ValidationPlanner` 将 Ladder 的可执行 rung 物化为带 capability、强度、里程碑、observable 的检查；无关 README 不加回归。
+7. `ValidatorResolver` 以缺失检查和 registry capability 选择工具/精确参数；服务命令仅在 profile 提供带 `{port}` 的安全模板时解析。
+8. `ValidationDecisionPolicy` 先返回下一条未证明的 required check；旧全量枚举只保留给无计划的窄兼容路径。
+9. `ValidationLedger` 保持证据真相；TaskState 的 validation 字段仅由验证事件投影。
+10. WorkUnit 仅在其 milestone checks 都有当前 revision 证明时完成，语法检查不会提前关闭行为工作单元。
+11. Edit/validation 的领域反应已移至独立 result handlers；adapter 只保留批次协议和事件转接。
+12. 内建工具声明 capability；registry 的 legacy 标签仅位于第三方/旧测试工具边界，编排读取 capability 而非该映射。
+13. WorkspaceSession 对 agent-owned dirty path 增量刷新，未变化回合按周期抽样外部变更，避免每次 context 全量扫描。
+14. ContextBuilder 仅提示当前 phase 的下一动作、WorkUnit、失败或缺失 check，并将历史记忆限制为 advisory 短片段。
+15. `vibebench.py` 归类为 deterministic HarnessBench；`real_vibebench.py` 要求 provider-neutral `model_factory`，CI 不调用它。
+16. 新增 GitHub Actions：安装测试依赖、pytest、compileall，且不调用实时模型。
+17. 新增/更新测试覆盖 schema、semantic docs、ladder materialization、resolver、missing check、WorkUnit、增量 session 与 opt-in RealVibeBench。
+18. 实际执行：`python -m pytest -q --tb=line`、`python -m compileall -q minicodex`、`git diff --check`。
+19. 最终结果：**559 passed in 13.23s**（服务端口测试以受控本机权限运行）；compileall 和 diff 空白检查通过。
+20. 剩余限制：没有在 CI/本次交付中运行付费真实模型；无法从安全 profile 命令推导服务启动 argv 时，resolver 会拒绝编造参数并保留该检查待模型提供精确调用。

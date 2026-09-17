@@ -16,6 +16,7 @@ class RunCommandTool(
     name = (
         "run_command"
     )
+    capabilities = frozenset({"process.run"})
 
     description = (
         "Run a shell command inside the current project "

@@ -12,12 +12,13 @@ from minicodex.agent.editing.edit_intent import EditIntent, DiffQualityGate, ver
 from minicodex.agent.editing.edit_verifier import DEFER_SYNTAX, EditVerifier
 from minicodex.agent.editing.checkpoint import CheckpointManager
 from minicodex.agent.editing.rollback import RollbackEngine
-from minicodex.agent.editing.work_unit import WorkUnit
+from minicodex.agent.editing.work_unit import WorkUnit, WorkUnitStatus
 from minicodex.agent.planning.requirements import TaskRequirement, TaskRequirements, RequirementCategory
 from minicodex.agent.runtime.managed_process import ManagedProcess
 from minicodex.agent.task_state import TaskRuntime, TaskState, RuntimeEvent, RuntimeEventType, reduce_task_state
 from minicodex.agent.validation.plan import ValidationPlanner, RequirementEvidenceResolver
 from minicodex.agent.validation.pipeline import ValidationPipeline
+from minicodex.agent.validation.evidence import ValidationOutcome
 from minicodex.agent.validation.ladder import VerificationLadder
 from minicodex.agent.validation.plan import EvidenceStrength
 from minicodex.agent.validation.regression_policy import RegressionPolicy, RegressionRequirement
@@ -45,7 +46,8 @@ def test_one_check_cannot_satisfy_another_requirement():
     RequirementEvidenceResolver().resolve(requirements, pipeline.state)
     assert requirements.items[0].satisfied and not requirements.items[1].satisfied
     from minicodex.agent.validation.decision_policy import ValidationDecisionPolicy
-    assert ValidationDecisionPolicy(pipeline.state).next_action().value == "run_acceptance_validation"
+    assert ValidationDecisionPolicy(pipeline.state).next_action().value == "run_check"
+    assert ValidationDecisionPolicy(pipeline.state).next_required_check().id == "V2"
 
 
 def test_two_independent_checks_required_and_current():
@@ -146,7 +148,7 @@ def test_revision_changing_validator_requires_a_fresh_check():
 
 
 def test_workunit_allows_temporary_syntax_but_is_bounded():
-    unit = WorkUnit("W1", ("a.py", "b.py"), 0, max_edits=2)
+    unit = WorkUnit("W1", (), ("a.py", "b.py"), 0, edit_budget=2)
     token = DEFER_SYNTAX.set(unit.permits_intermediate_syntax)
     try:
         assert not EditVerifier.validate_candidate(Path("a.py"), "def x(")
@@ -159,7 +161,20 @@ def test_workunit_allows_temporary_syntax_but_is_bounded():
 
 
 def test_single_file_edit_does_not_defer_syntax():
-    assert not WorkUnit("W1", ("a.py",), 0).permits_intermediate_syntax
+    assert not WorkUnit("W1", (), ("a.py",), 0).permits_intermediate_syntax
+
+
+def test_workunit_closes_only_after_its_milestone_proofs():
+    state = TaskState(target_paths=("model.py", "service.py"), requirement_ids=("R1",))
+    state = reduce_task_state(state, RuntimeEvent.create(RuntimeEventType.EDIT_APPLIED,
+        edit_revision=1, path="model.py", milestone_check_ids=("V1",)))
+    assert state.work_unit.status == WorkUnitStatus.OPEN
+    state = reduce_task_state(state, RuntimeEvent.create(RuntimeEventType.VALIDATION_OBSERVED,
+        outcome=ValidationOutcome.PASSED, workunit_all_milestones_resolved=None))
+    assert state.work_unit.status == WorkUnitStatus.VALIDATING
+    state = reduce_task_state(state, RuntimeEvent.create(RuntimeEventType.VALIDATION_OBSERVED,
+        outcome=ValidationOutcome.PASSED, workunit_all_milestones_resolved=True))
+    assert state.work_unit.status == WorkUnitStatus.COMPLETED
 
 
 def test_python_profile_and_conventions(tmp_path):
@@ -191,6 +206,23 @@ def test_js_profile_and_commands(tmp_path):
     assert not pipeline.state.targeted_passed
 
 
+def test_ladder_turns_required_rungs_into_plan_checks(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies=["pytest", "fastapi"]\n[tool.ruff]\n')
+    (tmp_path / "auth.py").write_text("def login(): pass\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_auth.py").write_text("def test_login(): pass\n")
+    session = WorkspaceSession(tmp_path)
+    session.refresh()
+    requirements = TaskRequirements([TaskRequirement("R1", "invalid login", paths=("auth.py",),
+        observable="POST /login with invalid password returns 401")])
+    plan = ValidationPlanner().build(requirements, profile=session.profile, paths=("auth.py",), request="Fix auth API login")
+    assert {check.strength for check in plan.checks} >= {EvidenceStrength.TARGETED, EvidenceStrength.REGRESSION, EvidenceStrength.RUNTIME}
+    readme = ValidationPlanner().build(TaskRequirements([TaskRequirement("R1", "update README", RequirementCategory.DOCUMENTATION,
+        paths=("README.md",), observable="README explains token expiry")]), profile=session.profile,
+        paths=("README.md",), request="Document token expiry")
+    assert [check.strength for check in readme.checks] == [EvidenceStrength.STRUCTURE]
+
+
 def test_session_reuses_knowledge_but_invalidates_external_changes(tmp_path):
     (tmp_path / "app.py").write_text("x = 1\n")
     session = WorkspaceSession(tmp_path)
@@ -201,6 +233,16 @@ def test_session_reuses_knowledge_but_invalidates_external_changes(tmp_path):
     assert session.refresh()
     assert session.build_count == 2
     assert not any(name in vars(session) for name in ("requirements", "plan", "validation", "blocker", "recovery"))
+
+
+def test_session_skips_full_scan_on_unchanged_periodic_turn(tmp_path):
+    (tmp_path / "app.py").write_text("x = 1\n")
+    session = WorkspaceSession(tmp_path)
+    session.refresh(full=True)
+    builds = session.build_count
+    for _ in range(session.external_check_interval - 1):
+        assert not session.refresh(periodic=True)
+    assert session.build_count == builds
 
 
 def test_navigation_is_bounded_and_finds_dependents(tmp_path):
@@ -253,6 +295,7 @@ def test_external_mutation_invalidates_task_evidence(tmp_path):
     RequirementEvidenceResolver().resolve(requirements, pipeline.state)
     assert requirements.all_satisfied
     (tmp_path / "app.py").write_text("VALUE = 22\n")
+    agent.workspace_session.external_check_interval = 1
     agent.refresh_workspace_facts()
     assert pipeline.state.edit_revision == agent.task_state.edit_revision == 1
     assert pipeline.state.proof("V1") is None
@@ -404,6 +447,12 @@ def test_vibebench_executes_real_workspace_scenarios(tmp_path):
     assert summary.total_cases == 15
     assert all(r.passed for r in summary.results), [(r.case_id, r.error, r.final_completion_reason) for r in summary.results if not r.passed]
     assert summary.vibe_metrics()["false_completion_rate"] == 0
+
+
+def test_real_vibebench_is_provider_opt_in(tmp_path):
+    from minicodex.evaluation.real_vibebench import run_real_vibebench
+    with pytest.raises(ValueError, match="model_factory"):
+        run_real_vibebench(tmp_path, model_factory=None)
 
 
 def test_followup_reuses_session_without_task_evidence(tmp_path):

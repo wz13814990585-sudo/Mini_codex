@@ -13,6 +13,7 @@ class GitStatusTool(
 ):
 
     name = "git_status"
+    capabilities = frozenset({"git.inspect"})
 
     description = (
         "Inspect the current Git repository state, including "

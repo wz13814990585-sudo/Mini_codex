@@ -13,6 +13,7 @@ from ..tools.editing import WriteFileTool
 
 class StaticPassTool(BaseTool):
     name = "validate_browser_app"
+    capabilities = frozenset({"validation.browser"})
     description = "Validate a static page."
     parameters = {
         "type": "object",

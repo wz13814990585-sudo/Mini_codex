@@ -87,6 +87,8 @@ class ValidationNextAction(
         "run_full_validation"
     )
 
+    RUN_CHECK = "run_check"
+
     INVESTIGATE_INCONCLUSIVE = (
         "investigate_inconclusive"
     )

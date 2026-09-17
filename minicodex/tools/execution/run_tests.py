@@ -31,6 +31,7 @@ class RunTestsTool(
     name = (
         "run_tests"
     )
+    capabilities = frozenset({"test.run"})
 
     description = (
         "Run Python tests using pytest inside the MiniCodex "

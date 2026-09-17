@@ -35,27 +35,19 @@ class ToolMetadata:
 
 
 class ToolRegistry:
-
-    _NAME_CAPABILITIES = {
-        "list_files": {"filesystem.read"},
-        "read_file": {"filesystem.read", "file.read"},
-        "search_code": {"code.search"},
-        "search_symbol": {"code.search"},
-        "write_file": {"filesystem.write", "code.edit"},
-        "patch_file": {"filesystem.write", "code.edit"},
-        "replace_lines": {"filesystem.write", "code.edit"},
-        "replace_symbol": {"filesystem.write", "code.edit"},
-        "run_command": {"process.run"},
-        "run_tests": {"test.run"},
-        "validate_static_web": {"validation.static_web"},
-        "validate_browser_app": {"validation.browser"},
-        "validate_service": {"service.validate"},
-        "install_python_package": {"dependency.install"},
-        "git_status": {"git.inspect"},
-        "git_diff": {"git.inspect"},
-        "replan": {"plan.control"},
+    # Production built-ins declare capabilities themselves. This adapter only
+    # labels legacy third-party/test tools at the registry boundary; callers
+    # consume the resulting capability, never this table.
+    _LEGACY_CAPABILITIES = {
+        "list_files": {"filesystem.read"}, "read_file": {"filesystem.read", "file.read"},
+        "search_code": {"code.search"}, "search_symbol": {"code.search", "code.symbol"},
+        "write_file": {"filesystem.write", "code.edit"}, "patch_file": {"filesystem.write", "code.edit"},
+        "replace_lines": {"filesystem.write", "code.edit"}, "replace_symbol": {"filesystem.write", "code.edit"},
+        "run_command": {"process.run"}, "run_tests": {"test.run"},
+        "validate_static_web": {"validation.static_web"}, "validate_browser_app": {"validation.browser"},
+        "validate_service": {"service.validate"}, "install_python_package": {"dependency.install"},
+        "git_status": {"git.inspect"}, "git_diff": {"git.inspect"}, "replan": {"plan.control"},
     }
-
     def __init__(self):
         self._tools: dict[str, BaseTool] = {}
 
@@ -82,7 +74,19 @@ class ToolRegistry:
     def capabilities_for(self, tool_or_name) -> frozenset[str]:
         tool = self.get(tool_or_name) if isinstance(tool_or_name, str) else tool_or_name
         declared = frozenset(getattr(tool, "capabilities", ()) or ())
-        return declared or frozenset(self._NAME_CAPABILITIES.get(tool.name, ()))
+        return declared or frozenset(self._LEGACY_CAPABILITIES.get(tool.name, ()))
+
+    def tool_names_for_capability(self, capability: str) -> tuple[str, ...]:
+        """Return registered tools that explicitly provide one capability."""
+        return tuple(name for name in self._tools if capability in self.capabilities_for(name))
+
+    @property
+    def available_capabilities(self) -> frozenset[str]:
+        return frozenset(
+            capability
+            for name in self._tools
+            for capability in self.capabilities_for(name)
+        )
 
     def metadata_for(self, tool_or_name) -> ToolMetadata:
         """Return backend-neutral execution metadata for local or future tools."""

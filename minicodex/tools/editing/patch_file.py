@@ -15,6 +15,7 @@ class PatchFileTool(
 ):
 
     name = "patch_file"
+    capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
         "Replace an exact unique block of text inside an "

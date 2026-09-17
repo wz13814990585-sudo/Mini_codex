@@ -72,6 +72,7 @@ class _StaticWebParser(HTMLParser):
 
 class ValidateStaticWebTool(BaseTool):
     name = "validate_static_web"
+    capabilities = frozenset({"validation.static_web"})
 
     description = (
         "Deterministically validate one static HTML file. It parses "

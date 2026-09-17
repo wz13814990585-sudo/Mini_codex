@@ -14,6 +14,7 @@ from ...tools.editing import WriteFileTool
 
 class StaticPassTool(BaseTool):
     name = "validate_static_web"
+    capabilities = frozenset({"validation.static_web"})
     description = "Validate static web"
     parameters = {
         "type": "object",
@@ -31,6 +32,7 @@ class StaticPassTool(BaseTool):
 
 class BrowserPassTool(StaticPassTool):
     name = "validate_browser_app"
+    capabilities = frozenset({"validation.browser"})
     description = "Scripted browser behavior assertions passed."
 
 
@@ -88,6 +90,7 @@ class BatchMessage:
 
 class CountingTool(BaseTool):
     name = "git_diff"
+    capabilities = frozenset({"git.inspect"})
     description = "Diff"
     parameters = {"type": "object", "properties": {}}
 
@@ -101,6 +104,7 @@ class CountingTool(BaseTool):
 
 class AcceptanceCommandTool(BaseTool):
     name = "run_command"
+    capabilities = frozenset({"process.run"})
     description = "Run acceptance command"
     parameters = {
         "type": "object",
@@ -120,6 +124,7 @@ class AcceptanceCommandTool(BaseTool):
 
 class AcceptanceTestsTool(BaseTool):
     name = "run_tests"
+    capabilities = frozenset({"test.run"})
     description = "Run targeted tests"
     parameters = {
         "type": "object",

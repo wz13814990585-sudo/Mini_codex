@@ -68,30 +68,17 @@ def acceptance_evidence_reminder(
     request = str(getattr(agent, "active_user_request", "") or "")
     candidates.extend(re.findall(r"[\w./\\-]+\.html\b", request, re.IGNORECASE))
 
-    selector = getattr(agent, "validation_selector", None)
-    if selector is not None:
-        selection = selector.select(
-            target_paths=tuple(dict.fromkeys(candidates)),
-            registered_tools=registered,
-            revision=getattr(getattr(agent, "workspace_session", None), "revision", 0),
-            desired_purpose="acceptance",
-            runtime_behavior=any(
-                marker in request.casefold()
-                for marker in ("game", "playable", "click", "keyboard", "游戏", "可玩", "点击", "键盘")
-            ),
-        )
+    resolver = getattr(agent, "validator_resolver", None)
+    ledger = getattr(getattr(agent, "validation_pipeline", None), "state", None)
+    if resolver is not None and ledger is not None:
+        check = next((c for c in ledger.plan.checks if c.required and not ledger.proof(c.id)
+                      and c.purpose.value == "acceptance"), None)
+        selection = resolver.resolve(check, registry=registry,
+                                     profile=getattr(getattr(agent, "workspace_session", None), "profile", None),
+                                     paths=tuple(dict.fromkeys(candidates)),
+                                     revision=getattr(getattr(agent, "workspace_session", None), "revision", 0)) if check else None
         if selection is not None:
-            if selection.tool_name == "validate_static_web":
-                return prefix + (
-                    "Obtain targeted acceptance evidence for the CURRENT edit revision "
-                    f"with validate_static_web(path={selection.path!r})."
-                )
-            if selection.tool_name == "run_tests":
-                if selection.purpose == "acceptance":
-                    return prefix + (
-                        "Run the resolved focused acceptance test with "
-                        f"run_tests(path={selection.path!r}, purpose='acceptance')."
-                    )
+            return prefix + f"Run {selection.tool_name} with {selection.arguments!r}; it resolves {check.id}."
 
     html = next((path for path in candidates if path.lower().endswith(".html")), None)
     if html and "validate_static_web" in registered:
@@ -238,7 +225,8 @@ class ValidationOrchestrator:
             agent.recovery.mark_progress()
             print("\n[Meaningful Progress Detected]")
 
-        next_action = ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(evidence)
+        decision_policy = ValidationDecisionPolicy(agent.validation_pipeline.state)
+        next_action = decision_policy.next_action(evidence)
         print("\n[Validation Policy]")
         print(f"Next action: {next_action.value}")
         ordinary = validation_transition(
@@ -246,6 +234,7 @@ class ValidationOrchestrator:
             next_action=next_action,
             stalled=progress.stalled,
             acceptance_reminder=acceptance_evidence_reminder(agent),
+            next_check=decision_policy.next_required_check(),
         )
         if ordinary is not None:
             return ordinary

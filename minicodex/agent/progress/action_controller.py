@@ -15,22 +15,6 @@ class ActionController:
     concrete blocker.
     """
 
-    INSPECTION_TOOLS = frozenset(
-        {
-            "read_file",
-            "search_code",
-            "search_symbol",
-            "list_files",
-            "git_status",
-            "git_diff",
-        }
-    )
-    EDIT_TOOLS = frozenset(
-        {"write_file", "patch_file", "replace_lines", "replace_symbol"}
-    )
-    VALIDATION_TOOLS = frozenset(
-        {"validate_static_web", "validate_browser_app", "run_tests"}
-    )
     INSTRUCTION = (
         "You have enough context. Make a concrete edit, run the required "
         "validation, or report a concrete blocker."
@@ -44,7 +28,7 @@ class ActionController:
         from ...tools.registry import ToolRegistry
         if self.registry is not None and name in getattr(self.registry, "_tools", {}):
             return self.registry.capabilities_for(name)
-        return frozenset(ToolRegistry._NAME_CAPABILITIES.get(name, ()))
+        return frozenset(ToolRegistry._LEGACY_CAPABILITIES.get(name, ()))
 
     def _inspection(self, name):
         return bool(self._capabilities(name) & {"filesystem.read", "code.search", "git.inspect"})
@@ -143,7 +127,7 @@ class ActionController:
 
         self.current_mode = getattr(policy, "mode", None)
         capabilities = self._capabilities(tool_name)
-        is_read = tool_name == "read_file" or "file.read" in capabilities
+        is_read = "file.read" in capabilities
 
         if self.phase == AgentPhase.FINALIZING and self._inspection(tool_name):
             return (
@@ -178,7 +162,7 @@ class ActionController:
             return "FAST mode is planless; replan is unavailable."
 
         if (
-            tool_name == "run_tests"
+            "test.run" in capabilities
             and str((arguments or {}).get("purpose", "regression")).lower()
             == "regression"
             and str((arguments or {}).get("path", ".")).strip() in {"", ".", "./"}
@@ -233,3 +217,8 @@ class ActionController:
         if self.phase in {AgentPhase.VALIDATING, AgentPhase.FINALIZING}:
             return 0
         return configured
+    # Kept as compatibility-facing classification constants for metrics. Core
+    # control decisions below use registry capabilities instead.
+    INSPECTION_TOOLS = frozenset({"read_file", "search_code", "search_symbol", "list_files", "git_status", "git_diff"})
+    EDIT_TOOLS = frozenset({"write_file", "patch_file", "replace_lines", "replace_symbol"})
+    VALIDATION_TOOLS = frozenset({"validate_static_web", "validate_browser_app", "run_tests"})

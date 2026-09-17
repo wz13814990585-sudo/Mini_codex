@@ -109,6 +109,8 @@ class ValidationPipeline:
             check_id = candidates[0].id
         check = next((c for c in candidates if c.id == check_id), None)
         strength = 2
+        if tool_name == "run_tests" and evidence.purpose == ValidationPurpose.REGRESSION:
+            strength = 6 if evidence.scope == ValidationScope.FULL else 3
         if tool_name == "validate_static_web":
             strength = int(result.data.get("evidence_strength", 0))
         elif tool_name == "validate_browser_app":

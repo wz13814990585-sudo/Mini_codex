@@ -50,9 +50,8 @@ class ValidationDecisionPolicy:
                 .FIX_FAILURE
             )
 
-        missing = [c for c in self.state.plan.checks if c.required and not self.state.proof(c.id)]
-        if any(c.purpose.value == "acceptance" for c in missing):
-            return ValidationNextAction.RUN_ACCEPTANCE_VALIDATION
+        if self.next_required_check() is not None:
+            return ValidationNextAction.RUN_CHECK
 
         if not (
             self.state.has_edit
@@ -94,6 +93,11 @@ class ValidationDecisionPolicy:
         return (
             ValidationNextAction.NONE
         )
+
+    def next_required_check(self):
+        """Canonical policy answer: the first current proof obligation still open."""
+        return next((check for check in self.state.plan.checks
+                     if check.required and self.state.proof(check.id) is None), None)
 
     # =========================================================
     # Current Full Regression Evidence

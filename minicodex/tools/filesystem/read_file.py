@@ -11,6 +11,7 @@ DEFAULT_READ_LIMIT = 200
 class ReadFileTool(BaseTool):
 
     name = "read_file"
+    capabilities = frozenset({"filesystem.read", "file.read"})
 
     description = (
         "Read the contents of a text file from the current project. "

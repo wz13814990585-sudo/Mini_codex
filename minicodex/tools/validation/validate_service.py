@@ -1,6 +1,7 @@
 """Run and probe a local application, always cleaning up the owned process group."""
 from pathlib import Path
 import shlex
+import socket
 
 from ..base import BaseTool
 from ..results import ToolResult
@@ -32,6 +33,11 @@ class ValidateServiceTool(BaseTool):
             return ToolResult(False, "Service command blocked", {"failure_type": "safety_blocked"}, error=decision.reason)
         if not expected_text and expected_status is None:
             return ToolResult(False, "An observable response assertion is required", {})
+        if int(port) == 0:
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+        argv = [str(part).replace("{port}", str(port)) for part in argv]
         service = ManagedProcess(self.workspace, argv, port=port, timeout=timeout)
         try:
             with service:

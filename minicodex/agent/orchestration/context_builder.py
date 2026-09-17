@@ -1,14 +1,13 @@
-"""Build phase-specific context from deterministic agent state."""
+"""Build phase-specific context from deterministic task facts."""
 
 from __future__ import annotations
 
 from ..editing import EditStrategyHint
 from ..task_state import AgentPhase
-from ..validation.ladder import VerificationLadder
 
 
 class ContextBuilder:
-    """Build small phase-specific context from current deterministic state."""
+    """Keep the model focused on the single next useful action."""
 
     def __init__(self, edit_strategy: EditStrategyHint | None = None) -> None:
         self.edit_strategy = edit_strategy or EditStrategyHint()
@@ -25,118 +24,60 @@ class ContextBuilder:
             refresh()
         state = agent.task_progress_state(remaining_agent_steps)
         targets = tuple(state.relevant_paths or state.target_paths)
-        target_text = ", ".join(targets) if targets else "not explicit"
+        ledger = agent.validation_pipeline.state
+        missing = tuple(check for check in ledger.plan.checks if check.required and not ledger.proof(check.id))
+        next_check = missing[0] if missing else None
         sections = [
             f"Task: {state.user_request or getattr(agent, 'active_user_request', '')}",
-            f"Intent: {state.intent.value}. Mode: {state.mode.value if state.mode else 'unknown'}. Phase: {state.phase.value}.",
-            f"Targets: {target_text}. Remaining steps: {remaining_agent_steps}.",
-            (
-                "Current evidence: "
-                f"edit_revision={state.edit_revision}; "
-                f"acceptance={state.acceptance_passed}; "
-                f"relevant_regression={state.relevant_validation_passed}; "
-                f"full_regression={state.full_validation_passed}."
-            ),
-            (
-                "Authority: current workspace/tool evidence > explicit request > "
-                "current runtime state > current validation > memory > assumptions."
-            ),
+            f"Phase: {state.phase.value}; targets: {', '.join(targets) or 'not explicit'}; remaining steps: {remaining_agent_steps}.",
+            "Authority: current workspace/tool evidence > explicit request > runtime projection > memory > assumptions.",
         ]
-        requirements = getattr(agent, "task_requirements", None)
-        if state.work_unit and not state.work_unit.closed:
-            unit = state.work_unit
-            sections.append(f"WorkUnit {unit.id}: {unit.edited_paths}; edits={unit.edits}/{unit.max_edits}. "
-                            "Finish cohesive related edits, then validate the milestone.")
+        unit = state.work_unit
+        if unit and not unit.closed:
+            sections.append(f"WorkUnit {unit.id}: paths={unit.edited_paths}; edits={unit.edits}/{unit.max_edits}; "
+                            f"milestones={', '.join(unit.milestone_check_ids) or 'pending resolution'}.")
         session = getattr(agent, "workspace_session", None)
-        if session is not None:
-            sections.append(session.render(targets))
-            sections.append("Verification ladder: " + "; ".join(
-                f"{r.strength.name}: {r.command or r.reason}"
-                for r in VerificationLadder().select(session.profile, targets, state.user_request)))
-        ledger = agent.validation_pipeline.state
-        if ledger.plan.checks:
-            sections.append("Verification contracts (supply validation_check on each validation call):\n" + "\n".join(
-                f"- {c.id} -> {','.join(c.requirement_ids)}: {c.reason}; "
-                f"target={c.target or 'choose a specific observable assertion'}; "
-                f"{'proven' if ledger.proof(c.id) else 'missing current proof'}"
-                for c in ledger.plan.checks))
-        if requirements is not None and requirements.items:
-            sections.append(
-                "Current task requirements:\n" + "\n".join(
-                    f"- {item.id} [{'satisfied' if item.satisfied else 'open'}]: {item.description}"
-                    for item in requirements.items[:12]
-                )
-            )
-        if current_plan_step is not None:
-            criteria = tuple(getattr(current_plan_step, "acceptance_criteria", ()) or ())
-            expected = tuple(getattr(current_plan_step, "expected_targets", ()) or ())
-            sections.append(
-                "Current plan outcome: "
-                f"{current_plan_step.id}. {current_plan_step.description}\n"
-                f"Expected targets: {', '.join(expected) if expected else 'not specified'}\n"
-                f"Acceptance criteria: {criteria if criteria else 'semantic/current validation'}"
-            )
-        summary = agent.working_summary.render_relevant(targets, max_items=8)
-
         if state.phase == AgentPhase.INSPECTING:
-            sections.append("Inspect only the minimum target code needed to decide the next action.")
+            sections.append("Locate → expand → read only the smallest relevant code before acting.")
             repo_fragment = str(getattr(agent, "repo_map_text", "") or "")[:1800]
             if repo_fragment:
                 sections.append("Repository map:\n" + repo_fragment)
         elif state.phase == AgentPhase.ACTING:
-            target = targets[0] if targets else None
-            sections.append(self.edit_strategy.render(agent.workspace, target))
+            sections.append(self.edit_strategy.render(agent.workspace, targets[0] if targets else None))
+            if session is not None:
+                sections.append("Observed conventions: " + (", ".join(session.conventions.observations[:4]) or "follow nearby code") + ".")
         elif state.phase == AgentPhase.VALIDATING:
-            acceptance_missing = any(c.required and c.purpose.value == "acceptance" and not ledger.proof(c.id)
-                                     for c in ledger.plan.checks) if ledger.plan.checks else not state.acceptance_passed
-            registered = set(getattr(agent.registry, "_tools", {}) or {})
-            selection = agent.validation_selector.select(
-                target_paths=targets,
-                registered_tools=registered,
-                runtime_behavior=self._runtime_behavior_requested(agent),
-                revision=session.revision if session is not None else state.edit_revision,
-                desired_purpose=(
-                    "acceptance" if acceptance_missing else "regression"
-                ),
-            )
-            recommendation = (
-                f"Run {selection.tool_name}"
-                + (f" on {selection.path}" if selection.path else "")
-                + f" as {selection.purpose}."
-                if selection
-                else "Obtain the missing targeted validation evidence."
-            )
-            sections.append("Validation recommendation: " + recommendation)
+            if next_check is None:
+                sections.append("No required validation check remains.")
+            else:
+                resolver = getattr(agent, "validator_resolver", None)
+                recommendation = resolver.resolve(
+                    next_check, registry=agent.registry,
+                    profile=session.profile if session else None, paths=targets,
+                    revision=session.revision if session else state.edit_revision,
+                ) if resolver else None
+                action = (f"Run {recommendation.tool_name} with {recommendation.arguments!r}."
+                          if recommendation else "Inspect only enough to resolve this exact check; do not substitute another one.")
+                sections.append(f"Next required check {next_check.id}: {next_check.observable or next_check.reason}; "
+                                f"strength={next_check.strength.name}; capability={next_check.capability}. {action}")
         elif state.phase == AgentPhase.FIXING:
-            evidence = getattr(agent.validation_pipeline.state, "latest_evidence", None)
+            evidence = ledger.latest_evidence
             details = getattr(evidence, "details", {}) or {}
-            failure_paths = tuple(details.get("failure_paths", ()))
-            sections.append(
-                "Latest failure paths: "
-                + (", ".join(failure_paths) if failure_paths else "use the current validation target")
-                + ". Recover locally before broad search or replanning."
-            )
+            paths = tuple(details.get("failure_paths", ()))
+            sections.append(f"Failing check: {getattr(evidence, 'check_id', '') or 'unbound'}; "
+                            f"failure paths: {', '.join(paths) if paths else 'current validation target'}. "
+                            "Recover locally before broad search.")
         elif state.phase == AgentPhase.FINALIZING:
-            decision = agent.completion_policy.evaluate(agent)
-            sections.append("Only the remaining completion requirement matters: " + decision.reason)
-
+            sections.append("Remaining required checks: " + (", ".join(check.id for check in missing) or "none") + ".")
+        if current_plan_step is not None and state.phase in {AgentPhase.ACTING, AgentPhase.FIXING}:
+            sections.append(f"Current plan outcome: {current_plan_step.id}. {current_plan_step.description}")
+        summary = agent.working_summary.render_relevant(targets, max_items=4)
         if summary:
-            sections.append("Recent relevant facts:\n" + summary[-2200:])
-        retrieved = getattr(agent, "_retrieved_long_term_memory", ()) or ()
-        store = getattr(agent, "long_term_memory_store", None)
-        if retrieved and store is not None:
-            try:
-                memory_text = str(store.render_retrieved(retrieved) or "").strip()
-            except Exception:
-                memory_text = ""
-            if memory_text:
-                sections.append("Advisory prior-task memory:\n" + memory_text[-1800:])
+            sections.append("Recent relevant facts:\n" + summary[-1200:])
+        memory_store = getattr(agent, "long_term_memory_store", None)
+        retrieved = getattr(agent, "_retrieved_long_term_memory", ())
+        if memory_store is not None and retrieved:
+            advisory = memory_store.render_retrieved(retrieved)
+            if advisory:
+                sections.append("Advisory prior-task memory:\n" + str(advisory)[:500])
         return "\n\n".join(sections).strip() + "\n"
-
-    @staticmethod
-    def _runtime_behavior_requested(agent) -> bool:
-        text = str(getattr(agent, "active_user_request", "") or "").casefold()
-        return any(marker in text for marker in (
-            "game", "playable", "click", "keypress", "keyboard", "interaction",
-            "游戏", "可玩", "点击", "键盘", "交互",
-        ))

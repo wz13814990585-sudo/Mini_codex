@@ -22,7 +22,7 @@ from .validation import (
     RelevantPathResolver,
     TaskCompletionPolicy,
     ValidationPipeline,
-    ValidationSelector,
+    ValidatorResolver,
     SemanticRegressionJudge,
 )
 from .dependency import DependencyResolver
@@ -61,7 +61,7 @@ from .safety import (
 )
 from .task_state import AgentPhase, RuntimeEventType, TaskRuntime, TaskState
 from .validation.plan import ValidationPlanner
-from .context.workspace_session import WorkspaceSession
+from .context.workspace_session import ChangeImpactResolver, WorkspaceSession
 from .memory import (
     WorkingSummary,
 )
@@ -347,7 +347,7 @@ class MiniCodexAgent:
         self.latest_dependency_resolution = None
         self.latest_symbol_recovery_paths: tuple[str, ...] = ()
         self.relevant_path_resolver = RelevantPathResolver(self.workspace)
-        self.validation_selector = ValidationSelector(self.workspace, test_index=self.workspace_session.test_index)
+        self.validator_resolver = ValidatorResolver(self.workspace, test_index=self.workspace_session.test_index)
         for tool in getattr(self.registry, "_tools", {}).values():
             if hasattr(tool, "symbol_index"):
                 tool.symbol_index = self.workspace_session.symbol_index
@@ -566,7 +566,8 @@ class MiniCodexAgent:
     def refresh_workspace_facts(self):
         session = self.workspace_session
         external_candidate = session._fingerprint is not None
-        if session.refresh() and external_candidate and self.task_state.run_id:
+        owned_dirty = bool(getattr(session, "_dirty_paths", ()))
+        if session.refresh(periodic=True) and external_candidate and not owned_dirty and self.task_state.run_id:
             revision = self.validation_pipeline.record_edit(owned=False)
             self.task_requirements.invalidate_revision(revision)
             self.working_summary.advance_revision(revision)
@@ -589,6 +590,10 @@ class MiniCodexAgent:
                 self.workspace_session.invalidate(path)
         return result
 
+    def check_completion_after_batch(self):
+        """Completion ownership stays with CompletionHandler, not batch protocol."""
+        return self.completion_handler.check_after_batch(self)
+
     def _run_impl(
         self,
         user_input: str,
@@ -599,7 +604,7 @@ class MiniCodexAgent:
         self.active_user_request = (
             user_input
         )
-        self.workspace_session.refresh()
+        self.workspace_session.refresh(full=True)
 
         self.active_plan = None
 
@@ -676,9 +681,14 @@ class MiniCodexAgent:
         self.execution_metrics.record_requirements(
             self.requirements_extractor.last_telemetry
         )
+        change_impact = ChangeImpactResolver().resolve(
+            self.workspace_session, getattr(self.execution_route, "target_paths", ())
+        )
         self.validation_pipeline.state.plan = ValidationPlanner().build(
             self.task_requirements, profile=self.workspace_session.profile,
-            paths=getattr(self.execution_route, "target_paths", ()), request=user_input)
+            paths=getattr(self.execution_route, "target_paths", ()), request=user_input,
+            mode=self.execution_policy.mode, impact=change_impact,
+            available_capabilities=getattr(self.registry, "available_capabilities", ()))
         self.runtime_control.reset(planning_active=False)
         self.runtime_control.control_llm_calls = (
             self.execution_metrics.routing_llm_calls
@@ -875,8 +885,8 @@ class MiniCodexAgent:
         allowed = getattr(policy, "exposed_tool_names", None)
         if allowed is None:
             return schemas
-        from ..tools.registry import ToolRegistry
-        allowed_capabilities = set().union(*(ToolRegistry._NAME_CAPABILITIES.get(name, set()) for name in allowed))
+        allowed_capabilities = set().union(*(self.registry.capabilities_for(name)
+                                              for name in allowed if name in getattr(self.registry, "_tools", {})))
         return [
             schema
             for schema in schemas
@@ -886,21 +896,12 @@ class MiniCodexAgent:
         ]
 
     def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
-        """Filter capabilities, with a fallback for minimal registries."""
-
+        """Filter through tool-owned capability declarations."""
         try:
             return self.registry.get_schemas(capabilities=capabilities)
         except TypeError:
-            from ..tools.registry import ToolRegistry
-
-            schemas = self.registry.get_schemas()
-            fallback = getattr(ToolRegistry, "_NAME_CAPABILITIES", {})
-            return [
-                schema
-                for schema in schemas
-                if set(fallback.get(schema.get("function", {}).get("name"), ()))
-                & capabilities
-            ]
+            # Minimal test/third-party registries may predate capability filtering.
+            return self.registry.get_schemas()
 
     # =========================================================
     # Repository Map Refresh

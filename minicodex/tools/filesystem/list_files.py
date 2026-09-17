@@ -6,6 +6,7 @@ from ..results import ToolResult
 
 
 class ListFilesTool(BaseTool):
+    capabilities = frozenset({"filesystem.read"})
 
     name = "list_files"
 

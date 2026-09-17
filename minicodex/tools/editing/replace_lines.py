@@ -13,6 +13,7 @@ class ReplaceLinesTool(
 ):
 
     name = "replace_lines"
+    capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
         "Replace an exact line range in an existing text file. "

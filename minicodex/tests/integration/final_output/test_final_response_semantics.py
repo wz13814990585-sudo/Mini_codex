@@ -60,6 +60,7 @@ class ScriptedLLM:
 
 class StaticValidator(BaseTool):
     name = "validate_static_web"
+    capabilities = frozenset({"validation.static_web"})
     description = "Validate static HTML"
     parameters = {"type": "object", "properties": {"path": {"type": "string"}}}
 

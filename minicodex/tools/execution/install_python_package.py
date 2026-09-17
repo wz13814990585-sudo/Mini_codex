@@ -30,6 +30,7 @@ IMPORT_NAME_PATTERN = re.compile(
 
 
 class InstallPythonPackageTool(BaseTool):
+    capabilities = frozenset({"dependency.install"})
     """Install one package without exposing a shell command surface."""
 
     name = "install_python_package"

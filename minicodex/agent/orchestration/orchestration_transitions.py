@@ -69,6 +69,7 @@ def validation_transition(
     next_action: ValidationNextAction,
     stalled: bool,
     acceptance_reminder: str,
+    next_check=None,
 ) -> ControlDecision | None:
     """Map normalized validation state to the next orchestration action.
 
@@ -104,6 +105,18 @@ def validation_transition(
             restart=True,
             followup_message=acceptance_reminder,
             skipped_reason="validation requires acceptance evidence",
+            reason_code=ReasonCode.ACCEPTANCE_MISSING,
+        )
+    if next_action == ValidationNextAction.RUN_CHECK:
+        check = next_check
+        return ControlDecision(
+            restart=True,
+            followup_message=(
+                f"Run required validation check {check.id}: {check.observable or check.reason}. "
+                f"Use capability {check.capability}, strength {check.strength.name}, and validation_check='{check.id}'."
+                if check is not None else "Run the next required validation check."
+            ),
+            skipped_reason="a required validation check remains unproven",
             reason_code=ReasonCode.ACCEPTANCE_MISSING,
         )
     if next_action == ValidationNextAction.RUN_FULL_VALIDATION:

@@ -8,14 +8,10 @@ from ..editing import EditFailureType
 from ..progress import ProgressKind, ProgressSignal
 from ..reason_codes import ReasonCode
 from ..task_state import AgentPhase, RuntimeEventType
-from ..validation.plan import RequirementEvidenceResolver
 from .message_protocol import close_tool_batch_before_control_transition
 from .tool_call_runner import ToolCallRun, ToolCallRunner
 from .tool_batch_result import ToolBatchResult
-
-
-EDIT_TOOL_NAMES = frozenset({"patch_file", "replace_lines", "replace_symbol", "write_file"})
-
+from .tool_result_handlers import EditResultHandler, ValidationResultHandler
 
 
 class ToolEventAdapter:
@@ -23,6 +19,8 @@ class ToolEventAdapter:
 
     def __init__(self, call_runner):
         self.call_runner = call_runner
+        self.edit_handler = EditResultHandler()
+        self.validation_handler = ValidationResultHandler()
 
     def process(self, agent, tool_call, *, index, tool_calls, messages,
                 current_plan_step, runs, evidence_items, signals):
@@ -36,7 +34,7 @@ class ToolEventAdapter:
         tool_name, arguments, result = run.tool_name, run.arguments, run.result
         capabilities = (agent.registry.capabilities_for(tool_name)
                         if tool_name in getattr(agent.registry, "_tools", {}) else frozenset())
-        is_edit = "code.edit" in capabilities or tool_name in EDIT_TOOL_NAMES
+        is_edit = "code.edit" in capabilities
         if not is_edit and capabilities & {"process.run", "test.run", "service.validate", "validation.browser"}:
             previous_revision = agent.validation_pipeline.state.edit_revision
             refresh = getattr(agent, "refresh_workspace_facts", None)
@@ -155,9 +153,18 @@ class ToolEventAdapter:
                 restart=True, followup_message=retry_message,
             )
 
+        # Registered tools are classified only through their capabilities.  A
+        # few embedding/test executors intentionally run outside a registry;
+        # their structured validation result remains sufficient to dispatch the
+        # result handler without reviving a tool-name fallback.
+        structured_validation_result = (
+            str(result.data.get("outcome", "")).casefold() in {"passed", "failed", "inconclusive"}
+            and "errors" in result.data
+        )
         is_validation = (bool(capabilities & {"test.run", "validation.static_web", "validation.browser", "service.validate"})
             or ("process.run" in capabilities and arguments.get("purpose") in {"acceptance", "regression"})
-            or self._is_validation(tool_name, arguments))
+            or structured_validation_result
+        )
         if (
             not is_validation
             and is_edit
@@ -175,44 +182,14 @@ class ToolEventAdapter:
 
         signal = ProgressSignal(ProgressKind.OBSERVATION, "Tool produced an observation.")
         if is_edit and result.success:
-            revision = agent.validation_pipeline.record_edit()
-            requirements = getattr(agent, "task_requirements", None)
-            if requirements is not None:
-                requirements.invalidate_revision(revision)
-                agent.sync_requirements_state()
-            agent.working_summary.advance_revision(revision)
-            agent._repo_map_initialized = False
-            agent._repo_map_revision = None
-            agent.workspace_session.invalidate(str(arguments.get("path", "")))
-            # Latest keyed repository observations cannot survive mutation.
-            memory = getattr(getattr(agent, "working_summary", None), "memory", None)
-            if memory is not None:
-                try:
-                    memory.invalidate_path(str(arguments.get("path", "")))
-                except Exception:
-                    pass
-            self._emit_event(
-                agent,
-                RuntimeEventType.EDIT_APPLIED,
-                edit_revision=revision,
-                path=str(arguments.get("path", "")),
-                diff_quality_issues=result.data.get("diff_quality_issues", ()),
+            signal, completed = self.edit_handler.apply(
+                agent, tool_name=tool_name, arguments=arguments, result=result,
+                current_plan_step=current_plan_step, emit=self._emit_event,
             )
-            if hasattr(agent, "step_evidence"):
-                agent.step_evidence.record(
-                    step_id=current_plan_step.id if current_plan_step else None,
-                    edit_revision=revision,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    result=result,
-                )
-            agent.progress.mark_meaningful_progress()
-            signal = ProgressSignal(ProgressKind.ADVANCED, f"Edit created revision {revision}.")
-            print(f"\n[Edit Applied]\n[Validation Revision] {revision}")
+            print(f"\n[Edit Applied]\n[Validation Revision] {agent.validation_pipeline.state.edit_revision}")
             checkpoint_id = result.data.get("checkpoint_id")
             if checkpoint_id:
                 print(f"[Checkpoint] {checkpoint_id}")
-            _, completed = agent.plan_orchestrator.reconcile(agent)
             if completed:
                 self._observe(agent, tool_name, signal)
                 signals.append(signal)
@@ -236,112 +213,34 @@ class ToolEventAdapter:
             signal = ProgressSignal(ProgressKind.ADVANCED, "Plan was revised.")
 
         if is_validation:
-            if "test.run" in capabilities:
-                target = str(arguments.get("path", "")).split("::", 1)[0]
-                changed_tests = [c for c in agent.checkpoint_manager.all_checkpoints()
-                                 if c.sealed and not c.rolled_back and c.snapshot.path == target]
-                if changed_tests:
-                    result.data["agent_test_only"] = True
-            unit = getattr(agent.task_state, "work_unit", None)
-            if unit and not unit.closed:
-                from pathlib import Path
-                from ..editing.edit_verifier import EditVerifier
-                syntax_errors = []
-                for path in unit.edited_paths:
-                    file = Path(agent.workspace) / path
-                    if file.suffix == ".py" and file.is_file():
-                        try:
-                            EditVerifier.validate_candidate(file, file.read_text(encoding="utf-8"))
-                        except (ValueError, OSError, UnicodeError) as exc:
-                            syntax_errors.append(f"{path}: {exc}")
-                if syntax_errors:
-                    result.data.update(outcome="failed", tests_passed=False, command_succeeded=False,
-                                       failed=len(syntax_errors), failed_tests=syntax_errors,
-                                       milestone_syntax_errors=syntax_errors)
-                    if capabilities & {"validation.static_web", "validation.browser", "service.validate"}:
-                        result.data["errors"] = [*result.data.get("errors", []), *syntax_errors]
-            evidence = agent.validation_pipeline.observe(
-                tool_name=tool_name, arguments=arguments, result=result,
-                capabilities=(agent.registry.capabilities_for(tool_name)
-                              if tool_name in getattr(agent.registry, "_tools", {}) else frozenset()),
+            handled = self.validation_handler.apply(
+                agent, tool_name=tool_name, arguments=arguments, result=result,
+                capabilities=capabilities, metrics=metrics, emit=self._emit_event,
             )
-            if evidence is not None:
-                checks = agent.validation_pipeline.state.plan.checks
-                contract = next((c for c in checks if c.id == evidence.check_id), None)
-                if metrics is not None and checks and evidence.purpose.value == "acceptance" and (
-                    contract is None or (contract.target and contract.target != evidence.target)
-                ):
-                    metrics.wrong_validation_target_count += 1
-                evidence_items.append(evidence)
-                requirements = getattr(agent, "task_requirements", None)
-                if requirements is not None:
-                    RequirementEvidenceResolver().resolve(requirements, agent.validation_pipeline.state)
-                    agent.sync_requirements_state()
-                validation_state = agent.validation_pipeline.state
-                self._emit_event(
-                    agent,
-                    RuntimeEventType.VALIDATION_OBSERVED,
-                    outcome=evidence.outcome,
-                    validation_revision=getattr(validation_state, "evidence_sequence", 0),
-                    acceptance_passed=validation_state.acceptance_passed,
-                    relevant_validation_passed=validation_state.targeted_passed,
-                    full_validation_passed=validation_state.full_passed,
-                    evidence_edit_revision=evidence.edit_revision,
-                    validation_check=evidence.check_id,
-                    requirement_ids=evidence.requirement_ids,
-                    capabilities=tuple(sorted(capabilities)),
-                    workunit_id=unit.id if unit else None,
-                )
-                _, completed = agent.plan_orchestrator.reconcile(agent)
-                print(
-                    f"\n[Validation Evidence]\nRevision: {evidence.edit_revision}"
-                    f"\nScope: {evidence.scope.value}\nPurpose: {evidence.purpose.value}"
-                    f"\nOutcome: {evidence.outcome.value}"
-                )
-                decision = agent.validation_orchestrator.apply(agent=agent, evidence=evidence)
-                if (
-                    evidence.outcome.value == "passed"
-                    and agent.task_state.recovery_level > 0
-                    and metrics is not None
-                ):
-                    metrics.recovery_successes += 1
-                signal = agent.latest_progress_signal or ProgressSignal(
-                    ProgressKind.NONE, "Validation did not yield comparable progress."
-                )
-                if completed:
-                    decision = type(decision)(
-                        restart=True,
-                        early_stop=decision.early_stop,
-                        followup_message=decision.followup_message,
-                        skipped_reason=decision.skipped_reason,
-                        reason_code=decision.reason_code,
-                    )
-                signals.append(signal)
-                self._observe(agent, tool_name, signal)
-                finished = self._check_completion(agent, messages, tool_calls[index + 1 :])
-                if finished is not None:
-                    return ToolBatchResult(
-                        tuple(runs),
-                        tuple(evidence_items),
-                        tuple(signals),
-                        early_stop=finished,
-                        completion_finished=True,
-                    )
-                if decision.early_stop or decision.restart:
-                    self._close(
-                        messages,
-                        tool_calls[index + 1 :],
-                        decision.skipped_reason or "validation changed agent loop control flow",
-                        decision.followup_message,
-                    )
-                    return ToolBatchResult(
-                        tuple(runs), tuple(evidence_items), tuple(signals),
-                        restart=decision.restart,
-                        early_stop=decision.early_stop,
-                        followup_message=decision.followup_message,
-                        reason_code=decision.reason_code,
-                    )
-                return None
+            if handled.evidence is not None:
+                evidence_items.append(handled.evidence)
+                print(f"\n[Validation Evidence]\nRevision: {handled.evidence.edit_revision}"
+                      f"\nScope: {handled.evidence.scope.value}\nPurpose: {handled.evidence.purpose.value}"
+                      f"\nOutcome: {handled.evidence.outcome.value}")
+            signal, decision = handled.signal, handled.decision
+            if handled.completed_plan and decision is not None:
+                decision = type(decision)(restart=True, early_stop=decision.early_stop,
+                                          followup_message=decision.followup_message,
+                                          skipped_reason=decision.skipped_reason, reason_code=decision.reason_code)
+            signals.append(signal)
+            self._observe(agent, tool_name, signal)
+            finished = self._check_completion(agent, messages, tool_calls[index + 1 :])
+            if finished is not None:
+                return ToolBatchResult(tuple(runs), tuple(evidence_items), tuple(signals),
+                                       early_stop=finished, completion_finished=True)
+            if decision is not None and (decision.early_stop or decision.restart):
+                self._close(messages, tool_calls[index + 1 :],
+                            decision.skipped_reason or "validation changed agent loop control flow",
+                            decision.followup_message)
+                return ToolBatchResult(tuple(runs), tuple(evidence_items), tuple(signals),
+                                       restart=decision.restart, early_stop=decision.early_stop,
+                                       followup_message=decision.followup_message, reason_code=decision.reason_code)
+            return None
 
         signals.append(signal)
         self._observe(agent, tool_name, signal)
@@ -365,13 +264,6 @@ class ToolEventAdapter:
             return ToolBatchResult(tuple(runs), tuple(evidence_items), tuple(signals), restart=True)
 
         return None
-
-    @staticmethod
-    def _is_validation(tool_name: str, arguments: dict) -> bool:
-        return tool_name in {"run_tests", "validate_static_web", "validate_browser_app"} or (
-            tool_name == "run_command"
-            and str(arguments.get("purpose", "diagnostic")).strip().lower() in {"acceptance", "regression"}
-        )
 
     @staticmethod
     def _append_observation(messages, call_id, result, heading=None) -> None:
@@ -412,7 +304,10 @@ class ToolEventAdapter:
 
     @staticmethod
     def _check_completion(agent, messages, remaining) -> str | None:
-        handling = agent.completion_handler.check_after_batch(agent)
+        checking = getattr(agent, "check_completion_after_batch", None)
+        handling = checking() if callable(checking) else None
+        if handling is None:
+            return None
         if not handling.finished:
             return None
         close_tool_batch_before_control_transition(
@@ -428,15 +323,17 @@ class ToolEventAdapter:
         if not callable(emit):
             return
         path = str(arguments.get("path", "") or "").strip()
-        if tool_name == "read_file":
+        capabilities = (agent.registry.capabilities_for(tool_name)
+                        if tool_name in getattr(agent.registry, "_tools", {}) else frozenset())
+        if "file.read" in capabilities:
             emit(f"Reading {path or 'target'}...")
-        elif tool_name in EDIT_TOOL_NAMES:
+        elif "code.edit" in capabilities:
             emit(f"Editing {path or 'target'}...")
-        elif tool_name == "run_tests":
+        elif "test.run" in capabilities:
             emit("Running focused tests...")
             if result.success and result.data.get("tests_passed") is True:
                 emit(f"{int(result.data.get('passed', 0) or 0)} tests passed.")
-        elif tool_name in {"validate_static_web", "validate_browser_app"}:
+        elif capabilities & {"validation.static_web", "validation.browser", "service.validate"}:
             emit(f"Validating {path or 'web artifact'}...")
             if result.success and result.data.get("outcome") == "passed":
                 emit("Validation passed.")

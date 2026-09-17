@@ -1,4 +1,4 @@
-"""Executable offline VibeBench scenarios using the canonical EvaluationHarness.
+"""Deterministic HarnessBench scenarios using the canonical EvaluationHarness.
 
 Run: python -m minicodex.evaluation.vibebench
 Scripts replace only the model: editing, command validation and completion are real.
@@ -56,6 +56,12 @@ def assertion(path, expected, check="V1"):
     return "run_command", {"command": command, "purpose": "acceptance", "validation_check": check}
 
 
+def regression(path, expected, check):
+    name, arguments = assertion(path, expected, check)
+    arguments["purpose"] = "regression"
+    return name, arguments
+
+
 def patch(path, before, after):
     return "patch_file", {"path": path, "old_text": before, "new_text": after}
 
@@ -83,7 +89,7 @@ def scenarios():
         Scenario(case("multifile_requirements", f"Set VALUE to 2 in {a}; set VALUE to 3 in {b}.", ((a, "VALUE = 2"), (b, "VALUE = 3"))),
                  ((a, "VALUE = 1\n"), (b, "VALUE = 1\n")),
                  (patch(a, "VALUE = 1", "VALUE = 2"), patch(b, "VALUE = 1", "VALUE = 3"),
-                  assertion(a, "VALUE = 2"), assertion(b, "VALUE = 3", "V2"))),
+                  assertion(a, "VALUE = 2"), assertion(b, "VALUE = 3", "V2"), regression(a, "VALUE = 2", "V3"))),
     )
     server = ("from http.server import BaseHTTPRequestHandler, HTTPServer\nimport sys\n"
               "class Handler(BaseHTTPRequestHandler):\n"
@@ -107,7 +113,8 @@ def scenarios():
                  (("write_file", {"path": "examples/core.py", "content": "def double(x):\n    return x * 2\n"}),
                   ("write_file", {"path": "examples/client.py", "content": "from examples.core import double\ndef run():\n    return double(3)\n"}),
                   behavior("from examples.core import double; assert double(3) == 6"),
-                  behavior("from examples.client import run; assert run() == 6", "V2"))),
+                  behavior("from examples.client import run; assert run() == 6", "V2"),
+                  regression("examples/client.py", "from examples.core import double\ndef run():\n    return double(3)", "V3"))),
         Scenario(case("api_service", "Fix examples/server.py HTTP response to ready.", (("examples/server.py", "b'ready'"),)),
                  (("examples/server.py", server),),
                  (patch("examples/server.py", "b'old'", "b'ready'"),
@@ -124,7 +131,8 @@ def scenarios():
                   ("tests/test_calc.py", "from examples.calc import double\ndef test_double():\n    assert double(3) == 6\n")),
                  (("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "acceptance", "validation_check": "V1"}),
                   patch(calc, "value + 2", "value * 2"),
-                  ("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "acceptance", "validation_check": "V1"}))),
+                  ("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "acceptance", "validation_check": "V1"}),
+                  ("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "regression", "validation_check": "V2"}))),
         Scenario(case("followup", f"Set VALUE to 3 in {a}.", ((a, "VALUE = 3"),)), ((a, "VALUE = 1\n"),),
                  (patch(a, "VALUE = 2", "VALUE = 3"), assertion(a, "VALUE = 3")),
                  (patch(a, "VALUE = 1", "VALUE = 2"), assertion(a, "VALUE = 2")), f"Set VALUE to 2 in {a}."),
@@ -162,6 +170,12 @@ def run_vibebench(root, *, model_factory=None, output_level="normal"):
             agent.llm = model
         return agent
     return EvaluationHarness(agent_factory=factory).run_suite(run_name="vibebench", cases=[s.case for s in catalog.values()])
+
+
+# The name is retained only for the module entrypoint; this is a HarnessBench,
+# not an autonomous model benchmark. Scripts provide the tool sequence.
+HarnessBench = run_vibebench
+run_harness_bench = run_vibebench
 
 
 if __name__ == "__main__":

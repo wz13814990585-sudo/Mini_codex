@@ -11,7 +11,7 @@ from .evidence import (
 )
 from .pipeline import ValidationPipeline
 from .ledger import ValidationLedger
-from .selector import ValidationSelection, ValidationSelector
+from .validator_resolver import ValidatorResolution, ValidatorResolver
 from .test_index import IndexedTest, TestIndex
 from .test_target_resolver import TestTargetResolution, TestTargetResolver
 from .regression_policy import RegressionPolicy, RegressionRequirement
@@ -34,8 +34,8 @@ __all__ = [
     "ValidationPurpose",
     "ValidationScope",
     "ValidationLedger",
-    "ValidationSelection",
-    "ValidationSelector",
+    "ValidatorResolution",
+    "ValidatorResolver",
     "IndexedTest",
     "TestIndex",
     "TestTargetResolution",

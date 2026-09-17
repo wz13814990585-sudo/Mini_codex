@@ -5,6 +5,7 @@ from ..results import ToolResult
 class ReplanTool(BaseTool):
 
     name = "replan"
+    capabilities = frozenset({"plan.control"})
 
     description = (
         "Request a revised implementation plan when the current "

@@ -216,10 +216,14 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
         unit = state.work_unit
         if owned:
             if unit is None or unit.closed:
-                unit = WorkUnit(f"W{revision}", state.target_paths, state.edit_revision)
+                unit = WorkUnit(
+                    f"W{revision}", state.requirement_ids, state.target_paths, state.edit_revision,
+                    milestone_check_ids=tuple(data.get("milestone_check_ids", ()) or ()),
+                )
             updates["work_unit"] = unit.record_edit(str(data.get("path", "")))
         elif unit:
-            updates["work_unit"] = replace(unit, closed=True)
+            from .editing.work_unit import WorkUnitStatus
+            updates["work_unit"] = replace(unit, status=WorkUnitStatus.FAILED)
         issues = dict(state.edit_issues)
         path = str(data.get("path", ""))
         issues.pop(path, None)
@@ -240,8 +244,14 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
         )
     elif event.kind == RuntimeEventType.VALIDATION_OBSERVED:
         outcome = data.get("outcome")
-        if state.work_unit and outcome in {ValidationOutcome.PASSED, ValidationOutcome.FAILED}:
-            updates["work_unit"] = replace(state.work_unit, closed=True)
+        if state.work_unit and not state.work_unit.closed:
+            if data.get("workunit_all_milestones_resolved") is not None:
+                updates["work_unit"] = state.work_unit.resolve_milestone(
+                    passed=outcome == ValidationOutcome.PASSED,
+                    all_resolved=bool(data["workunit_all_milestones_resolved"]),
+                )
+            else:
+                updates["work_unit"] = state.work_unit.begin_validation()
         updates.update(
             validation_revision=max(
                 state.validation_revision + 1,
@@ -273,7 +283,8 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
         restored = set(data.get("restored_paths", ()))
         updates["edit_issues"] = tuple((p, issues) for p, issues in state.edit_issues if p not in restored)
         if state.work_unit:
-            updates["work_unit"] = replace(state.work_unit, closed=True)
+            from .editing.work_unit import WorkUnitStatus
+            updates["work_unit"] = replace(state.work_unit, status=WorkUnitStatus.FAILED)
         updates.update(
             rollback_revision=max(state.rollback_revision + 1, int(data.get("rollback_revision", 0))),
             edit_revision=revision,
