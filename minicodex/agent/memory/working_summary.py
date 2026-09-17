@@ -559,7 +559,7 @@ class WorkingSummary:
 
         if (
             tool_name
-            == "complete_plan_step"
+            == "plan_step_completed"
         ):
 
             if (

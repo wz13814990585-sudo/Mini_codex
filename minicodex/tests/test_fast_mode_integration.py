@@ -12,7 +12,7 @@ from ..tools.editing import WriteFileTool
 
 
 class StaticPassTool(BaseTool):
-    name = "validate_static_web"
+    name = "validate_browser_app"
     description = "Validate a static page."
     parameters = {
         "type": "object",
@@ -84,7 +84,7 @@ class FastGameLLM:
             if self.calls == 1
             else call(
                 "validate",
-                "validate_static_web",
+                "validate_browser_app",
                 {"path": "try_code/index.html"},
             )
         )

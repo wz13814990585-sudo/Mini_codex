@@ -62,6 +62,34 @@ class RollbackEngine:
     # Rollback
     # =========================================================
 
+    def undo_task(self) -> ToolResult:
+        """Undo only this task's checkpoint chain, never a Git reset."""
+        manager = self.checkpoint_manager
+        if manager.history_trimmed:
+            return ToolResult(False, "Task undo unavailable: checkpoint history was trimmed", {})
+        checkpoints = [c for c in manager.all_checkpoints() if c.sealed and not c.rolled_back]
+        expected = {}
+        for checkpoint in reversed(checkpoints):
+            path = checkpoint.snapshot.path
+            if path not in expected:
+                file_path = resolve_workspace_path(self.workspace, path)
+                conflict = self._check_current_state(checkpoint, file_path)
+                if conflict is not None:
+                    return conflict
+            elif expected[path] != checkpoint.after_sha256:
+                return ToolResult(False, "Concurrent changes between agent edits prevent whole-task undo",
+                                  {"path": path, "failure_type": "rollback_conflict"})
+            expected[path] = checkpoint.snapshot.sha256
+        restored = []
+        for checkpoint in reversed(checkpoints):
+            result = self.rollback(checkpoint.checkpoint_id)
+            if not result.success:
+                result.data["restored_paths"] = restored
+                return result
+            restored.append(checkpoint.snapshot.path)
+        return ToolResult(True, "Task edits reverted to their exact pre-task contents",
+                          {"restored_paths": list(dict.fromkeys(restored))})
+
     def rollback(
         self,
         checkpoint_id: str,

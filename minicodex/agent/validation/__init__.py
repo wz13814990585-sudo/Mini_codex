@@ -1,16 +1,16 @@
 """Validation evidence, targeting, and policy domain."""
 
-from .pipeline import (
+from .evidence import (
     FailureComparison,
     FailureDelta,
     ValidationEvidence,
     ValidationNextAction,
     ValidationOutcome,
-    ValidationPipeline,
     ValidationPurpose,
     ValidationScope,
-    ValidationState,
 )
+from .pipeline import ValidationPipeline
+from .ledger import ValidationLedger
 from .selector import ValidationSelection, ValidationSelector
 from .test_index import IndexedTest, TestIndex
 from .test_target_resolver import TestTargetResolution, TestTargetResolver
@@ -33,7 +33,7 @@ __all__ = [
     "ValidationPipeline",
     "ValidationPurpose",
     "ValidationScope",
-    "ValidationState",
+    "ValidationLedger",
     "ValidationSelection",
     "ValidationSelector",
     "IndexedTest",

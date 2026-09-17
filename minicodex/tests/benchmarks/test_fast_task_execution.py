@@ -29,6 +29,11 @@ class StaticPassTool(BaseTool):
         )
 
 
+class BrowserPassTool(StaticPassTool):
+    name = "validate_browser_app"
+    description = "Scripted browser behavior assertions passed."
+
+
 def tool_call(call_id, name, arguments):
     return SimpleNamespace(
         id=call_id,
@@ -160,6 +165,7 @@ def fast_agent(tmp_path, llm, *, include_read=False):
         registry.register(ReadFileTool(tmp_path))
     registry.register(WriteFileTool(tmp_path))
     registry.register(StaticPassTool())
+    registry.register(BrowserPassTool())
     planner = SimpleNamespace(
         create_plan=lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("FAST benchmark must not call Planner")
@@ -225,7 +231,7 @@ def test_benchmark_existing_tetris_finishes_without_edit(tmp_path):
             tool_call("read", "read_file", {"path": "try_code/index.html"}),
             tool_call(
                 "validate",
-                "validate_static_web",
+                "validate_browser_app",
                 {"path": "try_code/index.html"},
             ),
         ]
@@ -271,7 +277,7 @@ def test_fast_immediate_completion_closes_remaining_provider_batch(tmp_path):
     trailing = CountingTool()
     registry = ToolRegistry()
     registry.register(WriteFileTool(tmp_path))
-    registry.register(StaticPassTool())
+    registry.register(BrowserPassTool())
     registry.register(trailing)
 
     class OneBatchLLM:
@@ -296,7 +302,7 @@ def test_fast_immediate_completion_closes_remaining_provider_batch(tmp_path):
                         ),
                         tool_call(
                             "validate",
-                            "validate_static_web",
+                            "validate_browser_app",
                             {"path": "try_code/game.html"},
                         ),
                         tool_call("diff", "git_diff", {}),

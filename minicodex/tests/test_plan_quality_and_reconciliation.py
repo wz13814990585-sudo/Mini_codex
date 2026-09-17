@@ -1,3 +1,4 @@
+from minicodex.tests.evidence_fixtures import record_evidence
 import json
 from types import SimpleNamespace
 
@@ -89,7 +90,7 @@ def test_semantic_completion_requires_fresh_current_revision_evidence():
     step = PlanStep(id=1, description="Interaction behaves correctly")
     agent.active_plan = AgentPlan(goal="feature", steps=[step])
 
-    rejected = agent.complete_plan_step()
+    rejected = agent.plan_orchestrator.complete_step(agent)
 
     assert rejected["completed"] is False
     assert rejected["failure_type"] == (
@@ -104,7 +105,7 @@ def test_semantic_completion_requires_fresh_current_revision_evidence():
         result=ToolResult(success=True, summary="Current source inspected"),
     )
 
-    assert agent.complete_plan_step()["completed"] is False
+    assert agent.plan_orchestrator.complete_step(agent)["completed"] is False
 
     agent.step_evidence.record(
         step_id=1,
@@ -114,7 +115,7 @@ def test_semantic_completion_requires_fresh_current_revision_evidence():
         result=ToolResult(success=True, summary="Implementation written"),
     )
 
-    assert agent.complete_plan_step()["completed"] is True
+    assert agent.plan_orchestrator.complete_step(agent)["completed"] is True
 
 
 def test_semantic_completion_rejects_evidence_from_old_revision():
@@ -138,7 +139,7 @@ def test_semantic_completion_rejects_evidence_from_old_revision():
     )
     agent.validation_pipeline.record_edit()
 
-    result = agent.complete_plan_step()
+    result = agent.plan_orchestrator.complete_step(agent)
 
     assert result["completed"] is False
     assert result["failure_type"] == (
@@ -278,8 +279,8 @@ def test_final_reconciliation_can_finish_stale_plan_bookkeeping(tmp_path):
         ],
     )
     agent.validation_pipeline.record_edit()
-    agent.validation_pipeline.state.acceptance_passed = True
-    agent.validation_pipeline.state.targeted_passed = True
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
+    record_evidence(agent.validation_pipeline.state, "targeted_passed", True)
 
     result = run_agent_loop(agent, "Finish existing work")
 

@@ -7,7 +7,6 @@ import threading
 import time
 
 from .message_protocol import validate_tool_message_protocol
-from .tool_batch_runner import EDIT_TOOL_NAMES  # compatibility export
 from ..task_state import AgentPhase, RuntimeEventType
 
 

@@ -1,3 +1,4 @@
+from minicodex.agent.validation.decision_policy import ValidationDecisionPolicy
 import shutil
 
 import pytest
@@ -107,9 +108,9 @@ def test_static_web_result_creates_current_acceptance_evidence():
     assert evidence.outcome == ValidationOutcome.PASSED
     assert evidence.edit_revision == 1
     assert evidence.details["button_count"] == 36
-    assert pipeline.current_acceptance_passed() is True
+    assert ValidationDecisionPolicy(pipeline.state).current_acceptance_passed() is True
 
     pipeline.record_edit()
 
-    assert pipeline.current_acceptance_passed() is False
+    assert ValidationDecisionPolicy(pipeline.state).current_acceptance_passed() is False
     assert pipeline.state.latest_evidence is None

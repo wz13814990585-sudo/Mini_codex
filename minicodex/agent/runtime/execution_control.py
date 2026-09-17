@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextvars import ContextVar
+
+ACTIVE_CANCELLATION = ContextVar("active_cancellation", default=None)
 from threading import (
     Event,
     Lock,

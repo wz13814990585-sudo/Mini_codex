@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 import time
+import re
 
 from ..routing import ExecutionMode
 from ..routing.structured_output import StructuredOutputError, parse_bounded_json_object
@@ -18,6 +19,12 @@ class RequirementCategory(str, Enum):
     REGRESSION = "regression"
 
 
+class RequirementKind(str, Enum):
+    STRUCTURAL = "structural"
+    BEHAVIORAL = "behavioral"
+    SEMANTIC = "semantic"
+
+
 @dataclass
 class TaskRequirement:
     id: str
@@ -27,6 +34,16 @@ class TaskRequirement:
     satisfied: bool = False
     evidence: list[str] = field(default_factory=list)
     evidence_revision: int | None = None
+    validation_target: str = ""
+    evidence_kind: RequirementKind | None = None
+
+    @property
+    def kind(self):
+        if self.evidence_kind is not None:
+            return self.evidence_kind
+        if self.category in {RequirementCategory.FILE, RequirementCategory.DOCUMENTATION}:
+            return RequirementKind.STRUCTURAL
+        return RequirementKind.BEHAVIORAL
 
 
 @dataclass
@@ -44,44 +61,13 @@ class TaskRequirements:
     def invalidate_revision(self, revision: int) -> None:
         for item in self.items:
             if (
-                item.category in {RequirementCategory.BEHAVIOR, RequirementCategory.REGRESSION}
-                and item.evidence_revision is not None
+                item.evidence_revision is not None
                 and item.evidence_revision < revision
             ):
                 item.satisfied = False
                 item.evidence.clear()
                 item.evidence_revision = None
 
-    def record_edit(self, *, path: str, revision: int) -> None:
-        normalized = str(path or "").strip()
-        for item in self.items:
-            if item.category not in {RequirementCategory.FILE, RequirementCategory.TEST, RequirementCategory.DOCUMENTATION}:
-                continue
-            if item.paths and normalized not in item.paths:
-                continue
-            item.satisfied = True
-            item.evidence = [f"edit:{normalized}@revision:{revision}"]
-            item.evidence_revision = revision
-
-    def record_validation(self, evidence) -> None:
-        if getattr(getattr(evidence, "outcome", None), "value", None) != "passed":
-            return
-        revision = int(getattr(evidence, "edit_revision", 0))
-        purpose = getattr(getattr(evidence, "purpose", None), "value", "")
-        path = str(getattr(evidence, "path", "") or "")
-        for item in self.items:
-            eligible = (
-                purpose == "acceptance" and item.category == RequirementCategory.BEHAVIOR
-            ) or (
-                purpose == "regression" and item.category == RequirementCategory.REGRESSION
-            ) or (
-                item.category == RequirementCategory.TEST and path and any(p in path for p in item.paths)
-            )
-            if eligible:
-                item.satisfied = True
-                key = getattr(evidence, "validation_key", "") or path
-                item.evidence = [f"validation:{key}@revision:{revision}"]
-                item.evidence_revision = revision
 
 
 @dataclass(frozen=True)
@@ -117,9 +103,21 @@ Use concise independently provable outcomes. Do not invent repository facts."""
         return mode != ExecutionMode.FAST or coordinators >= 2
 
     def extract(self, user_request: str, *, mode: ExecutionMode, target_paths=()) -> TaskRequirements:
+        text = user_request.casefold()
+        structural = bool(target_paths) and all(str(p).endswith((".md", ".txt", ".html", ".css")) for p in target_paths)
+        structural = structural and not any(w in text for w in ("game", "tetris", "playable", "click", "keyboard", "login", "游戏"))
         fallback = TaskRequirements([
-            TaskRequirement("R1", "The requested outcome is satisfied", paths=tuple(target_paths))
+            TaskRequirement("R1", str(user_request)[:500],
+                            category=RequirementCategory.FILE if structural else RequirementCategory.BEHAVIOR,
+                            paths=tuple(target_paths))
         ])
+        clauses = [re.sub(r"^\s*\d+[.)]\s*", "", s).strip() for s in re.split(r"\n+|;\s*|\s+and\s+", user_request)]
+        clauses = [s for s in clauses if s]
+        if 1 < len(clauses) <= self.max_requirements:
+            fallback = TaskRequirements([TaskRequirement(f"R{i}", clause,
+                category=RequirementCategory.DOCUMENTATION if re.search(r"readme|documentation", clause, re.I)
+                else RequirementCategory.BEHAVIOR,
+                paths=tuple(target_paths)) for i, clause in enumerate(clauses, 1)])
         if self.llm is None or not self.should_extract(user_request, mode):
             return fallback
         started = time.monotonic()
@@ -133,7 +131,7 @@ Use concise independently provable outcomes. Do not invent repository facts."""
                 raise StructuredOutputError("invalid requirements schema")
             items = []
             for index, raw in enumerate(data["requirements"][: self.max_requirements], 1):
-                if not isinstance(raw, dict) or set(raw) != {"description", "category", "paths"}:
+                if not isinstance(raw, dict) or not {"description", "category", "paths"}.issubset(raw) or set(raw) - {"description", "category", "paths", "kind", "validation_target"}:
                     raise StructuredOutputError("invalid requirement")
                 description = " ".join(str(raw["description"]).split())[:500]
                 if not description or not isinstance(raw["paths"], list):
@@ -143,7 +141,9 @@ Use concise independently provable outcomes. Do not invent repository facts."""
                 except ValueError as exc:
                     raise StructuredOutputError("invalid requirement category") from exc
                 paths = tuple(str(path).strip() for path in raw["paths"] if str(path).strip())[:10]
-                items.append(TaskRequirement(f"R{index}", description, category, paths))
+                items.append(TaskRequirement(f"R{index}", description, category, paths,
+                    validation_target=str(raw.get("validation_target", "")),
+                    evidence_kind=RequirementKind(raw["kind"]) if raw.get("kind") else None))
             if not items:
                 raise StructuredOutputError("empty requirements")
             usage = getattr(response, "usage", None)

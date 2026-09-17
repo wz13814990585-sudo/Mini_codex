@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..editing import EditStrategyHint
 from ..task_state import AgentPhase
+from ..validation.ladder import VerificationLadder
 
 
 class ContextBuilder:
@@ -13,9 +14,12 @@ class ContextBuilder:
         self.edit_strategy = edit_strategy or EditStrategyHint()
 
     def build(self, agent, *, current_plan_step, remaining_agent_steps: int) -> str:
+        refresh_workspace = getattr(agent, "refresh_workspace_facts", None)
+        if refresh_workspace is not None:
+            refresh_workspace()
         policy = getattr(agent, "execution_policy", None)
         if policy is None or not policy.compact_context:
-            agent._refresh_repo_map(force=True)
+            agent._refresh_repo_map(force=False)
         refresh = getattr(agent, "refresh_runtime_context", None)
         if callable(refresh):
             refresh()
@@ -39,6 +43,23 @@ class ContextBuilder:
             ),
         ]
         requirements = getattr(agent, "task_requirements", None)
+        if state.work_unit and not state.work_unit.closed:
+            unit = state.work_unit
+            sections.append(f"WorkUnit {unit.id}: {unit.edited_paths}; edits={unit.edits}/{unit.max_edits}. "
+                            "Finish cohesive related edits, then validate the milestone.")
+        session = getattr(agent, "workspace_session", None)
+        if session is not None:
+            sections.append(session.render(targets))
+            sections.append("Verification ladder: " + "; ".join(
+                f"{r.strength.name}: {r.command or r.reason}"
+                for r in VerificationLadder().select(session.profile, targets, state.user_request)))
+        ledger = agent.validation_pipeline.state
+        if ledger.plan.checks:
+            sections.append("Verification contracts (supply validation_check on each validation call):\n" + "\n".join(
+                f"- {c.id} -> {','.join(c.requirement_ids)}: {c.reason}; "
+                f"target={c.target or 'choose a specific observable assertion'}; "
+                f"{'proven' if ledger.proof(c.id) else 'missing current proof'}"
+                for c in ledger.plan.checks))
         if requirements is not None and requirements.items:
             sections.append(
                 "Current task requirements:\n" + "\n".join(
@@ -66,14 +87,16 @@ class ContextBuilder:
             target = targets[0] if targets else None
             sections.append(self.edit_strategy.render(agent.workspace, target))
         elif state.phase == AgentPhase.VALIDATING:
+            acceptance_missing = any(c.required and c.purpose.value == "acceptance" and not ledger.proof(c.id)
+                                     for c in ledger.plan.checks) if ledger.plan.checks else not state.acceptance_passed
             registered = set(getattr(agent.registry, "_tools", {}) or {})
             selection = agent.validation_selector.select(
                 target_paths=targets,
                 registered_tools=registered,
                 runtime_behavior=self._runtime_behavior_requested(agent),
-                revision=state.edit_revision,
+                revision=session.revision if session is not None else state.edit_revision,
                 desired_purpose=(
-                    "acceptance" if not state.acceptance_passed else "regression"
+                    "acceptance" if acceptance_missing else "regression"
                 ),
             )
             recommendation = (

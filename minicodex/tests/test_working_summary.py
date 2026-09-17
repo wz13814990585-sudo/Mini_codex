@@ -268,7 +268,7 @@ def test_record_command_success():
     )
 
 
-def test_record_complete_plan_step():
+def test_record_plan_step_completed():
 
     summary = WorkingSummary()
 
@@ -287,7 +287,7 @@ def test_record_complete_plan_step():
 
     summary.record_tool_result(
         tool_name=(
-            "complete_plan_step"
+            "plan_step_completed"
         ),
         arguments={},
         result=result,

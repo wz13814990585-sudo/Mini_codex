@@ -4,6 +4,11 @@ MiniCodex follows one control-plane boundary: semantic understanding and
 strategy belong to bounded LLM calls; factual state, safety, execution, policy,
 recovery, and completion belong to the deterministic Harness.
 
+The requirement-evidence refactor and its verification results are documented in
+[the delivery report](vibecoding-refactor-report.md). A reusable `WorkspaceSession`
+holds bounded project knowledge; every request gets fresh task-local runtime,
+requirements, validation ledger, recovery, and plan state.
+
 At task start `TaskRouter` makes one stateless control-model call returning a
 strict `RoutingDecision`: `TaskIntent`, `ExecutionMode`, independent
 `needs_plan`, confidence, and a bounded debug reason. Only the raw current task
@@ -26,7 +31,7 @@ state already exists.
 
 ## State, events, progress, and phases
 
-`TaskRuntime` owns the authoritative `TaskState` for a run. Filesystem contents
+`TaskRuntime` owns the frozen authoritative `TaskState` snapshot for a run. Filesystem contents
 and normalized tool results are factual inputs; controllers are caches or
 specialists, not competing orchestration state. Significant changes become
 explicit `RuntimeEvent` values consumed by the pure `reduce_task_state`
@@ -70,9 +75,11 @@ The shared flow is:
    one tool result for every declared call, including skipped calls before a
    control transition.
 6. `PlanOrchestrator` owns step attempt, local recovery, and replan transitions.
-7. `ValidationPipeline` normalizes tool output into current-revision facts,
-   baseline deltas, stable keys, failure identities, and instability;
-   `ProgressController` describes only comparable trends.
+7. `ValidationPlanner` creates independent requirement checks. `ValidationPipeline`
+   normalizes execution facts; `ValidationLedger` owns revisioned history, target
+   binding, baselines, and instability. `RequirementEvidenceResolver` derives
+   satisfaction from adequate current proofs. `ValidationDecisionPolicy` owns
+   next-action decisions; `ProgressController` describes comparable trends only.
 8. A compact stateless `SemanticRegressionJudge` runs only for a genuinely
    ambiguous cross-revision regression. Its recommendation cannot edit,
    rollback, bypass safety, or complete the task.
@@ -91,7 +98,7 @@ Normal product flows:
 
 Plans contain outcome descriptions, expected targets, dependencies, acceptance
 criteria, status, and evidence. Evidence reconciles criteria automatically.
-`complete_plan_step` is not model-visible. When explicit requirements and
+The manual plan-completion tool has been removed. When explicit requirements and
 proportional current-revision validation are satisfied, remaining bookkeeping-
 only steps are superseded and cannot keep the agent alive.
 

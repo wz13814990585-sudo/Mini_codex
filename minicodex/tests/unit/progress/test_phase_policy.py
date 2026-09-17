@@ -1,3 +1,4 @@
+from minicodex.tests.evidence_fixtures import record_evidence
 from types import SimpleNamespace
 
 from ....agent.validation import CompletionStatus, TaskOutcome
@@ -24,10 +25,13 @@ def policy_agent(mode):
 
 def test_fast_acceptance_pass_can_transition_ready_to_done():
     agent = policy_agent(ExecutionMode.FAST)
-    agent.validation_pipeline.state.acceptance_passed = True
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
     decision = TaskCompletionPolicy().evaluate(agent)
-    agent.task_state.finish(decision.outcome)
+    from minicodex.agent.task_state import TaskRuntime, RuntimeEventType
+    runtime = TaskRuntime(agent.task_state)
+    runtime.emit(RuntimeEventType.VALIDATION_OBSERVED, acceptance_passed=True)
+    agent.task_state = runtime.emit(RuntimeEventType.TASK_COMPLETED, outcome=decision.outcome)
 
     assert decision.status == CompletionStatus.READY
     assert agent.task_state.phase == AgentPhase.DONE
@@ -36,27 +40,27 @@ def test_fast_acceptance_pass_can_transition_ready_to_done():
 
 def test_standard_acceptance_pass_stays_validating_until_relevant_regression():
     agent = policy_agent(ExecutionMode.STANDARD)
-    agent.validation_pipeline.state.acceptance_passed = True
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
     missing = TaskCompletionPolicy().evaluate(agent)
 
     assert missing.status == CompletionStatus.NEEDS_RELEVANT_VALIDATION
     assert agent.task_state.phase == AgentPhase.VALIDATING
 
-    agent.validation_pipeline.state.targeted_passed = True
+    record_evidence(agent.validation_pipeline.state, "targeted_passed", True)
     ready = TaskCompletionPolicy().evaluate(agent)
     assert ready.status == CompletionStatus.READY
 
 
 def test_complex_acceptance_pass_stays_validating_until_full_regression():
     agent = policy_agent(ExecutionMode.COMPLEX)
-    agent.validation_pipeline.state.acceptance_passed = True
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
     missing = TaskCompletionPolicy().evaluate(agent)
 
     assert missing.status == CompletionStatus.NEEDS_FULL_VALIDATION
     assert agent.task_state.phase == AgentPhase.VALIDATING
 
-    agent.validation_pipeline.state.full_passed = True
+    record_evidence(agent.validation_pipeline.state, "full_passed", True)
     ready = TaskCompletionPolicy().evaluate(agent)
     assert ready.status == CompletionStatus.READY

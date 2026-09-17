@@ -1,3 +1,4 @@
+from minicodex.tests.evidence_fixtures import record_evidence
 from ..agent.agent import MiniCodexAgent
 from ..agent.planning import AgentPlan, PlanStep, StepStatus
 from ..agent.routing import ExecutionMode, policy_for
@@ -84,8 +85,8 @@ def test_green_task_supersedes_unfinished_plan_bookkeeping():
         ],
     )
     agent.validation_pipeline.record_edit()
-    agent.validation_pipeline.state.acceptance_passed = True
-    agent.validation_pipeline.state.targeted_passed = True
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
+    record_evidence(agent.validation_pipeline.state, "targeted_passed", True)
     agent.ensure_runtime_started("Implement feature")
 
     handled = agent.completion_handler.check_after_batch(agent)

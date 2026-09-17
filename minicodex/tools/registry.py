@@ -30,13 +30,15 @@ class ToolMetadata:
     read_only: bool
     timeout_class: str
     backend: str
+    retry_safe: bool = False
+    idempotent: bool = False
 
 
 class ToolRegistry:
 
     _NAME_CAPABILITIES = {
         "list_files": {"filesystem.read"},
-        "read_file": {"filesystem.read"},
+        "read_file": {"filesystem.read", "file.read"},
         "search_code": {"code.search"},
         "search_symbol": {"code.search"},
         "write_file": {"filesystem.write", "code.edit"},
@@ -47,10 +49,10 @@ class ToolRegistry:
         "run_tests": {"test.run"},
         "validate_static_web": {"validation.static_web"},
         "validate_browser_app": {"validation.browser"},
+        "validate_service": {"service.validate"},
         "install_python_package": {"dependency.install"},
         "git_status": {"git.inspect"},
         "git_diff": {"git.inspect"},
-        "complete_plan_step": {"plan.control"},
         "replan": {"plan.control"},
     }
 
@@ -87,6 +89,9 @@ class ToolRegistry:
 
         tool = self.get(tool_or_name) if isinstance(tool_or_name, str) else tool_or_name
         capabilities = self.capabilities_for(tool)
+        declared = getattr(tool, "metadata", None)
+        if isinstance(declared, ToolMetadata):
+            return declared
         if "dependency.install" in capabilities:
             side_effect, risk, timeout_class = (
                 SideEffectClass.DEPENDENCY_INSTALL, ToolRisk.HIGH, "long"
@@ -95,7 +100,7 @@ class ToolRegistry:
             side_effect, risk, timeout_class = (
                 SideEffectClass.WORKSPACE_WRITE, ToolRisk.MEDIUM, "short"
             )
-        elif "process.run" in capabilities or "test.run" in capabilities:
+        elif capabilities & {"process.run", "test.run", "validation.browser", "service.validate"}:
             side_effect, risk, timeout_class = (
                 SideEffectClass.PROCESS_EXECUTION, ToolRisk.MEDIUM, "long"
             )
@@ -111,6 +116,8 @@ class ToolRegistry:
             read_only=side_effect == SideEffectClass.READ_ONLY,
             timeout_class=timeout_class,
             backend=str(getattr(tool, "backend", "local")),
+            retry_safe=side_effect == SideEffectClass.READ_ONLY,
+            idempotent=side_effect == SideEffectClass.READ_ONLY,
         )
 
     def get_schemas(

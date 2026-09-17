@@ -1,3 +1,4 @@
+from minicodex.tests.evidence_fixtures import record_evidence
 from ..agent.agent import MiniCodexAgent
 from ..agent.validation import CompletionStatus
 from ..agent.orchestration.validation_orchestrator import evaluate_completion
@@ -129,7 +130,7 @@ def test_local_step_completion_does_not_bypass_global_gate(tmp_path):
     )
     agent.validation_pipeline.record_edit()
 
-    completed = agent.complete_plan_step()
+    completed = agent.plan_orchestrator.complete_step(agent)
     completion = evaluate_completion(agent)
 
     assert completed["completed"] is True
@@ -137,11 +138,11 @@ def test_local_step_completion_does_not_bypass_global_gate(tmp_path):
     assert completion.status == CompletionStatus.NEEDS_ACCEPTANCE
     assert completion.can_complete is False
 
-    agent.validation_pipeline.state.acceptance_passed = True
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
     still_blocked = evaluate_completion(agent)
     assert still_blocked.status == CompletionStatus.NEEDS_FULL_VALIDATION
 
-    agent.validation_pipeline.state.full_passed = True
+    record_evidence(agent.validation_pipeline.state, "full_passed", True)
     ready = evaluate_completion(agent)
     assert ready.status == CompletionStatus.READY
     assert ready.can_complete is True

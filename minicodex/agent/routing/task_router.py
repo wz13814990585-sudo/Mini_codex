@@ -169,7 +169,7 @@ class TaskRouter:
         no_edit = bool(self._NO_EDIT.search(text))
         inspect = any(x in lowered for x in ("inspect", "review", "analyze", "analyse", "检查", "分析", "审查"))
         modify = bool(re.search(
-            r"\b(?:create|add|update|fix|implement|refactor|change|delete|rename|improve|perform)\b|"
+            r"\b(?:create|add|update|fix|implement|refactor|change|delete|rename|improve|perform|set)\b|"
             r"^\s*do\s+(?:a|the|this)\b|(?:创建|添加|修改|修复|重构|实现|删除|优化|完成)",
             lowered, re.IGNORECASE,
         ))

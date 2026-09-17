@@ -19,6 +19,12 @@ class ToolRestriction:
 def resolve_tool_restriction(agent, tool_name: str, arguments: dict) -> ToolRestriction | None:
     """Apply edit recovery, finalization, action, and dependency policy in order."""
 
+    unit = getattr(getattr(agent, "task_state", None), "work_unit", None)
+    registry = getattr(agent, "registry", None)
+    caps = registry.capabilities_for(tool_name) if registry and tool_name in getattr(registry, "_tools", {}) else frozenset()
+    if unit and not unit.closed and unit.milestone_due and "code.edit" in caps:
+        return ToolRestriction("validation_milestone", "The bounded edit unit requires validation before further edits.")
+
     retry = getattr(agent, "edit_retry", None)
     if retry is not None:
         reason = retry.restriction_reason(tool_name, arguments)

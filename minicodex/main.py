@@ -30,8 +30,9 @@ from .tools.filesystem import ListFilesTool, ReadFileTool
 from .tools.search import SearchCodeTool, SearchSymbolTool
 from .tools.editing import PatchFileTool, ReplaceLinesTool, ReplaceSymbolTool, WriteFileTool
 from .tools.execution import InstallPythonPackageTool, RunCommandTool, RunTestsTool
+from .tools.validation.validate_service import ValidateServiceTool
 from .tools.validation import ValidateBrowserAppTool, ValidateStaticWebTool
-from .tools.planning import CompletePlanStepTool, ReplanTool
+from .tools.planning import ReplanTool
 from .tools.git import GitDiffTool, GitStatusTool
 
 
@@ -185,6 +186,7 @@ def main(output_level: str = "normal"):
     # Stage 17 Sandboxed Execution / Validation
     # =========================================================
 
+    registry.register(ValidateServiceTool(workspace))
     registry.register(
         RunCommandTool(
             workspace=workspace,
@@ -338,14 +340,6 @@ def main(output_level: str = "normal"):
     # =========================================================
     # Agent Callback Tools
     # =========================================================
-
-    registry.register(
-        CompletePlanStepTool(
-            callback=(
-                agent.complete_plan_step
-            )
-        )
-    )
 
     registry.register(
         ReplanTool(

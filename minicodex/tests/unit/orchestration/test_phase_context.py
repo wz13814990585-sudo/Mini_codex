@@ -5,7 +5,9 @@ from ....agent.routing import ExecutionMode
 from ....agent.routing import policy_for
 from ....agent.orchestration import ContextBuilder
 from ....agent.routing import RoutingDecision, TaskIntent
-from ....agent.task_state import AgentPhase
+from ....agent.task_state import AgentPhase, RuntimeEventType
+from dataclasses import replace
+from minicodex.tests.evidence_fixtures import record_evidence
 from ....tools.registry import ToolRegistry
 
 
@@ -22,17 +24,15 @@ def make_agent(tmp_path):
         target_paths=("app.py",),
     )
     agent.execution_policy = policy_for(ExecutionMode.FAST)
-    agent.task_state.intent = TaskIntent.MODIFY
-    agent.task_state.mode = ExecutionMode.FAST
-    agent.task_state.user_request = "Update app.py"
-    agent.task_state.target_paths = ("app.py",)
+    agent.apply_runtime_event(RuntimeEventType.TASK_STARTED, intent=TaskIntent.MODIFY,
+                              mode=ExecutionMode.FAST, user_request="Update app.py", target_paths=("app.py",))
     return agent
 
 
 def test_acting_context_has_edit_hint_without_validation_noise(tmp_path):
     (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
     agent = make_agent(tmp_path)
-    agent.task_state.phase = AgentPhase.ACTING
+    agent.apply_runtime_event(RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.ACTING)
 
     context = ContextBuilder().build(
         agent, current_plan_step=None, remaining_agent_steps=4
@@ -44,11 +44,10 @@ def test_acting_context_has_edit_hint_without_validation_noise(tmp_path):
 
 def test_fixing_context_focuses_failure_paths(tmp_path):
     agent = make_agent(tmp_path)
-    agent.task_state.phase = AgentPhase.FIXING
-    agent.validation_pipeline.state.latest_evidence = SimpleNamespace(
-        outcome=SimpleNamespace(value="failed"),
-        details={"failure_paths": ["tests/test_app.py", "app.py"]},
-    )
+    agent.apply_runtime_event(RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.FIXING)
+    ledger = agent.validation_pipeline.state
+    evidence = record_evidence(ledger, "acceptance_passed", False)
+    ledger.record(replace(evidence, details={"failure_paths": ["tests/test_app.py", "app.py"]}))
 
     context = ContextBuilder().build(
         agent, current_plan_step=None, remaining_agent_steps=3

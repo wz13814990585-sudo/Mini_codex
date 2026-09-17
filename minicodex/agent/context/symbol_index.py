@@ -64,6 +64,8 @@ class SymbolIndex:
 
         self.indexed_files = 0
         self.parse_errors = 0
+        self._fingerprint = None
+        self.build_count = 0
 
     # =========================================================
     # Refresh
@@ -76,6 +78,13 @@ class SymbolIndex:
         Rebuild the symbol index from the current workspace.
         """
 
+        paths = tuple(self._python_files())[:self.max_files] if self.workspace.is_dir() else ()
+        fingerprint = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in paths)
+        if fingerprint == self._fingerprint:
+            return
+        self._fingerprint = fingerprint
+        self.build_count += 1
+
         self.symbols = []
         self.indexed_files = 0
         self.parse_errors = 0
@@ -86,7 +95,7 @@ class SymbolIndex:
         if not self.workspace.is_dir():
             return
 
-        for file_path in self._python_files():
+        for file_path in paths:
 
             self._index_file(
                 file_path

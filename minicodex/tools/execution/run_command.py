@@ -42,6 +42,7 @@ class RunCommandTool(
                 "enum": [
                     "diagnostic",
                     "acceptance",
+                    "regression",
                 ],
                 "description": (
                     "Command intent. Defaults to diagnostic; "
@@ -112,10 +113,11 @@ class RunCommandTool(
         if normalized_purpose not in {
             "diagnostic",
             "acceptance",
+            "regression",
         }:
             raise ValueError(
                 "purpose must be either "
-                "'diagnostic' or 'acceptance'."
+                "'diagnostic', 'acceptance', or 'regression'."
             )
 
         sandbox_result = (

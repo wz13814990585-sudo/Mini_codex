@@ -10,7 +10,8 @@ from .prompt_builder import PromptBuilder
 from .tool_schema_provider import ToolSchemaProvider
 from .turn_builder import AgentTurn, TurnBuilder
 from .tool_call_runner import ToolCallRun, ToolCallRunner
-from .tool_batch_runner import ToolBatchResult, ToolBatchRunner
+from .tool_batch_runner import ToolBatchRunner
+from .tool_batch_result import ToolBatchResult
 from .validation_orchestrator import ValidationOrchestrator
 from .plan_orchestrator import PlanOrchestrator, PlanTurnState
 from .task_report import TaskReportBuilder

@@ -41,6 +41,8 @@ class SafetyToolExecutor:
         *,
         executor,
         policy,
+        intervention_hook=None,
+        registry=None,
     ):
 
         self.executor = (
@@ -50,6 +52,10 @@ class SafetyToolExecutor:
         self.policy = (
             policy
         )
+        # The host may request approval or clarification. A hook never silently
+        # overrides a safety denial; an approved task must be explicitly retried.
+        self.intervention_hook = intervention_hook
+        self.registry = registry
 
     # =========================================================
     # Prepare
@@ -100,14 +106,27 @@ class SafetyToolExecutor:
 
         try:
 
+            assessment_name = prepared.tool_name
+            assessment_arguments = prepared.arguments
+            if self.registry is not None and prepared.tool_name in getattr(self.registry, "_tools", {}):
+                caps = self.registry.capabilities_for(prepared.tool_name)
+                if "code.edit" in caps and prepared.tool_name not in self.policy.EDIT_TOOL_NAMES:
+                    assessment_name = "patch_file"
+                elif "process.run" in caps:
+                    assessment_name = "run_command"
+                elif "service.validate" in caps:
+                    import shlex
+                    assessment_name = "run_command"
+                    assessment_arguments = {"command": shlex.join(prepared.arguments.get("argv", []))}
+
             decision = (
                 self.policy
                 .assess(
                     tool_name=(
-                        prepared.tool_name
+                        assessment_name
                     ),
                     arguments=(
-                        prepared.arguments
+                        assessment_arguments
                     ),
                 )
             )
@@ -164,6 +183,8 @@ class SafetyToolExecutor:
         if not (
             decision.allowed
         ):
+            if self.intervention_hook is not None:
+                self.intervention_hook(decision.intervention, decision, prepared)
 
             return (
                 self._blocked_execution(

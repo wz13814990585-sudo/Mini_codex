@@ -45,7 +45,7 @@ def test_regression_policy_uses_change_scope_and_mode():
     assert policy.requirement_for(
         mode=ExecutionMode.COMPLEX,
         changed_paths=("try_code/index.html",),
-    ) == RegressionRequirement.REQUIRED
+    ) == RegressionRequirement.NOT_APPLICABLE
 
 
 def test_fast_acceptance_is_ready_without_full_regression():

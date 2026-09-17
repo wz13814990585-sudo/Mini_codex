@@ -60,6 +60,8 @@ from .safety import (
     SafetyToolExecutor,
 )
 from .task_state import AgentPhase, RuntimeEventType, TaskRuntime, TaskState
+from .validation.plan import ValidationPlanner
+from .context.workspace_session import WorkspaceSession
 from .memory import (
     WorkingSummary,
 )
@@ -105,6 +107,7 @@ class MiniCodexAgent:
                 registry
             )
         )
+        self.workspace_session = WorkspaceSession(self.workspace)
 
         # =====================================================
         # Git awareness
@@ -216,6 +219,7 @@ class MiniCodexAgent:
 
         self.tool_executor = (
             SafetyToolExecutor(
+                registry=registry,
                 executor=(
                     checkpoint_executor
                 ),
@@ -331,7 +335,7 @@ class MiniCodexAgent:
         )
         self.latest_progress_signal = None
 
-        self.action_controller = ActionController()
+        self.action_controller = ActionController(registry)
         self.finalization = FinalizationController()
         self.step_evidence = StepEvidenceStore()
         self.completion_policy = TaskCompletionPolicy()
@@ -343,7 +347,10 @@ class MiniCodexAgent:
         self.latest_dependency_resolution = None
         self.latest_symbol_recovery_paths: tuple[str, ...] = ()
         self.relevant_path_resolver = RelevantPathResolver(self.workspace)
-        self.validation_selector = ValidationSelector(self.workspace)
+        self.validation_selector = ValidationSelector(self.workspace, test_index=self.workspace_session.test_index)
+        for tool in getattr(self.registry, "_tools", {}).values():
+            if hasattr(tool, "symbol_index"):
+                tool.symbol_index = self.workspace_session.symbol_index
         self.completion_handler = CompletionHandler()
         self.turn_builder = TurnBuilder()
         self.tool_batch_runner = ToolBatchRunner()
@@ -556,6 +563,32 @@ class MiniCodexAgent:
         if stream is not None:
             print(str(message).strip(), file=stream, flush=True)
 
+    def refresh_workspace_facts(self):
+        session = self.workspace_session
+        external_candidate = session._fingerprint is not None
+        if session.refresh() and external_candidate and self.task_state.run_id:
+            revision = self.validation_pipeline.record_edit(owned=False)
+            self.task_requirements.invalidate_revision(revision)
+            self.working_summary.advance_revision(revision)
+            self.apply_runtime_event(RuntimeEventType.WORKSPACE_CHANGED, edit_revision=revision,
+                                     paths=session.changed_paths)
+            self.sync_requirements_state()
+            self._repo_map_initialized = False
+            self._repo_map_revision = None
+
+    def undo_task(self):
+        """Explicit user-facing undo; never invoked by ordinary validation failure."""
+        result = self.rollback_engine.undo_task()
+        if result.data.get("restored_paths"):
+            revision = self.validation_pipeline.record_edit()
+            self.task_requirements.invalidate_revision(revision)
+            self.apply_runtime_event(RuntimeEventType.ROLLBACK_APPLIED, edit_revision=revision,
+                                     restored_paths=tuple(result.data["restored_paths"]))
+            self.sync_requirements_state()
+            for path in result.data["restored_paths"]:
+                self.workspace_session.invalidate(path)
+        return result
+
     def _run_impl(
         self,
         user_input: str,
@@ -566,6 +599,7 @@ class MiniCodexAgent:
         self.active_user_request = (
             user_input
         )
+        self.workspace_session.refresh()
 
         self.active_plan = None
 
@@ -642,6 +676,9 @@ class MiniCodexAgent:
         self.execution_metrics.record_requirements(
             self.requirements_extractor.last_telemetry
         )
+        self.validation_pipeline.state.plan = ValidationPlanner().build(
+            self.task_requirements, profile=self.workspace_session.profile,
+            paths=getattr(self.execution_route, "target_paths", ()), request=user_input)
         self.runtime_control.reset(planning_active=False)
         self.runtime_control.control_llm_calls = (
             self.execution_metrics.routing_llm_calls
@@ -834,20 +871,18 @@ class MiniCodexAgent:
             schemas = self._schemas_for_capabilities(inspect_capabilities)
         else:
             schemas = self.registry.get_schemas()
-        # Plan progress is reconciled from tool evidence. The compatibility
-        # tool remains registrable for old integrations but is never model-visible.
-        schemas = [
-            schema for schema in schemas
-            if schema.get("function", {}).get("name") != "complete_plan_step"
-        ]
         policy = self.execution_policy
         allowed = getattr(policy, "exposed_tool_names", None)
         if allowed is None:
             return schemas
+        from ..tools.registry import ToolRegistry
+        allowed_capabilities = set().union(*(ToolRegistry._NAME_CAPABILITIES.get(name, set()) for name in allowed))
         return [
             schema
             for schema in schemas
             if schema.get("function", {}).get("name") in allowed
+            or (schema.get("function", {}).get("name") in getattr(self.registry, "_tools", {})
+                and bool(self.registry.capabilities_for(schema["function"]["name"]) & allowed_capabilities))
         ]
 
     def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
@@ -923,11 +958,6 @@ class MiniCodexAgent:
 
     def reconcile_plan_progress(self) -> dict:
         return self.plan_orchestrator.reconcile_progress(self)
-
-    def complete_plan_step(self) -> dict:
-        """Compatibility callback; plan completion is normally automatic."""
-
-        return self.plan_orchestrator.complete_step(self)
 
     def replan(self, reason: str) -> dict:
         return self.plan_orchestrator.replan_task(self, reason)

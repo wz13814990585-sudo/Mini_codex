@@ -114,6 +114,7 @@ class CheckpointManager:
         )
 
         self._counter = 0
+        self.history_trimmed = False
 
         self._checkpoints: list[
             Checkpoint
@@ -130,6 +131,7 @@ class CheckpointManager:
         self._counter = 0
 
         self._checkpoints.clear()
+        self.history_trimmed = False
 
     # =========================================================
     # Capture Before-State
@@ -546,6 +548,7 @@ class CheckpointManager:
             - self.max_checkpoints
         )
 
+        self.history_trimmed = True
         del self._checkpoints[
             :overflow
         ]

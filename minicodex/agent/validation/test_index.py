@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from ...utils.paths import normalize_repo_path
+from ..context.repo_map import DEFAULT_IGNORED_DIRS
 
 
 @dataclass(frozen=True)
@@ -71,15 +73,17 @@ class TestIndex:
 
     def _test_files(self) -> tuple[Path, ...]:
         found: list[Path] = []
-        for root_name in ("minicodex/tests", "tests"):
-            root = self.workspace / root_name
-            if root.is_dir():
-                found.extend(
-                    path
-                    for path in root.rglob("*.py")
-                    if path.name.startswith("test_") or path.name.endswith("_test.py")
-                )
-        return tuple(sorted(dict.fromkeys(found)))
+        visited = 0
+        for base, dirs, files in os.walk(self.workspace, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if d not in DEFAULT_IGNORED_DIRS and not d.startswith("."))
+            for name in sorted(files):
+                visited += 1
+                path = Path(base) / name
+                if name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")) and not path.is_symlink():
+                    found.append(path)
+                if visited >= 2000:
+                    return tuple(sorted(found))
+        return tuple(sorted(found))
 
     def _scan_test(self, path: Path) -> IndexedTest:
         relative = path.relative_to(self.workspace).as_posix()
@@ -98,9 +102,10 @@ class TestIndex:
                         imports.append(resolved)
             elif isinstance(node, ast.ImportFrom):
                 module = self._absolute_import_module(path, node)
-                resolved = self._module_path(module)
-                if resolved:
-                    imports.append(resolved)
+                for candidate in (module, *(f"{module}.{alias.name}" for alias in node.names)):
+                    resolved = self._module_path(candidate)
+                    if resolved:
+                        imports.append(resolved)
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                 value = normalize_repo_path(node.value.strip())
                 if value.endswith(".py") and (self.workspace / value).is_file():
@@ -127,7 +132,8 @@ class TestIndex:
         if not module:
             return None
         base = Path(*module.split("."))
-        candidates = (base.with_suffix(".py"), base / "__init__.py")
+        candidates = tuple(candidate for root in (Path(), Path("src"), Path("lib"))
+                           for candidate in (root / base.with_suffix(".py"), root / base / "__init__.py"))
         for candidate in candidates:
             if (self.workspace / candidate).is_file():
                 return candidate.as_posix()

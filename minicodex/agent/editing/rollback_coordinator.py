@@ -63,6 +63,9 @@ class RollbackCoordinator:
             )
 
         rollback_revision = pipeline.record_edit()
+        session = getattr(agent, "workspace_session", None)
+        if session is not None:
+            session.invalidate(checkpoint.snapshot.path)
         requirements = getattr(agent, "task_requirements", None)
         if requirements is not None:
             requirements.invalidate_revision(rollback_revision)
@@ -94,6 +97,7 @@ class RollbackCoordinator:
                 edit_revision=rollback_revision,
                 rollback_revision=getattr(agent, "rollback_revision", 1),
                 checkpoint_id=checkpoint.checkpoint_id,
+                restored_paths=(checkpoint.snapshot.path,),
             )
         agent.progress.reset()
         agent.recovery.mark_progress()

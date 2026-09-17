@@ -166,6 +166,13 @@ class EvaluationResult:
     repeated_action_rate: float = 0.0
     no_progress_detections: int = 0
     recovery_successes: int = 0
+    time_to_first_edit: float | None = None
+    inspections_before_first_edit: int | None = None
+    searches_before_first_edit: int = 0
+    redundant_reads: int = 0
+    redundant_searches: int = 0
+    wrong_validation_target: bool = False
+    cost_usd: float | None = None
 
     duration_seconds: float = 0.0
 
@@ -359,11 +366,37 @@ class EvaluationSummary:
             / self.total_cases
         )
 
+    def vibe_metrics(self) -> dict:
+        from statistics import median
+        successes = [r for r in self.results if r.passed]
+        total = max(1, len(self.results))
+        successful = max(1, len(successes))
+        return {
+            "task_success_rate": self.success_rate,
+            "false_completion_rate": sum(r.false_completion for r in self.results) / total,
+            "median_time_to_success": median([r.duration_seconds for r in successes]) if successes else None,
+            "median_tokens_per_success": median([r.total_tokens for r in successes]) if successes else None,
+            "median_cost_per_success_usd": median([r.cost_usd for r in successes if r.cost_usd is not None])
+                if any(r.cost_usd is not None for r in successes) else None,
+            "main_llm_calls_per_success": sum(r.llm_calls for r in self.results) / successful,
+            "control_llm_calls_per_success": sum(r.control_llm_calls for r in self.results) / successful,
+            "tool_calls_per_success": sum(r.tool_call_count for r in self.results) / successful,
+            "median_time_to_first_edit": median([r.time_to_first_edit for r in successes if r.time_to_first_edit is not None])
+                if any(r.time_to_first_edit is not None for r in successes) else None,
+            "wrong_file_edit_rate": sum(r.wrong_edit for r in self.results) / total,
+            "wrong_validation_target_rate": sum(r.wrong_validation_target for r in self.results) / total,
+            "repeated_tool_rate": sum(r.repeated_action_count for r in self.results) / max(1, sum(r.tool_call_count for r in self.results)),
+            "max_step_exhaustion_rate": sum(r.max_steps_exhausted for r in self.results) / total,
+            "rollback_rate": sum(r.rollback_count > 0 for r in self.results) / total,
+            "recovery_success_rate": sum(r.recovery_successes > 0 for r in self.results) / max(1, sum(r.repair_attempts > 0 for r in self.results)),
+        }
+
     def to_dict(
         self,
     ) -> dict:
 
         return {
+            "vibebench": self.vibe_metrics(),
             "run_name": (
                 self.run_name
             ),

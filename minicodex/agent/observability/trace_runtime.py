@@ -1072,61 +1072,6 @@ def attach_runtime_tracing(
         )
     )
 
-    # =========================================================
-    # Plan Step
-    # =========================================================
-
-    original_complete_plan_step = (
-        agent.complete_plan_step
-    )
-
-    def traced_complete_plan_step(
-        self,
-    ):
-
-        result = (
-            original_complete_plan_step()
-        )
-
-        if (
-            isinstance(
-                result,
-                dict,
-            )
-            and result.get(
-                "completed",
-                False,
-            )
-        ):
-
-            _safe_emit(
-                recorder,
-                (
-                    TraceEventType
-                    .PLAN_STEP_COMPLETED
-                ),
-                {
-                    "step_id": (
-                        result.get(
-                            "step_id"
-                        )
-                    ),
-                    "description": (
-                        result.get(
-                            "step_description"
-                        )
-                    ),
-                },
-            )
-
-        return result
-
-    agent.complete_plan_step = (
-        MethodType(
-            traced_complete_plan_step,
-            agent,
-        )
-    )
 
     agent._runtime_trace_attached = (
         True

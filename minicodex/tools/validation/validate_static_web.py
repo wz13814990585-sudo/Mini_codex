@@ -90,6 +90,7 @@ class ValidateStaticWebTool(BaseTool):
                 "type": "string",
                 "description": "Workspace-relative HTML file path.",
             },
+            "expected_text": {"type": "string", "description": "Required literal source text supporting the requested content."},
             "min_button_count": {
                 "type": "integer",
                 "minimum": 0,
@@ -147,6 +148,7 @@ class ValidateStaticWebTool(BaseTool):
         min_data_row_count: int = 0,
         min_data_col_count: int = 0,
         require_inline_script: bool = False,
+        expected_text: str = "",
     ) -> ToolResult:
         target = resolve_workspace_path(
             self.workspace,
@@ -183,6 +185,8 @@ class ValidateStaticWebTool(BaseTool):
             )
 
         parser = _StaticWebParser()
+        if expected_text and expected_text not in source:
+            errors.append(f"Required content not found: {expected_text}")
 
         try:
             parser.feed(source)
@@ -229,7 +233,7 @@ class ValidateStaticWebTool(BaseTool):
         else:
             outcome = "passed"
 
-        return self._result(
+        result = self._result(
             path=path,
             outcome=outcome,
             html_parse=html_parse,
@@ -238,6 +242,8 @@ class ValidateStaticWebTool(BaseTool):
             counts=counts,
             errors=errors,
         )
+        result.data["evidence_strength"] = 0 if expected_text or any(minimums.values()) or require_inline_script else -1
+        return result
 
     def _validate_scripts(
         self,

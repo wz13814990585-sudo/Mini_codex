@@ -213,12 +213,12 @@ class CancellableToolExecutor:
 
         self.token.raise_if_cancelled()
 
-        execution = (
-            self.executor
-            .execute_prepared(
-                prepared
-            )
-        )
+        from .execution_control import ACTIVE_CANCELLATION
+        context_token = ACTIVE_CANCELLATION.set(self.token)
+        try:
+            execution = self.executor.execute_prepared(prepared)
+        finally:
+            ACTIVE_CANCELLATION.reset(context_token)
 
         self.token.raise_if_cancelled()
 
@@ -707,9 +707,10 @@ class AsyncAgentTask:
 
             try:
                 from ..validation import TaskOutcome
-                state = getattr(self.agent, "task_state", None)
-                if state is not None:
-                    state.finish(TaskOutcome.CANCELLED)
+                from ..task_state import RuntimeEventType
+                emit = getattr(self.agent, "apply_runtime_event", None)
+                if emit is not None:
+                    emit(RuntimeEventType.TASK_COMPLETED, outcome=TaskOutcome.CANCELLED)
                 metrics = getattr(self.agent, "execution_metrics", None)
                 if metrics is not None:
                     metrics.finish(TaskOutcome.CANCELLED.value, str(e))

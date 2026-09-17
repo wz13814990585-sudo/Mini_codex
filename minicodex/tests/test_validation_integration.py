@@ -1,9 +1,10 @@
+from minicodex.agent.validation.decision_policy import ValidationDecisionPolicy
 from types import SimpleNamespace
 
 from ..agent.validation import (
     CompletionStatus,
 )
-from ..agent.orchestration.loop import (
+from ..agent.orchestration.tool_event_adapter import (
     EDIT_TOOL_NAMES,
 )
 from ..agent.orchestration.validation_orchestrator import (
@@ -217,8 +218,7 @@ def test_full_regression_alone_does_not_complete_task():
     )
 
     assert (
-        agent.validation_pipeline
-        .next_action(
+        ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(
             evidence
         )
         == (
@@ -362,8 +362,7 @@ def test_acceptance_alone_does_not_complete_task():
     )
 
     assert (
-        agent.validation_pipeline
-        .next_action(
+        ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(
             evidence
         )
         == (
@@ -517,8 +516,7 @@ def test_acceptance_then_full_regression_opens_completion_gate():
     )
 
     assert (
-        agent.validation_pipeline
-        .next_action(
+        ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(
             acceptance
         )
         == (
@@ -546,8 +544,7 @@ def test_acceptance_then_full_regression_opens_completion_gate():
     )
 
     assert (
-        agent.validation_pipeline
-        .next_action(
+        ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(
             regression
         )
         == (
@@ -655,8 +652,7 @@ def test_full_regression_then_acceptance_also_opens_gate():
     )
 
     assert (
-        agent.validation_pipeline
-        .next_action(
+        ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(
             acceptance
         )
         == (
@@ -1045,8 +1041,7 @@ def test_full_regression_without_edit_does_not_open_gate():
     )
 
     assert (
-        agent.validation_pipeline
-        .next_action(
+        ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(
             evidence
         )
         == ValidationNextAction.NONE

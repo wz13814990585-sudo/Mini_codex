@@ -1,3 +1,4 @@
+from minicodex.tests.evidence_fixtures import record_evidence
 from types import SimpleNamespace
 
 from ..agent.orchestration.validation_orchestrator import (
@@ -64,13 +65,9 @@ def make_green_revision(
 
     agent.validation_pipeline.record_edit()
 
-    agent.validation_pipeline.state.acceptance_passed = (
-        True
-    )
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
-    agent.validation_pipeline.state.full_passed = (
-        True
-    )
+    record_evidence(agent.validation_pipeline.state, "full_passed", True)
 
 
 # =============================================================
@@ -191,13 +188,9 @@ def test_completed_plan_does_not_bypass_missing_acceptance():
 
     agent.validation_pipeline.record_edit()
 
-    agent.validation_pipeline.state.full_passed = (
-        True
-    )
+    record_evidence(agent.validation_pipeline.state, "full_passed", True)
 
-    agent.validation_pipeline.state.acceptance_passed = (
-        False
-    )
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", False)
 
     assert (
         can_finish_edit_task(
@@ -226,13 +219,9 @@ def test_completed_plan_does_not_bypass_missing_regression():
 
     agent.validation_pipeline.record_edit()
 
-    agent.validation_pipeline.state.acceptance_passed = (
-        True
-    )
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
-    agent.validation_pipeline.state.full_passed = (
-        False
-    )
+    record_evidence(agent.validation_pipeline.state, "full_passed", False)
 
     assert (
         can_finish_edit_task(
@@ -261,12 +250,8 @@ def test_incomplete_plan_cannot_veto_fully_green_revision():
 
     agent.validation_pipeline.record_edit()
 
-    agent.validation_pipeline.state.acceptance_passed = (
-        True
-    )
+    record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
-    agent.validation_pipeline.state.full_passed = (
-        True
-    )
+    record_evidence(agent.validation_pipeline.state, "full_passed", True)
 
     assert can_finish_edit_task(agent) is True

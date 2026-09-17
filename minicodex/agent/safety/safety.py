@@ -26,6 +26,12 @@ class SafetyLevel(
     BLOCKED = "blocked"
 
 
+class InterventionCategory(str, Enum):
+    AUTONOMOUS = "autonomous"
+    APPROVAL = "approval"
+    CLARIFICATION = "clarification"
+
+
 # =============================================================
 # Safety Decision
 # =============================================================
@@ -51,6 +57,14 @@ class SafetyDecision:
     command: str | None = None
 
     @property
+    def intervention(self) -> InterventionCategory:
+        if self.allowed:
+            return InterventionCategory.AUTONOMOUS
+        if self.rule in {"task_no_edit_constraint", "dependency_forbidden"}:
+            return InterventionCategory.CLARIFICATION
+        return InterventionCategory.APPROVAL
+
+    @property
     def requires_attention(
         self,
     ) -> bool:
@@ -65,6 +79,7 @@ class SafetyDecision:
     ) -> dict:
 
         return {
+            "intervention": self.intervention.value,
             "level": (
                 self.level.value
             ),
@@ -234,6 +249,7 @@ class SafetyPolicy:
         )
         self.edits_authorized = True
         self.test_changes_authorized = False
+        self.test_contract_change_authorized = False
         self.user_request = ""
         self.dependencies_authorized = True
 
@@ -250,6 +266,10 @@ class SafetyPolicy:
         self.test_changes_authorized = bool(re.search(
             r"\b(?:add|update|change|fix|write)\s+(?:the\s+)?tests?\b|"
             r"(?:添加|更新|修改|修复|编写)(?:测试|用例)", text, re.IGNORECASE,
+        ))
+        self.test_contract_change_authorized = bool(re.search(
+            r"\b(?:remove|delete)\s+(?:obsolete|deprecated|outdated)\s+tests?\b|\bskip\s+test_\w+\b|删除过时测试",
+            text, re.IGNORECASE,
         ))
         self.dependencies_authorized = not bool(re.search(
             r"\b(?:do not|don't|without)\s+(?:add|install)\s+(?:new\s+)?dependenc|"
@@ -542,7 +562,7 @@ class SafetyPolicy:
             for name in ("content", "new_text", "replacement")
         )
         if re.search(r"pytest\.mark\.(?:skip|xfail)|@unittest\.skip|assert\s+True\b", candidate):
-            return not self.test_changes_authorized
+            return not self.test_contract_change_authorized
         if arguments.get("content") == "":
             return True
         return False

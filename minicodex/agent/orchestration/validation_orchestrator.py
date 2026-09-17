@@ -1,6 +1,7 @@
 """Validation progress, recovery, rollback, and completion orchestration."""
 
 from __future__ import annotations
+from ..validation.decision_policy import ValidationDecisionPolicy
 
 import re
 
@@ -72,11 +73,7 @@ def acceptance_evidence_reminder(
         selection = selector.select(
             target_paths=tuple(dict.fromkeys(candidates)),
             registered_tools=registered,
-            revision=getattr(
-                getattr(agent, "validation_pipeline", None), "state", None
-            ).edit_revision
-            if getattr(getattr(agent, "validation_pipeline", None), "state", None)
-            else 0,
+            revision=getattr(getattr(agent, "workspace_session", None), "revision", 0),
             desired_purpose="acceptance",
             runtime_behavior=any(
                 marker in request.casefold()
@@ -127,6 +124,19 @@ class ValidationOrchestrator:
         messages: list | None = None,
     ) -> ControlDecision:
         del messages
+        if evidence.unstable:
+            ledger = agent.validation_pipeline.state
+            attempts = sum(e.edit_revision == evidence.edit_revision and e.validation_key == evidence.validation_key
+                           for e in ledger.evidence_history)
+            metrics = getattr(agent, "execution_metrics", None)
+            if metrics is not None:
+                metrics.flaky_reruns += 1
+                metrics.premature_rollbacks_prevented += 1
+            if attempts >= 6:
+                return ControlDecision(early_stop="Validation remained unstable after bounded rechecks; no regression conclusion is justified.")
+            return ControlDecision(restart=True,
+                followup_message="Contradictory same-revision evidence is unstable. Rerun the identical check before repairing or rolling back.",
+                skipped_reason="bounded flaky recheck")
         failed_count = (
             0
             if evidence.outcome == ValidationOutcome.PASSED
@@ -228,7 +238,7 @@ class ValidationOrchestrator:
             agent.recovery.mark_progress()
             print("\n[Meaningful Progress Detected]")
 
-        next_action = agent.validation_pipeline.next_action(evidence)
+        next_action = ValidationDecisionPolicy(agent.validation_pipeline.state).next_action(evidence)
         print("\n[Validation Policy]")
         print(f"Next action: {next_action.value}")
         ordinary = validation_transition(

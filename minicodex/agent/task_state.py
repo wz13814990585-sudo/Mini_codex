@@ -11,11 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 from uuid import uuid4
 
 from .routing import ExecutionMode, TaskIntent
 from .validation import TaskOutcome, ValidationOutcome
+if TYPE_CHECKING:
+    from .editing.work_unit import WorkUnit
 
 
 class AgentPhase(str, Enum):
@@ -38,6 +40,7 @@ class RuntimeEventType(str, Enum):
     TOOL_STARTED = "tool_started"
     TOOL_FINISHED = "tool_finished"
     EDIT_APPLIED = "edit_applied"
+    WORKSPACE_CHANGED = "workspace_changed"
     VALIDATION_OBSERVED = "validation_observed"
     REQUIREMENTS_UPDATED = "requirements_updated"
     RECOVERY_STARTED = "recovery_started"
@@ -60,7 +63,7 @@ class RuntimeEvent:
         return cls(kind=kind, data=MappingProxyType(dict(data)))
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskState:
     """Authoritative current state of one run."""
 
@@ -97,6 +100,8 @@ class TaskState:
     recovery_level: int = 0
     active_tool: str | None = None
     event_sequence: int = 0
+    work_unit: WorkUnit | None = None
+    edit_issues: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def validation_version(self) -> int:
@@ -137,37 +142,6 @@ class TaskState:
             problems.append("provider_call_during_open_tool_batch")
         return tuple(problems)
 
-    # Kept as a narrow compatibility surface for callers constructing an
-    # isolated state in tests. Production orchestration uses TaskRuntime.emit.
-    def transition_for_tool(
-        self,
-        tool_name: str,
-        *,
-        success: bool,
-        validation_outcome: ValidationOutcome | None = None,
-        stale_edit: bool = False,
-    ) -> AgentPhase:
-        if self.phase in {AgentPhase.DONE, AgentPhase.BLOCKED}:
-            return self.phase
-        if stale_edit or validation_outcome == ValidationOutcome.FAILED:
-            self.phase = AgentPhase.FIXING
-        elif tool_name in {"patch_file", "replace_lines", "replace_symbol", "write_file"}:
-            self.phase = AgentPhase.VALIDATING if success else AgentPhase.ACTING
-        elif validation_outcome is not None:
-            self.phase = AgentPhase.VALIDATING
-        return self.phase
-
-    def mark_finalizing(self) -> None:
-        if self.phase not in {AgentPhase.DONE, AgentPhase.BLOCKED}:
-            self.phase = AgentPhase.FINALIZING
-
-    def require_action(self) -> None:
-        if self.phase == AgentPhase.INSPECTING:
-            self.phase = AgentPhase.ACTING
-
-    def finish(self, outcome: TaskOutcome) -> None:
-        self.outcome = outcome
-        self.phase = AgentPhase.BLOCKED if outcome == TaskOutcome.BLOCKED else AgentPhase.DONE
 
 
 def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
@@ -177,7 +151,7 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
     sequence = state.event_sequence + 1
     if event.kind == RuntimeEventType.TASK_STARTED:
         return TaskState(
-            run_id=str(data.get("run_id") or uuid4().hex),
+            run_id=str(data.get("run_id", "")),
             mode=data.get("mode"),
             intent=data.get("intent", TaskIntent.MODIFY),
             needs_plan=bool(data.get("needs_plan", False)),
@@ -235,22 +209,39 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
         updates["consecutive_no_state_change"] = max(
             0, int(data.get("consecutive_no_state_change", state.consecutive_no_state_change))
         )
-    elif event.kind == RuntimeEventType.EDIT_APPLIED:
+    elif event.kind in {RuntimeEventType.EDIT_APPLIED, RuntimeEventType.WORKSPACE_CHANGED}:
+        from .editing.work_unit import WorkUnit
+        owned = event.kind == RuntimeEventType.EDIT_APPLIED
         revision = int(data.get("edit_revision", state.edit_revision + 1))
+        unit = state.work_unit
+        if owned:
+            if unit is None or unit.closed:
+                unit = WorkUnit(f"W{revision}", state.target_paths, state.edit_revision)
+            updates["work_unit"] = unit.record_edit(str(data.get("path", "")))
+        elif unit:
+            updates["work_unit"] = replace(unit, closed=True)
+        issues = dict(state.edit_issues)
+        path = str(data.get("path", ""))
+        issues.pop(path, None)
+        if data.get("diff_quality_issues"):
+            issues[path] = tuple(data["diff_quality_issues"])
+        updates["edit_issues"] = tuple(issues.items())
         updates.update(
             edit_revision=revision,
-            has_edit=True,
+            has_edit=state.has_edit or owned,
             acceptance_passed=False,
             relevant_validation_passed=False,
             full_validation_passed=False,
             latest_validation_outcome=None,
             active_evidence_edit_revision=None,
-            phase=AgentPhase.VALIDATING,
+            phase=AgentPhase.VALIDATING if owned else AgentPhase.INSPECTING,
             consecutive_inspections=0,
             consecutive_no_state_change=0,
         )
     elif event.kind == RuntimeEventType.VALIDATION_OBSERVED:
         outcome = data.get("outcome")
+        if state.work_unit and outcome in {ValidationOutcome.PASSED, ValidationOutcome.FAILED}:
+            updates["work_unit"] = replace(state.work_unit, closed=True)
         updates.update(
             validation_revision=max(
                 state.validation_revision + 1,
@@ -279,6 +270,10 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
         )
     elif event.kind == RuntimeEventType.ROLLBACK_APPLIED:
         revision = int(data.get("edit_revision", state.edit_revision + 1))
+        restored = set(data.get("restored_paths", ()))
+        updates["edit_issues"] = tuple((p, issues) for p, issues in state.edit_issues if p not in restored)
+        if state.work_unit:
+            updates["work_unit"] = replace(state.work_unit, closed=True)
         updates.update(
             rollback_revision=max(state.rollback_revision + 1, int(data.get("rollback_revision", 0))),
             edit_revision=revision,
@@ -318,15 +313,15 @@ class TaskRuntime:
         violations = next_state.invariant_violations()
         if violations:
             raise ValueError("invalid task-state transition: " + ", ".join(violations))
-        # Preserve object identity for read-only controller references while
-        # still deriving every production transition through the pure reducer.
-        self.state.__dict__.update(next_state.__dict__)
+        self.state = next_state
         self.events.append(event)
         if len(self.events) > self.max_events:
             del self.events[: len(self.events) - self.max_events]
         return self.state
 
     def emit(self, kind: RuntimeEventType, **data: Any) -> TaskState:
+        if kind == RuntimeEventType.TASK_STARTED:
+            data.setdefault("run_id", uuid4().hex)
         return self.apply(RuntimeEvent.create(kind, **data))
 
     def can_continue(self) -> bool:

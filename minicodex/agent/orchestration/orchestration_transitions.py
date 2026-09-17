@@ -61,10 +61,6 @@ def record_task_outcome(
             outcome=outcome,
             reason=reason,
         )
-    else:
-        state = getattr(agent, "task_state", None)
-        if state is not None:
-            state.finish(outcome)
 
 
 def validation_transition(

@@ -275,6 +275,9 @@ class EvaluationHarness:
                 ),
             )
         )
+        # Evaluate real agents with the same requirement-aware gate as execution.
+        if getattr(agent, "completion_policy", None) is not None:
+            completion = agent.completion_policy.evaluate(agent)
 
         # =====================================================
         # Plan State
@@ -480,7 +483,7 @@ class EvaluationHarness:
             false_completion=bool(
                 intent == TaskIntent.MODIFY
                 and final_outcome in {"edited_and_validated", "already_satisfied"}
-                and not completion.can_complete
+                and (not completion.can_complete or not checks_passed)
             ),
             wrong_edit=bool(intent != TaskIntent.MODIFY and edit_count > 0),
             routing_llm_calls=int(metric("routing_llm_calls", 0) or 0),
@@ -502,6 +505,13 @@ class EvaluationHarness:
             repeated_action_rate=float(metric("repeated_action_rate", 0.0) or 0.0),
             no_progress_detections=int(metric("no_progress_detections", 0) or 0),
             recovery_successes=int(metric("recovery_successes", 0) or 0),
+            time_to_first_edit=metric("time_to_first_edit"),
+            inspections_before_first_edit=metric("inspections_before_first_edit"),
+            searches_before_first_edit=int(metric("searches_before_first_edit", 0)),
+            redundant_reads=int(metric("redundant_reads", 0)),
+            redundant_searches=int(metric("redundant_searches", 0)),
+            wrong_validation_target=bool(metric("wrong_validation_target_count", 0)),
+            cost_usd=metric("cost_usd"),
             duration_seconds=(
                 duration
             ),

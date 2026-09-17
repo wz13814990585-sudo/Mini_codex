@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 
 from ..routing import ExecutionMode, policy_for
+from ..task_state import RuntimeEventType
 
 _NEXT_MODE = {ExecutionMode.FAST: ExecutionMode.STANDARD, ExecutionMode.STANDARD: ExecutionMode.COMPLEX}
 
@@ -40,7 +41,7 @@ class RuntimeTaskControl:
         )
         agent.execution_policy = policy_for(target, needs_plan=needs_plan)
         agent.task_max_steps = min(agent.configured_max_steps, agent.execution_policy.max_steps)
-        agent.task_state.mode = target
+        agent.apply_runtime_event(RuntimeEventType.MODE_ESCALATED, mode=target)
         self.mode_escalations += 1
         agent.execution_metrics.mode_escalations = self.mode_escalations
         agent.working_summary.add(f"Mode escalated {current.value}->{target.value}: {reason}")

@@ -120,24 +120,21 @@ def make_fast_agent(tmp_path, llm, *, tests=(True,), command=None):
 
 
 def test_task_state_phase_machine_and_progress_key():
+    from minicodex.agent.task_state import TaskRuntime, RuntimeEventType
     state = TaskState(mode=ExecutionMode.FAST, user_request="fix demo.py")
+    runtime = TaskRuntime(state)
     before = state.progress_key()
-    state.transition_for_tool("read_file", success=True)
+    state = runtime.emit(RuntimeEventType.TOOL_FINISHED, tool_name="read_file")
     assert state.phase == AgentPhase.INSPECTING
     assert state.progress_key() == before
 
-    state.edit_revision = 1
-    state.transition_for_tool("patch_file", success=True)
+    state = runtime.emit(RuntimeEventType.EDIT_APPLIED, edit_revision=1)
     assert state.phase == AgentPhase.VALIDATING
     assert state.progress_key() != before
 
-    state.transition_for_tool(
-        "run_tests", success=True, validation_outcome=ValidationOutcome.FAILED
-    )
+    state = runtime.emit(RuntimeEventType.VALIDATION_OBSERVED, outcome=ValidationOutcome.FAILED)
     assert state.phase == AgentPhase.FIXING
-    state.transition_for_tool(
-        "run_tests", success=True, validation_outcome=ValidationOutcome.PASSED
-    )
+    state = runtime.emit(RuntimeEventType.VALIDATION_OBSERVED, outcome=ValidationOutcome.PASSED)
     assert state.phase == AgentPhase.VALIDATING
 
 
@@ -169,7 +166,8 @@ def test_action_controller_is_phase_aware():
     assert controller.restriction_reason("search_code", {}, policy)
     assert controller.restriction_reason("run_tests", {}, policy) is None
 
-    state.phase = AgentPhase.FIXING
+    from dataclasses import replace
+    state = replace(state, phase=AgentPhase.FIXING)
     controller.update_context(
         state=state,
         policy=policy,

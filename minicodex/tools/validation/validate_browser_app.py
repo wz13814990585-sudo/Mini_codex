@@ -109,7 +109,9 @@ class ValidateBrowserAppTool(BaseTool):
                 },
                 error=f"{type(error).__name__}: {error}",
             )
-        return self._result(path, "failed" if errors else "passed", errors)
+        result = self._result(path, "failed" if errors else "passed", errors)
+        result.data["evidence_strength"] = 5 if expected_text and (click_selector or keypress) else 2 if expected_text else 0
+        return result
 
     @staticmethod
     def _result(path: str, outcome: str, errors: list[str]) -> ToolResult:

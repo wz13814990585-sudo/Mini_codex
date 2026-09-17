@@ -1146,7 +1146,7 @@ class WorkingMemory:
 
         elif (
             tool_name
-            == "complete_plan_step"
+            == "plan_step_completed"
             and data.get(
                 "completed"
             )

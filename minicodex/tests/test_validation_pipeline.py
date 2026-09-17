@@ -1,3 +1,4 @@
+from minicodex.agent.validation.decision_policy import ValidationDecisionPolicy
 from ..agent.validation import (
     ValidationNextAction,
     ValidationOutcome,
@@ -151,14 +152,12 @@ def test_acceptance_pass_is_recorded():
     )
 
     assert (
-        pipeline
-        .current_acceptance_passed()
+        ValidationDecisionPolicy(pipeline.state).current_acceptance_passed()
         is True
     )
 
     assert (
-        pipeline
-        .current_edit_validated()
+        ValidationDecisionPolicy(pipeline.state).current_edit_validated()
         is False
     )
 
@@ -246,7 +245,7 @@ def test_acceptance_pass_requires_full_regression():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == (
@@ -256,14 +255,12 @@ def test_acceptance_pass_requires_full_regression():
     )
 
     assert (
-        pipeline
-        .requires_full_validation()
+        ValidationDecisionPolicy(pipeline.state).requires_full_validation()
         is True
     )
 
     assert (
-        pipeline
-        .requires_acceptance_validation()
+        ValidationDecisionPolicy(pipeline.state).requires_acceptance_validation()
         is False
     )
 
@@ -322,20 +319,18 @@ def test_full_regression_without_acceptance_requests_acceptance():
 
     # Regression-level code validation is true.
     assert (
-        pipeline
-        .current_edit_validated()
+        ValidationDecisionPolicy(pipeline.state).current_edit_validated()
         is True
     )
 
     # But task completion evidence is incomplete.
     assert (
-        pipeline
-        .current_acceptance_passed()
+        ValidationDecisionPolicy(pipeline.state).current_acceptance_passed()
         is False
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == (
@@ -407,7 +402,7 @@ def test_targeted_regression_does_not_count_as_acceptance():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == (
@@ -451,7 +446,7 @@ def test_acceptance_then_full_regression_validates_task_evidence():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             acceptance
         )
         == (
@@ -490,7 +485,7 @@ def test_acceptance_then_full_regression_validates_task_evidence():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             regression
         )
         == (
@@ -531,7 +526,7 @@ def test_full_regression_then_acceptance_also_validates_task():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             regression
         )
         == (
@@ -561,7 +556,7 @@ def test_full_regression_then_acceptance_also_validates_task():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             acceptance
         )
         == (
@@ -673,14 +668,12 @@ def test_new_edit_invalidates_acceptance_and_regression():
     )
 
     assert (
-        pipeline
-        .current_edit_validated()
+        ValidationDecisionPolicy(pipeline.state).current_edit_validated()
         is False
     )
 
     assert (
-        pipeline
-        .current_acceptance_passed()
+        ValidationDecisionPolicy(pipeline.state).current_acceptance_passed()
         is False
     )
 
@@ -735,7 +728,7 @@ def test_acceptance_failure_requests_fix():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == (
@@ -793,7 +786,7 @@ def test_regression_failure_requests_fix():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == (
@@ -913,7 +906,7 @@ def test_tool_execution_failure_is_inconclusive():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == (
@@ -1096,7 +1089,7 @@ def test_validation_without_edit_does_not_validate_task():
     )
 
     assert (
-        pipeline.next_action(
+        ValidationDecisionPolicy(pipeline.state).next_action(
             evidence
         )
         == ValidationNextAction.NONE

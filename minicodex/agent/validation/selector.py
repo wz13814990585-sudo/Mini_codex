@@ -19,8 +19,8 @@ class ValidationSelection:
 class ValidationSelector:
     """Recommend at most one validator; execution remains in the shared loop."""
 
-    def __init__(self, workspace: str | Path = ".") -> None:
-        self.test_target_resolver = TestTargetResolver(workspace)
+    def __init__(self, workspace: str | Path = ".", *, test_index=None) -> None:
+        self.test_target_resolver = TestTargetResolver(workspace, test_index=test_index)
 
     def select(
         self,

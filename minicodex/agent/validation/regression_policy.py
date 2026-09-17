@@ -40,11 +40,14 @@ class RegressionPolicy:
 
         mode_value = getattr(mode, "value", mode)
 
-        if mode_value == "complex":
-            return RegressionRequirement.REQUIRED
+        if any(any(risk in path.casefold() for risk in ("auth", "security", "payment", "migration")) for path in paths):
+            return RegressionRequirement.REQUIRED if mode_value == "complex" else RegressionRequirement.RELEVANT_ONLY
 
         if paths and all(self._is_non_product(path) for path in paths):
             return RegressionRequirement.NOT_APPLICABLE
+
+        if mode_value == "complex":
+            return RegressionRequirement.REQUIRED
 
         if any(path.startswith(self._CORE_PREFIXES) for path in paths):
             return (

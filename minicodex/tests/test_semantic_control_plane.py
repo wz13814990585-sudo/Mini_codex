@@ -95,15 +95,17 @@ def test_requirements_extraction_and_evidence_are_revision_aware():
         "Fix auth, add tests, and update README", mode=ExecutionMode.STANDARD
     )
     assert len(requirements.items) == 3
-    requirements.record_edit(path="tests/test_auth.py", revision=1)
-    requirements.record_edit(path="README.md", revision=2)
+    from minicodex.agent.validation.plan import ValidationPlanner, RequirementEvidenceResolver
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(requirements)
+    pipeline.record_edit()
+    pipeline.record_edit()
     assert not requirements.all_satisfied
-    evidence = SimpleNamespace(
-        outcome=SimpleNamespace(value="passed"), purpose=SimpleNamespace(value="acceptance"),
-        edit_revision=2, validation_key="acceptance|auth", path="tests/test_auth.py",
-    )
-    requirements.record_validation(evidence)
-    assert requirements.all_satisfied
+    pipeline.observe("run_tests", {"path": "tests/test_auth.py", "purpose": "acceptance", "validation_check": "V1"},
+                     ToolResult(True, "passed", {"tests_passed": True, "passed": 1}))
+    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
+    assert requirements.items[0].satisfied
+    assert not requirements.all_satisfied
     requirements.invalidate_revision(3)
     assert requirements.items[0].satisfied is False
 
@@ -141,6 +143,9 @@ def test_mode_escalation_preserves_consumed_budget_and_is_monotonic():
         execution_metrics=SimpleNamespace(mode_escalations=0),
         working_summary=SimpleNamespace(add=lambda text: None),
     )
+    from minicodex.agent.task_state import TaskRuntime, TaskState
+    runtime = TaskRuntime(TaskState(mode=ExecutionMode.FAST))
+    agent.apply_runtime_event = lambda kind, **data: setattr(agent, "task_state", runtime.emit(kind, **data))
     assert control.escalate(agent, reason="multiple changed files")
     assert agent.task_max_steps == 12
     assert agent.task_max_steps - agent.task_steps_consumed == 5

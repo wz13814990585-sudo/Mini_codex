@@ -11,6 +11,7 @@ from .completion import (
     TaskOutcome,
 )
 from .regression_policy import RegressionRequirement
+from .plan import ValidationPlan
 
 
 class TaskCompletionPolicy:
@@ -29,15 +30,7 @@ class TaskCompletionPolicy:
                 full_validation_passed=False,
             )
 
-        pipeline_state = pipeline.state
         task_state = getattr(agent, "task_state", None)
-        # A started TaskRuntime is authoritative. Isolated legacy callers that
-        # construct only a ValidationPipeline continue to use that projection.
-        state = (
-            task_state
-            if task_state is not None and getattr(task_state, "run_id", "")
-            else pipeline_state
-        )
         policy = getattr(agent, "execution_policy", None)
         requirement = (
             agent.current_regression_requirement()
@@ -48,22 +41,32 @@ class TaskCompletionPolicy:
                 RegressionRequirement.REQUIRED,
             )
         )
+        ledger = pipeline.state
+        validation_plan = getattr(ledger, "plan", ValidationPlan())
+        acceptance = ledger.acceptance_passed
+        if validation_plan.checks:
+            acceptance_checks = [c for c in validation_plan.checks if c.required and c.purpose.value == "acceptance"]
+            acceptance = bool(acceptance_checks) and all(ledger.proof(c.id) for c in acceptance_checks)
         decision = self.gate.evaluate(
-            edit_revision=state.edit_revision,
-            has_edit=state.has_edit,
-            acceptance_passed=state.acceptance_passed,
-            full_validation_passed=getattr(
-                state, "full_validation_passed", getattr(state, "full_passed", False)
-            ),
-            relevant_validation_passed=getattr(
-                state, "relevant_validation_passed", getattr(state, "targeted_passed", False)
-            ),
+            edit_revision=ledger.edit_revision,
+            has_edit=ledger.has_edit,
+            acceptance_passed=acceptance,
+            full_validation_passed=ledger.full_passed,
+            relevant_validation_passed=ledger.targeted_passed,
             require_acceptance=getattr(policy, "require_acceptance", True),
             regression_requirement=requirement,
             allow_already_satisfied=True,
         )
 
         phase = getattr(task_state, "phase", None)
+        if getattr(task_state, "edit_issues", ()):
+            return replace(decision, status=CompletionStatus.NOT_READY, outcome=TaskOutcome.INCOMPLETE,
+                           reason=f"Post-edit verification remains unresolved: {task_state.edit_issues}")
+        if decision.can_complete and validation_plan.checks:
+            missing_checks = [c.id for c in validation_plan.checks if c.required and not ledger.proof(c.id)]
+            if missing_checks:
+                return replace(decision, status=CompletionStatus.NOT_READY, outcome=TaskOutcome.INCOMPLETE,
+                               reason="Missing current requirement evidence: " + ", ".join(missing_checks))
         if getattr(phase, "value", phase) == "blocked":
             return replace(
                 decision,
@@ -73,6 +76,13 @@ class TaskCompletionPolicy:
             )
 
         requirements = getattr(agent, "task_requirements", None)
+        if decision.can_complete and requirements is not None and validation_plan.checks:
+            missing_requirements = [r.id for r in requirements.items
+                                    if not validation_plan.for_requirement(r.id)]
+            if missing_requirements:
+                return replace(decision, status=CompletionStatus.NOT_READY, outcome=TaskOutcome.INCOMPLETE,
+                               reason="Requirements have no verification contract: " + ", ".join(missing_requirements))
+            return decision
         if (
             decision.can_complete
             and requirements is not None

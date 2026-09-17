@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import time
 
 from ...llm.types import TokenUsage
 
@@ -49,8 +50,25 @@ class ExecutionMetrics:
     no_progress_detections: int = 0
     recovery_successes: int = 0
     duration_seconds: float = 0.0
+    time_to_first_edit: float | None = None
+    inspections_before_first_edit: int | None = None
+    searches_before_first_edit: int = 0
+    redundant_reads: int = 0
+    redundant_searches: int = 0
+    wrong_validation_target_count: int = 0
+    cost_usd: float | None = None
+    _started: float = field(default_factory=time.monotonic, repr=False)
+    _observations: set = field(default_factory=set, repr=False)
 
     def reset(self, execution_mode: str | None = None, *, intent: str | None = None) -> None:
+        self._started = time.monotonic()
+        self.time_to_first_edit = None
+        self.inspections_before_first_edit = None
+        self.searches_before_first_edit = 0
+        self.redundant_reads = self.redundant_searches = 0
+        self.wrong_validation_target_count = 0
+        self.cost_usd = None
+        self._observations.clear()
         self.execution_mode = execution_mode
         self.intent = intent
         self.llm_call_count = 0
@@ -101,21 +119,35 @@ class ExecutionMetrics:
         llm_call_count: int,
         arguments: dict | None = None,
         success: bool = True,
+        revision: int = 0,
+        capabilities: frozenset[str] = frozenset(),
     ) -> None:
         from ..progress import ActionController
 
         self.tool_call_count += 1
+        import json
+        signature = (tool_name, json.dumps(arguments or {}, sort_keys=True), revision)
+        is_search = "code.search" in capabilities or tool_name in {"search_code", "search_symbol"}
+        is_read = "filesystem.read" in capabilities or tool_name == "read_file"
+        if signature in self._observations:
+            self.redundant_reads += int(is_read)
+            self.redundant_searches += int(is_search)
+        self._observations.add(signature)
+        if self.time_to_first_edit is None and is_search:
+            self.searches_before_first_edit += 1
         self.llm_call_count = max(self.llm_call_count, int(llm_call_count))
-        if tool_name in ActionController.INSPECTION_TOOLS:
+        if tool_name in ActionController.INSPECTION_TOOLS or capabilities & {"filesystem.read", "code.search", "git.inspect"}:
             self.inspection_tool_count += 1
-        if tool_name in ActionController.EDIT_TOOLS and success:
+        if (tool_name in ActionController.EDIT_TOOLS or "code.edit" in capabilities) and success:
             self.edit_tool_count += 1
             if self.calls_before_first_edit is None:
                 self.calls_before_first_edit = llm_call_count
-        if tool_name in ActionController.VALIDATION_TOOLS or (
+                self.time_to_first_edit = time.monotonic() - self._started
+                self.inspections_before_first_edit = self.inspection_tool_count
+        if tool_name in ActionController.VALIDATION_TOOLS or capabilities & {"test.run", "validation.static_web", "validation.browser", "service.validate"} or (
             tool_name == "run_command"
             and str((arguments or {}).get("purpose", "diagnostic")).lower()
-            == "acceptance"
+            in {"acceptance", "regression"}
         ):
             self.validation_tool_count += 1
             if self.calls_before_first_validation is None:
@@ -162,6 +194,10 @@ class ExecutionMetrics:
     @property
     def repeated_action_rate(self) -> float:
         return self.repeated_action_count / self.tool_call_count if self.tool_call_count else 0.0
+
+    @property
+    def validation_to_edit_ratio(self):
+        return self.validation_tool_count / max(1, self.edit_tool_count)
 
 
 @dataclass

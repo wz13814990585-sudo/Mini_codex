@@ -1,7 +1,10 @@
 import ast
 import hashlib
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+
+DEFER_SYNTAX = ContextVar("defer_edit_syntax", default=False)
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,9 @@ class EditVerifier:
             )
 
         except SyntaxError as e:
+
+            if DEFER_SYNTAX.get():
+                return False
 
             raise ValueError(
                 (

@@ -37,6 +37,8 @@ FAST_TOOL_NAMES = frozenset(
         "replace_lines",
         "replace_symbol",
         "validate_static_web",
+        "validate_browser_app",
+        "validate_service",
         "run_tests",
         "run_command",
         "install_python_package",

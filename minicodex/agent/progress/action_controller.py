@@ -36,8 +36,18 @@ class ActionController:
         "validation, or report a concrete blocker."
     )
 
-    def __init__(self) -> None:
+    def __init__(self, registry=None) -> None:
+        self.registry = registry
         self.reset()
+
+    def _capabilities(self, name):
+        from ...tools.registry import ToolRegistry
+        if self.registry is not None and name in getattr(self.registry, "_tools", {}):
+            return self.registry.capabilities_for(name)
+        return frozenset(ToolRegistry._NAME_CAPABILITIES.get(name, ()))
+
+    def _inspection(self, name):
+        return bool(self._capabilities(name) & {"filesystem.read", "code.search", "git.inspect"})
 
     def reset(self, state: TaskState | None = None) -> None:
         self.last_state = state
@@ -98,7 +108,7 @@ class ActionController:
             return True
 
         self.consecutive_no_state_change += 1
-        if tool_name in self.INSPECTION_TOOLS:
+        if self._inspection(tool_name):
             self.consecutive_inspections += 1
         else:
             self.consecutive_inspections = 0
@@ -132,29 +142,31 @@ class ActionController:
         """Block only another wasteful action; edits/validation stay open."""
 
         self.current_mode = getattr(policy, "mode", None)
+        capabilities = self._capabilities(tool_name)
+        is_read = tool_name == "read_file" or "file.read" in capabilities
 
-        if self.phase == AgentPhase.FINALIZING and tool_name in self.INSPECTION_TOOLS:
+        if self.phase == AgentPhase.FINALIZING and self._inspection(tool_name):
             return (
                 "The task is finalizing. Only a necessary edit, missing "
                 "validation, plan completion, or a concrete blocker is allowed."
             )
-        if self.phase == AgentPhase.VALIDATING and tool_name in self.INSPECTION_TOOLS:
+        if self.phase == AgentPhase.VALIDATING and self._inspection(tool_name):
             return (
                 "The current revision is ready for validation. Run the relevant "
                 "validator instead of unrelated reconnaissance."
             )
         if self.phase == AgentPhase.FIXING:
-            if tool_name in self.INSPECTION_TOOLS - {"read_file"}:
+            if self._inspection(tool_name) and not is_read:
                 return (
                     "Validation failed. Inspect at most one targeted source region, "
                     "then make the fix. Broad reconnaissance is unavailable."
                 )
-            if tool_name == "read_file" and self.consecutive_inspections >= 1:
+            if is_read and self.consecutive_inspections >= 1:
                 return (
                     "The targeted failure context has already been inspected. "
                     "Make a concrete fix or report a blocker."
                 )
-            if tool_name == "read_file" and self.target_paths:
+            if is_read and self.target_paths:
                 path = str((arguments or {}).get("path", "") or "").strip()
                 if path not in self.target_paths:
                     return (
@@ -162,10 +174,6 @@ class ActionController:
                         f"({', '.join(self.target_paths)}), not {path or 'an unspecified path'}."
                     )
 
-        if tool_name == "complete_plan_step" and not getattr(
-            policy, "use_plan", False
-        ):
-            return "FAST mode has no active plan; complete_plan_step is unavailable."
         if tool_name == "replan" and not getattr(policy, "enable_replan", False):
             return "FAST mode is planless; replan is unavailable."
 
@@ -190,7 +198,7 @@ class ActionController:
         inspection_limit = self._inspection_limit(policy)
         next_inspection_exceeds_budget = bool(
             inspection_limit is not None
-            and tool_name in self.INSPECTION_TOOLS
+            and self._inspection(tool_name)
             and self.consecutive_inspections >= inspection_limit
         )
         if next_inspection_exceeds_budget:
@@ -199,17 +207,15 @@ class ActionController:
         if not self.action_required:
             return None
 
-        if tool_name in self.EDIT_TOOLS | self.VALIDATION_TOOLS:
+        if capabilities & {"code.edit", "test.run", "validation.static_web", "validation.browser", "service.validate"}:
             return None
-        if tool_name == "run_command" and str(
+        if "process.run" in capabilities and str(
             (arguments or {}).get("purpose", "diagnostic")
-        ).strip().lower() == "acceptance":
-            return None
-        if tool_name == "complete_plan_step" and getattr(policy, "use_plan", False):
+        ).strip().lower() in {"acceptance", "regression"}:
             return None
         if tool_name == "replan" and getattr(policy, "enable_replan", False):
             return None
-        if tool_name in self.INSPECTION_TOOLS or tool_name == "run_command":
+        if self._inspection(tool_name) or "process.run" in capabilities:
             return self.INSTRUCTION
         return None
 

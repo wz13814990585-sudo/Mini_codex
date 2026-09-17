@@ -7,6 +7,8 @@ from pathlib import Path
 from .checkpoint import (
     CheckpointManager,
 )
+from .edit_intent import EditIntent, verify_edit_intent, ACTIVE_EDIT_INTENT
+from .edit_verifier import DEFER_SYNTAX
 from ..runtime.tool_types import (
     PreparedToolCall,
     ToolExecution,
@@ -110,10 +112,11 @@ class CheckpointingToolExecutor:
         # Non Edit Tool
         # =====================================================
 
-        if (
-            prepared.tool_name
-            not in CHECKPOINTED_EDIT_TOOLS
-        ):
+        registry = getattr(self.executor, "registry", None)
+        is_edit = ("code.edit" in registry.capabilities_for(prepared.tool_name)
+                   if registry and prepared.tool_name in getattr(registry, "_tools", {})
+                   else prepared.tool_name in CHECKPOINTED_EDIT_TOOLS)
+        if not is_edit:
 
             return (
                 self.executor
@@ -382,6 +385,22 @@ class CheckpointingToolExecutor:
         # =====================================================
         # Common Edit Metadata
         # =====================================================
+
+        try:
+            intent = ACTIVE_EDIT_INTENT.get() or EditIntent.from_arguments(prepared.arguments)
+            verification = verify_edit_intent(
+                intent,
+                checkpoint.snapshot.content or "", file_path.read_text(encoding="utf-8"),
+                defer_syntax=DEFER_SYNTAX.get(),
+            )
+            result.data["intent_verified"] = verification.passed
+            result.data["diff_quality_issues"] = list(verification.issues)
+            if intent.path != path:
+                result.data["intent_verified"] = False
+                result.data["diff_quality_issues"].append("wrong_target")
+        except (OSError, UnicodeError) as exc:
+            result.data["intent_verified"] = False
+            result.data["diff_quality_issues"] = [str(exc)]
 
         result.data[
             "checkpoint_id"
