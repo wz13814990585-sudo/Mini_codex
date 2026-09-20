@@ -303,11 +303,16 @@ def test_regression_pass_forces_acceptance_validation():
     )
 
     assert (
-        "acceptance"
+        "验收"
+        in message
+        or "acceptance"
         in message
     )
 
-    assert "current edit revision" in message
+    assert (
+        "当前编辑版本" in message
+        or "current edit revision" in message
+    )
 
     assert (
         can_complete_edit_task(
@@ -446,8 +451,7 @@ def test_acceptance_pass_forces_full_regression():
     )
 
     assert (
-        "full regression"
-        in message
+        "完整回归" in message or "full regression" in message
     )
 
     assert (
@@ -986,11 +990,7 @@ def test_inconclusive_validation_forces_investigation():
     )
 
     assert (
-        "inconclusive"
-        in (
-            decision.followup_message
-            .lower()
-        )
+        "无定论" in decision.followup_message or "inconclusive" in decision.followup_message.lower()
     )
 
     assert (

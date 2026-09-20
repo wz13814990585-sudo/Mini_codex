@@ -35,11 +35,11 @@ def test_workspace_config_defaults_to_current_directory(monkeypatch, tmp_path):
 
 
 def test_workspace_config_rejects_missing_or_file(tmp_path):
-    with pytest.raises(ValueError, match="does not exist"):
+    with pytest.raises(ValueError, match="不存在"):
         WorkspaceConfig.create(tmp_path / "missing")
     file = tmp_path / "file.txt"
     file.write_text("x")
-    with pytest.raises(ValueError, match="not a directory"):
+    with pytest.raises(ValueError, match="不是目录"):
         WorkspaceConfig.create(file)
 
 

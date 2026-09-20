@@ -167,7 +167,7 @@ def test_read_file_creates_structured_memory():
     )
 
     assert (
-        "More lines remain unread"
+        "仍有更多行未读"
         in entry.value
     )
 
@@ -376,12 +376,12 @@ def test_validation_memory_keeps_latest_state():
     )
 
     assert (
-        "passed;"
+        "通过；"
         in entry.value
     )
 
     assert (
-        "0 failed"
+        "0 失败"
         in entry.value
     )
 
@@ -679,7 +679,7 @@ def test_working_summary_updates_working_memory():
     )
 
     assert (
-        "Structured working memory"
+        "结构化工作记忆"
         in rendered
     )
 
@@ -689,7 +689,7 @@ def test_working_summary_updates_working_memory():
     )
 
     assert (
-        "Recent execution facts"
+        "近期执行事实"
         in rendered
     )
 

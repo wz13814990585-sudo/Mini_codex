@@ -11,7 +11,7 @@ class ListFilesTool(BaseTool):
     name = "list_files"
 
     description = (
-        "List files and directories inside the current project."
+        "列出当前项目中的文件与目录。"
     )
 
     parameters = {
@@ -20,8 +20,8 @@ class ListFilesTool(BaseTool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative directory path to list. "
-                    "Use '.' for the project root."
+                    "要列出的相对目录路径。"
+                    "使用 '.' 表示项目根目录。"
                 ),
             }
         },
@@ -43,12 +43,12 @@ class ListFilesTool(BaseTool):
 
         if not directory.exists():
             raise FileNotFoundError(
-                f"Directory not found: {path}"
+                f"目录未找到：{path}"
             )
 
         if not directory.is_dir():
             raise ValueError(
-                f"Path is not a directory: {path}"
+                f"路径不是目录：{path}"
             )
 
         entries = []
@@ -104,8 +104,8 @@ class ListFilesTool(BaseTool):
         return ToolResult(
             success=True,
             summary=(
-                f"Listed {len(entries)} entries "
-                f"in '{path}'."
+                f"已在 '{path}' 下列出 "
+                f"{len(entries)} 个条目。"
             ),
             data={
                 "path": path,

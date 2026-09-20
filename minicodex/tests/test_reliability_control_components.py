@@ -197,12 +197,12 @@ def test_edit_retry_policy_allows_one_read_and_one_retry():
         summary="stale",
         data={"path": "demo.py", "failure_type": "stale_context", "start_line": 2},
     )
-    assert "read" in policy.observe("replace_lines", {"path": "demo.py"}, stale).lower()
+    assert "读取" in policy.observe("replace_lines", {"path": "demo.py"}, stale)
     assert policy.restriction_reason("search_code", {"query": "x"})
     assert policy.restriction_reason("read_file", {"path": "demo.py"}) is None
 
     read = ToolResult(success=True, summary="read", data={"path": "demo.py"})
-    assert "retry" in policy.observe("read_file", {"path": "demo.py"}, read).lower()
+    assert "重试" in policy.observe("read_file", {"path": "demo.py"}, read)
     assert policy.restriction_reason("patch_file", {"path": "demo.py"}) is None
     policy.observe(
         "patch_file",
@@ -249,13 +249,13 @@ def test_validator_resolver_uses_check_capability(tmp_path):
 
 def test_working_summary_prioritizes_target_and_actionable_facts():
     summary = WorkingSummary(max_items=10)
-    summary.add("Inspected unrelated.py.")
-    summary.add("Modified file successfully: app/main.py.")
-    summary.add("Validation failed for app/main.py.")
-    summary.add("Inspected another.py.")
+    summary.add("已检查 unrelated.py。")
+    summary.add("已成功修改文件：app/main.py。")
+    summary.add("app/main.py 验证失败。")
+    summary.add("已检查 another.py。")
     rendered = summary.render_relevant(("app/main.py",), max_items=2)
-    assert "Modified file" in rendered
-    assert "Validation failed" in rendered
+    assert "已成功修改文件" in rendered
+    assert "验证失败" in rendered
     assert "unrelated.py" not in rendered
 
 
@@ -276,6 +276,19 @@ def test_execution_metrics_include_v4_fields():
     assert metrics.calls_before_first_validation == 3
     assert metrics.rollback_count == 1
     assert metrics.total_prompt_tokens == 20
+
+
+def test_failed_tool_execution_is_counted_but_failed_validation_outcome_is_not():
+    metrics = ExecutionMetrics()
+    failed_edit = ToolResult(False, "patch could not execute")
+    executed_validation = ToolResult(
+        True, "3 tests failed", {"outcome": "failed", "failed": 3, "errors": 0},
+    )
+    metrics.record_tool("patch_file", llm_call_count=1, success=failed_edit.success)
+    metrics.record_tool("run_tests", llm_call_count=2, success=executed_validation.success)
+    assert metrics.failed_tool_call_count == 1
+    assert metrics.failed_tool_call_rate == 0.5
+    assert metrics.failed_edit_tool_count == 1
 
 
 def test_structured_stale_patch_and_edit_metadata(tmp_path):
@@ -368,4 +381,5 @@ def test_failure_benchmark_unsafe_command_then_safe_edit(tmp_path):
     assert command.calls == 0
     assert target.read_text(encoding="utf-8") == "value = 1\n"
     assert agent.execution_metrics.final_outcome == "edited_and_validated"
+    assert agent.execution_metrics.failed_tool_call_count == 1
     assert "Outcome:" not in result

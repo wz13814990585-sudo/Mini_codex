@@ -37,13 +37,12 @@ class InstallPythonPackageTool(BaseTool):
     name = "install_python_package"
 
     description = (
-        "Install a missing Python package into the selected target-project "
-        "environment, then verify its import using that same environment. "
-        "Use only after a concrete ModuleNotFoundError or failed "
-        "import. Provide the distribution name as package and the "
-        "Python module name as import_name (for example package="
-        "'Pillow', import_name='PIL'). URLs, local paths, shell "
-        "options, and multiple packages are rejected."
+        "将缺失的 Python 包安装到所选目标项目环境中，"
+        "并用同一环境验证 import。"
+        "仅在出现明确的 ModuleNotFoundError 或导入失败后使用。"
+        "package 填发行版名称，import_name 填 Python 模块名"
+        "（例如 package='Pillow'，import_name='PIL'）。"
+        "URL、本地路径、shell 选项以及一次安装多个包都会被拒绝。"
     )
 
     parameters = {
@@ -52,15 +51,15 @@ class InstallPythonPackageTool(BaseTool):
             "package": {
                 "type": "string",
                 "description": (
-                    "PyPI distribution name with an optional single "
-                    "version constraint, for example 'requests>=2.31'."
+                    "PyPI 发行版名称，可带单个版本约束，"
+                    "例如 'requests>=2.31'。"
                 ),
             },
             "import_name": {
                 "type": "string",
                 "description": (
-                    "Module path used by Python import, for example "
-                    "'requests', 'PIL', or 'google.cloud.storage'."
+                    "Python import 使用的模块路径，例如 "
+                    "'requests'、'PIL' 或 'google.cloud.storage'。"
                 ),
             },
         },
@@ -110,8 +109,8 @@ class InstallPythonPackageTool(BaseTool):
             return ToolResult(
                 success=True,
                 summary=(
-                    f"Python module '{import_name}' is already "
-                    "available; installation was not needed."
+                    f"Python 模块 '{import_name}' 已可用；"
+                    "无需安装。"
                 ),
                 data={
                     "package": package,
@@ -128,11 +127,11 @@ class InstallPythonPackageTool(BaseTool):
         if not self.environment.command_available or install_argv is None:
             return ToolResult(
                 success=False,
-                summary="Target project dependency installation is unavailable without changing project dependency state.",
+                summary="在不改动项目依赖状态的前提下，目标项目依赖安装不可用。",
                 data={"package": package, "import_name": import_name, "installed": False,
                       "import_verified": False, "failure_type": "environment_unavailable",
                       "environment": self.environment.summary(), "argv": list(install_argv or ())},
-                error="The selected uv/poetry environment requires explicit dependency policy; no lockfile was changed.",
+                error="所选 uv/poetry 环境需要明确的依赖策略；未修改任何锁文件。",
             )
         install_result = self.sandbox.run_argv(list(install_argv), timeout_seconds=self.timeout)
 
@@ -165,9 +164,8 @@ class InstallPythonPackageTool(BaseTool):
             return ToolResult(
                 success=False,
                 summary=(
-                    f"Installed '{package}', but Python module "
-                    f"'{import_name}' could not be found. Check the "
-                    "distribution-to-import name mapping."
+                    f"已安装 '{package}'，但找不到 Python 模块 "
+                    f"'{import_name}'。请检查发行版名与 import 名的对应关系。"
                 ),
                 data=self._result_data(
                     package,
@@ -178,16 +176,15 @@ class InstallPythonPackageTool(BaseTool):
                     failure_type="import_verification_failed",
                 ),
                 error=(
-                    "Package installation completed but import "
-                    "verification failed."
+                    "包安装已完成，但 import 验证失败。"
                 ),
             )
 
         return ToolResult(
             success=True,
             summary=(
-                f"Installed '{package}' and verified import "
-                f"'{import_name}' using {self.python_executable}."
+                f"已安装 '{package}'，并用 {self.python_executable} "
+                f"验证了 import '{import_name}'。"
             ),
             data=self._result_data(
                 package,
@@ -202,16 +199,16 @@ class InstallPythonPackageTool(BaseTool):
     def _validate_package(package: str) -> None:
         if not PACKAGE_SPEC_PATTERN.fullmatch(package):
             raise ValueError(
-                "package must be one PyPI distribution name with "
-                "an optional version constraint; URLs, paths, "
-                "options, and shell syntax are not allowed."
+                "package 必须是单个 PyPI 发行版名称，"
+                "可带可选版本约束；不允许 URL、路径、"
+                "选项或 shell 语法。"
             )
 
     @staticmethod
     def _validate_import_name(import_name: str) -> None:
         if not IMPORT_NAME_PATTERN.fullmatch(import_name):
             raise ValueError(
-                "import_name must be a valid dotted Python module name."
+                "import_name 必须是合法的点分 Python 模块名。"
             )
 
     def _module_available(self, import_name: str) -> bool:
@@ -242,7 +239,7 @@ class InstallPythonPackageTool(BaseTool):
         return ToolResult(
             success=False,
             summary=(
-                f"Could not install Python package '{package}'."
+                f"无法安装 Python 包 '{package}'。"
             ),
             data=self._result_data(
                 package,
@@ -255,7 +252,7 @@ class InstallPythonPackageTool(BaseTool):
             error=(
                 result.error
                 or result.stderr.strip()
-                or "pip installation failed."
+                or "pip 安装失败。"
             ),
         )
 

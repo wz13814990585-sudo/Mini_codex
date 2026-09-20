@@ -424,12 +424,12 @@ def test_render_retrieved_warns_historical_only(
     )
 
     assert (
-        "historical only"
+        "仅供历史参考"
         in rendered
     )
 
     assert (
-        "verify current"
+        "核验当前"
         in rendered
     )
 

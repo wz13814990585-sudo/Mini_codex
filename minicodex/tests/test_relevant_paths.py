@@ -30,7 +30,7 @@ def test_relevant_paths_include_validation_failures_and_stale_targets(tmp_path):
     relevant = RelevantPathResolver(tmp_path).resolve(agent)
 
     assert relevant.paths == ("src/app.py", "tests/test_app.py", "src/helper.py")
-    assert "validation failure" in relevant.reasons["src/helper.py"]
+    assert "验证失败" in relevant.reasons["src/helper.py"]
 
 
 def test_fixing_allows_targeted_read_of_traceback_path():
@@ -100,4 +100,4 @@ def test_relevant_paths_include_symbol_search_recovery_matches(tmp_path):
 
     relevant = RelevantPathResolver(tmp_path).resolve(agent)
 
-    assert relevant.reasons["src/worker.py"] == ("symbol-search recovery",)
+    assert relevant.reasons["src/worker.py"] == ("符号搜索恢复",)

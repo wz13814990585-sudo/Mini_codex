@@ -73,52 +73,52 @@ class Replanner:
             {
                 "role": "system",
                 "content": (
-                    "You are a coding task replanner. "
-                    "Create a revised implementation "
-                    "plan based on the original goal, "
-                    "completed work, and new evidence. "
-                    "Do not repeat completed work. "
-                    "Return valid JSON only."
+                    "你是编码任务重规划器。"
+                    "根据原始目标、已完成工作与新证据，"
+                    "创建修订后的实现计划。"
+                    "不要重复已完成的工作。"
+                    "只返回合法 JSON。"
+                    "goal 与各 step 的 description 请使用简洁中文。"
                 ),
             },
             {
                 "role": "user",
                 "content": f"""
-Original user request:
+原始用户请求：
 
 {user_request}
 
-Current goal:
+当前目标：
 
 {current_plan.goal}
 
-Completed steps:
+已完成步骤：
 
 {completed_steps}
 
-Remaining or unfinished steps:
+剩余或未完成步骤：
 
 {remaining_steps}
 
-Reason replanning is required:
+需要重规划的原因：
 
 {reason}
 
-Return exactly:
+严格返回：
 
 {{
-    "goal": "updated goal",
+    "goal": "更新后的目标",
     "steps": [
         {{
-            "description": "next step 1",
+            "description": "下一步 1",
             "acceptance_criteria": []
         }}
     ]
 }}
 
-Each acceptance_criteria list may use only file_exists,
-contains_text, contains_all, static_web_validation, or
-metric_at_least. Use [] for semantic-only steps.
+每个 acceptance_criteria 列表只能使用 file_exists、
+contains_text、contains_all、static_web_validation 或
+metric_at_least。纯语义步骤请使用 []。
 """,
             },
         ]

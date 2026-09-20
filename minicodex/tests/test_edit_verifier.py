@@ -11,7 +11,7 @@ def test_edit_verifier_rejects_noop():
 
     with pytest.raises(
         ValueError,
-        match="would not change",
+        match="不会改变",
     ):
 
         EditVerifier.ensure_changed(
@@ -59,7 +59,7 @@ def test_python_candidate_rejects_syntax_error():
 
     with pytest.raises(
         ValueError,
-        match="invalid Python syntax",
+        match="无效的 Python 语法",
     ):
 
         EditVerifier.validate_candidate(
@@ -157,7 +157,7 @@ def test_post_write_detects_wrong_disk_content(
 
     with pytest.raises(
         RuntimeError,
-        match="does not match",
+        match="不一致",
     ):
 
         EditVerifier.verify_after_write(

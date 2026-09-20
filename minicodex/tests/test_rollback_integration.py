@@ -267,7 +267,12 @@ def test_first_regressed_validation_does_not_roll_back_latest_edit(
     )
 
     assert (
-        "uncertain"
+        "不确定"
+        in (
+            decision.followup_message
+            .lower()
+        )
+        or "uncertain"
         in (
             decision.followup_message
             .lower()

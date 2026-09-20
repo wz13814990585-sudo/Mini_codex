@@ -16,8 +16,7 @@ class ActionController:
     """
 
     INSTRUCTION = (
-        "You have enough context. Make a concrete edit, run the required "
-        "validation, or report a concrete blocker."
+        "上下文已足够。请做一次具体编辑、运行所需验证，或报告一个具体阻塞原因。"
     )
     UNRESOLVED_INSPECTION_LIMIT = 1
 
@@ -155,14 +154,14 @@ class ActionController:
                 if self.validation_inspections >= self.UNRESOLVED_INSPECTION_LIMIT:
                     self._activate()
                     return (
-                        f"Validation check {self.next_required_check_id or 'current'} remains unresolved after "
-                        "one targeted inspection. Rebind it, resolve a capability, or report the concrete blocker."
+                        f"验证检查 {self.next_required_check_id or 'current'} 在一次针对性探查后仍未解析。"
+                        "请重新绑定、解析能力，或报告具体阻塞原因。"
                     )
                 path = str((arguments or {}).get("path", "") or "").strip()
                 if path and self.validation_paths and path not in self.validation_paths:
                     return (
-                        f"Only proof-directed inspection for {self.next_required_check_id or 'the current check'} is "
-                        f"allowed ({', '.join(self.validation_paths)}), not {path}."
+                        f"仅允许针对 {self.next_required_check_id or '当前检查'} 的证据导向探查"
+                        f"（{', '.join(self.validation_paths)}），不允许探查 {path}。"
                     )
                 # The restriction boundary is invoked exactly once per tool
                 # call. Count the granted inspection here so a model cannot
@@ -171,34 +170,34 @@ class ActionController:
                 return None
             if self.validator_resolution_status in {"capability_missing", "unsupported"}:
                 return (
-                    f"Validation check {self.next_required_check_id or 'current'} is {self.validator_resolution_status}; "
-                    "source inspection cannot resolve this environment/blocker state."
+                    f"验证检查 {self.next_required_check_id or 'current'} 状态为 "
+                    f"{self.validator_resolution_status}；源码探查无法解决该环境/阻塞状态。"
                 )
             return (
-                "The current revision has an executable validation target. Run the relevant "
-                "validator instead of unrelated reconnaissance."
+                "当前修订已有可执行的验证目标。请运行相关验证器，"
+                "不要做无关探查。"
             )
         if self.phase == AgentPhase.FIXING:
             if self._inspection(tool_name) and not is_read:
                 return (
-                    "Validation failed. Inspect at most one targeted source region, "
-                    "then make the fix. Broad reconnaissance is unavailable."
+                    "验证失败。最多探查一个针对性源码区域，然后修复。"
+                    "不允许大范围侦察。"
                 )
             if is_read and self.consecutive_inspections >= 1:
                 return (
-                    "The targeted failure context has already been inspected. "
-                    "Make a concrete fix or report a blocker."
+                    "针对性失败上下文已探查过。"
+                    "请做具体修复，或报告阻塞原因。"
                 )
             if is_read and self.target_paths:
                 path = str((arguments or {}).get("path", "") or "").strip()
                 if path not in self.target_paths:
                     return (
-                        "FIXING permits one targeted read of a relevant failure path "
-                        f"({', '.join(self.target_paths)}), not {path or 'an unspecified path'}."
+                        "FIXING 阶段仅允许读取一个相关失败路径"
+                        f"（{', '.join(self.target_paths)}），不允许 {path or '未指定路径'}。"
                     )
 
         if tool_name == "replan" and not getattr(policy, "enable_replan", False):
-            return "FAST mode is planless; replan is unavailable."
+            return "FAST 模式无计划；replan 不可用。"
 
         if (
             "test.run" in capabilities
@@ -214,8 +213,8 @@ class ActionController:
             ) == "not_applicable"
         ):
             return (
-                "Full repository regression is not applicable to this isolated "
-                "FAST task. Run one targeted acceptance validation instead."
+                "全仓库回归不适用于此隔离 FAST 任务。"
+                "请改为运行一次针对性验收验证。"
             )
 
         inspection_limit = self._inspection_limit(policy)

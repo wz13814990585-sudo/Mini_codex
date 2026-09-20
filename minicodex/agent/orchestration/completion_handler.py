@@ -29,8 +29,7 @@ class CompletionHandler:
     """Make all loop exits obey the same product completion semantics."""
 
     EXECUTION_CORRECTION = (
-        "This is a coding task. Do not explain how to do it. Use the available "
-        "tools to perform the requested change and validate it."
+        "这是编码任务。不要解释如何完成，请使用可用工具执行所请求的修改并验证结果。"
     )
 
     def __init__(self, report_builder: TaskReportBuilder | None = None) -> None:
@@ -61,12 +60,12 @@ class CompletionHandler:
         if response_mode == FinalResponseMode.INFORMATIONAL_ANSWER:
             if getattr(agent.validation_pipeline.state, "has_edit", False):
                 return self.handle_incomplete(
-                    agent, reason="An informational task cannot complete after a workspace edit."
+                    agent, reason="信息类任务在工作区发生编辑后不能视为完成。"
                 )
             record_task_outcome(
                 agent,
                 TaskOutcome.INFORMATIONAL_ANSWER,
-                "The request was classified as informational.",
+                "该请求被分类为信息查询。",
             )
             return CompletionHandleResult(True, content)
         if response_mode == FinalResponseMode.INSPECTION_REPORT:
@@ -76,20 +75,20 @@ class CompletionHandler:
             inspected = bool(getattr(metrics, "inspection_tool_count", 0))
             if getattr(agent.validation_pipeline.state, "has_edit", False):
                 return self.handle_incomplete(
-                    agent, reason="Inspect-only authorization was violated by a workspace edit."
+                    agent, reason="仅探查授权被工作区编辑违反。"
                 )
             if needs_repo_inspection and not inspected and remaining_steps > 0:
                 return CompletionHandleResult(
                     False,
                     followup_instruction=(
-                        "Inspect the requested repository target with read/search tools, "
-                        "then report findings without modifying files."
+                        "请先用读取/搜索工具探查所请求的仓库目标，"
+                        "再报告发现；不要修改文件。"
                     ),
                 )
             record_task_outcome(
                 agent,
                 TaskOutcome.INSPECTED,
-                "The inspect-only request was answered without workspace edits.",
+                "仅探查请求已在不修改工作区的情况下完成答复。",
             )
             return CompletionHandleResult(True, content)
 
@@ -212,7 +211,16 @@ class CompletionHandler:
             return None
         reason = text.split(":", 1)[1].strip()
         generic = {
-            "", "blocked", "cannot do this", "i cannot do this", "unable to proceed"
+            "",
+            "blocked",
+            "cannot do this",
+            "i cannot do this",
+            "unable to proceed",
+            "无法继续",
+            "无法进行",
+            "做不到",
+            "我做不到",
+            "不能完成",
         }
         if len(reason) < 8 or reason.casefold() in generic:
             return None
@@ -224,9 +232,9 @@ class CompletionHandler:
     @staticmethod
     def _missing_evidence_instruction(status: str) -> str:
         if status == "needs_acceptance":
-            return "Continue the coding task and obtain targeted acceptance evidence."
+            return "请继续编码任务，并获取针对性验收证据。"
         if status == "needs_relevant_validation":
-            return "Run the relevant regression validation required for the current change."
+            return "请运行当前变更所需的相关回归验证。"
         if status == "needs_full_validation":
-            return "Run the required full regression validation before stopping."
-        return "Continue the coding task with a concrete tool action; it is not complete yet."
+            return "停止前请运行所需的全量回归验证。"
+        return "请用具体工具动作继续编码任务；任务尚未完成。"

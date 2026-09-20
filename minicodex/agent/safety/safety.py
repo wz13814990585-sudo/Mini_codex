@@ -290,15 +290,14 @@ class SafetyPolicy:
             if not self.dependencies_authorized:
                 return SafetyDecision(
                     SafetyLevel.BLOCKED, False,
-                    "The user explicitly prohibited adding or installing dependencies.",
+                    "用户明确禁止添加或安装依赖。",
                     "dependency_forbidden", tool_name,
                 )
             return SafetyDecision(
                 level=SafetyLevel.CAUTION,
                 allowed=True,
                 reason=(
-                    "Tool installs a Python dependency into the "
-                    "MiniCodex interpreter environment."
+                    "工具会向 MiniCodex 解释器环境安装 Python 依赖。"
                 ),
                 rule="dependency_install",
                 tool_name=tool_name,
@@ -334,8 +333,7 @@ class SafetyPolicy:
             ),
             allowed=True,
             reason=(
-                "Tool does not match a "
-                "restricted safety operation."
+                "工具不匹配受限的安全操作。"
             ),
             rule=(
                 "default_safe"
@@ -357,7 +355,7 @@ class SafetyPolicy:
         if not self.edits_authorized:
             return SafetyDecision(
                 SafetyLevel.BLOCKED, False,
-                "The current task does not authorize repository modification.",
+                "当前任务未授权修改仓库。",
                 "task_no_edit_constraint", tool_name,
             )
 
@@ -382,10 +380,8 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "No path was available for "
-                    "safety classification. "
-                    "Downstream edit validation "
-                    "will handle the call."
+                    "缺少可用于安全分类的路径。"
+                    "下游编辑验证将处理该调用。"
                 ),
                 rule=(
                     "defer_missing_path"
@@ -409,7 +405,7 @@ class SafetyPolicy:
         if self._test_gaming_attempt(normalized, arguments):
             return SafetyDecision(
                 SafetyLevel.BLOCKED, False,
-                "The proposed test edit weakens or disables validation without explicit authorization.",
+                "拟议的测试编辑在未获明确授权的情况下削弱或禁用了验证。",
                 "anti_test_gaming", tool_name, path=normalized,
             )
 
@@ -417,7 +413,7 @@ class SafetyPolicy:
         if protected_root == ".minicodex":
             return SafetyDecision(
                 SafetyLevel.BLOCKED, False,
-                "MiniCodex runtime state is internal infrastructure and is never an ordinary edit target.",
+                "MiniCodex 运行时状态属于内部基础设施，绝不能作为普通编辑目标。",
                 "protected_runtime_state", tool_name, path=normalized,
             )
         if protected_root in {
@@ -426,7 +422,7 @@ class SafetyPolicy:
         } and normalized.casefold() not in self.user_request.casefold():
             return SafetyDecision(
                 SafetyLevel.BLOCKED, False,
-                "Generated, vendor, dependency, environment, and cache paths are protected unless explicitly requested.",
+                "生成物、vendor、依赖、环境与缓存路径受保护，除非被明确请求。",
                 "protected_generated_path", tool_name, path=normalized,
             )
 
@@ -445,8 +441,7 @@ class SafetyPolicy:
                 ),
                 allowed=False,
                 reason=(
-                    "The edit target resolves "
-                    "outside the workspace."
+                    "编辑目标解析到工作区之外。"
                 ),
                 rule=(
                     "workspace_escape"
@@ -473,8 +468,7 @@ class SafetyPolicy:
                 ),
                 allowed=False,
                 reason=(
-                    "Direct modification of Git "
-                    "internal metadata is not allowed."
+                    "不允许直接修改 Git 内部元数据。"
                 ),
                 rule=(
                     "git_metadata_protection"
@@ -502,9 +496,8 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "This file was already dirty "
-                    "when the task started and may "
-                    "contain pre-existing user work."
+                    "任务开始时该文件已有未提交变更，"
+                    "可能包含既有用户工作。"
                 ),
                 rule=(
                     "preexisting_user_change"
@@ -532,8 +525,7 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "The target file currently "
-                    "has a Git conflict."
+                    "目标文件当前存在 Git 冲突。"
                 ),
                 rule=(
                     "git_conflict"
@@ -548,10 +540,8 @@ class SafetyPolicy:
             ),
             allowed=True,
             reason=(
-                "Edit stays inside the workspace "
-                "and does not target protected "
-                "Git metadata or known "
-                "pre-existing user work."
+                "编辑位于工作区内，且未指向受保护的 "
+                "Git 元数据或已知既有用户工作。"
             ),
             rule=(
                 "workspace_edit"
@@ -602,8 +592,7 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "No command was available "
-                    "for safety classification."
+                    "缺少可用于安全分类的命令。"
                 ),
                 rule=(
                     "defer_missing_command"
@@ -626,8 +615,7 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "Empty command contains "
-                    "no operation."
+                    "空命令不包含任何操作。"
                 ),
                 rule=(
                     "empty_command"
@@ -652,9 +640,8 @@ class SafetyPolicy:
                 ),
                 allowed=False,
                 reason=(
-                    "Shell output redirection may "
-                    "write files outside the "
-                    "checkpointed edit pipeline."
+                    "Shell 输出重定向可能写入受检查点保护的"
+                    "编辑管道之外的文件。"
                 ),
                 rule=(
                     "checkpoint_bypass_redirection"
@@ -816,8 +803,7 @@ class SafetyPolicy:
                     ),
                     allowed=True,
                     reason=(
-                        "Command performs external "
-                        "network access."
+                        "命令会发起外部网络访问。"
                     ),
                     rule=(
                         "network_access"
@@ -843,8 +829,7 @@ class SafetyPolicy:
                 ),
                 allowed=True,
                 reason=(
-                    "Command installs or modifies "
-                    "software dependencies."
+                    "命令会安装或修改软件依赖。"
                 ),
                 rule=(
                     "dependency_install"
@@ -859,8 +844,7 @@ class SafetyPolicy:
             ),
             allowed=True,
             reason=(
-                "Command does not match a known "
-                "Safety policy blocked or cautioned this operation."
+                "命令未匹配已知会被安全策略拦截或警示的操作。"
             ),
             rule=(
                 "command_safe"
@@ -970,8 +954,7 @@ class SafetyPolicy:
                 ),
                 allowed=False,
                 reason=(
-                    "Mutating Git operations are "
-                    "blocked through run_command."
+                    "通过 run_command 执行变更型 Git 操作已被拦截。"
                 ),
                 rule=(
                     "git_mutation"
@@ -1016,8 +999,7 @@ class SafetyPolicy:
                     ),
                     allowed=False,
                     reason=(
-                        "Destructive Git branch "
-                        "mutation is blocked."
+                        "破坏性 Git 分支变更已被拦截。"
                     ),
                     rule=(
                         "git_reference_mutation"
@@ -1057,8 +1039,7 @@ class SafetyPolicy:
                     ),
                     allowed=False,
                     reason=(
-                        "Destructive Git tag "
-                        "mutation is blocked."
+                        "破坏性 Git 标签变更已被拦截。"
                     ),
                     rule=(
                         "git_reference_mutation"
@@ -1167,9 +1148,8 @@ class SafetyPolicy:
             ),
             allowed=False,
             reason=(
-                "Command matched a "
-                "deterministically blocked "
-                f"safety rule: {rule}."
+                "命令匹配到确定性拦截的"
+                f"安全规则：{rule}。"
             ),
             rule=rule,
             tool_name=tool_name,
@@ -1624,38 +1604,34 @@ class SafetyPolicy:
 
         return "\n".join(
             [
-                "Safety policy:",
+                "安全策略：",
                 (
-                    "SAFE: execute automatically."
+                    "SAFE: 自动执行。"
                 ),
                 (
-                    "CAUTION: execute but preserve "
-                    "risk metadata."
+                    "CAUTION: 执行但保留风险元数据。"
                 ),
                 (
                     "BLOCKED: do not execute."
                 ),
                 (
-                    "Direct edits outside the "
-                    "workspace are blocked."
+                    "工作区外的直接编辑会被拦截。"
                 ),
                 (
-                    "Direct writes to .git metadata "
-                    "are blocked."
+                    "对 .git 元数据的直接写入会被拦截。"
                 ),
                 (
-                    "Destructive Git and direct "
-                    "filesystem mutation through "
-                    "run_command are blocked."
+                    "通过 run_command 进行的破坏性 Git "
+                    "与直接文件系统变更会被拦截。"
                 ),
                 (
-                    "Pre-existing dirty files: "
+                    "既有脏文件："
                     + (
                         ", ".join(
                             preexisting
                         )
                         if preexisting
-                        else "(none)"
+                        else "（无）"
                     )
                 ),
             ]

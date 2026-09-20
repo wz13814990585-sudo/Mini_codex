@@ -41,7 +41,7 @@ class TestTargetResolver:
         for source in normalized:
             if self.is_test_path(source) and self._exists(source):
                 return TestTargetResolution(
-                    source, source, "high", "The requested artifact is an existing pytest target.", True,
+                    source, source, "high", "请求的产物本身就是已有的 pytest 目标。", True,
                     "acceptance",
                 )
 
@@ -54,7 +54,7 @@ class TestTargetResolver:
                         candidate,
                         source,
                         "high",
-                        f"Mapped source {source} to existing test {candidate}.",
+                        f"已将源文件 {source} 映射到已有测试 {candidate}。",
                         True,
                         "acceptance",
                     )
@@ -68,7 +68,7 @@ class TestTargetResolver:
                     indexed[0],
                     source,
                     "medium",
-                    f"AST import/reference index linked {source} to {indexed[0]}.",
+                    f"AST 导入/引用索引将 {source} 关联到 {indexed[0]}。",
                     False,
                     "regression",
                 )
@@ -82,7 +82,7 @@ class TestTargetResolver:
                     nearby[0],
                     source,
                     "low",
-                    f"Selected nearby package regression test {nearby[0]} for {source}.",
+                    f"已为 {source} 选择附近包回归测试 {nearby[0]}。",
                     False,
                     "regression",
                 )
@@ -93,7 +93,7 @@ class TestTargetResolver:
                     directory,
                     normalized[0] if normalized else None,
                     "low",
-                    "No focused test was found; only a regression directory is available.",
+                    "未找到聚焦测试；仅有回归目录可用。",
                     False,
                     "regression",
                 )
@@ -102,7 +102,7 @@ class TestTargetResolver:
             None,
             normalized[0] if normalized else None,
             "none",
-            "No existing pytest target could be resolved for the requested source.",
+            "无法为请求的源文件解析到已有 pytest 目标。",
             False,
             "regression",
         )

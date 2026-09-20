@@ -16,10 +16,9 @@ class GitDiffTool(
     capabilities = frozenset({"git.inspect"})
 
     description = (
-        "Inspect the current Git diff without modifying the "
-        "repository. Can inspect the whole workspace or one "
-        "specific path, and can inspect either unstaged or "
-        "staged changes."
+        "查看当前 Git diff，不会修改仓库。"
+        "可查看整个工作区或指定路径，"
+        "也可查看未暂存或已暂存的变更。"
     )
 
     parameters = {
@@ -28,15 +27,15 @@ class GitDiffTool(
             "path": {
                 "type": "string",
                 "description": (
-                    "Optional repository-relative path. "
-                    "Omit to inspect the full diff."
+                    "可选的仓库相对路径。"
+                    "省略则查看完整 diff。"
                 ),
             },
             "staged": {
                 "type": "boolean",
                 "description": (
-                    "If true, inspect staged changes using "
-                    "git diff --cached. Defaults to false."
+                    "若为 true，使用 git diff --cached "
+                    "查看已暂存变更。默认为 false。"
                 ),
                 "default": False,
             },
@@ -45,8 +44,8 @@ class GitDiffTool(
                 "minimum": 1,
                 "maximum": 50000,
                 "description": (
-                    "Maximum diff characters returned to the "
-                    "LLM. Defaults to 12000."
+                    "返回给模型的最大 diff 字符数。"
+                    "默认为 12000。"
                 ),
                 "default": 12000,
             },
@@ -94,8 +93,7 @@ class GitDiffTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Git diff could not "
-                    "be inspected."
+                    "无法查看 Git diff。"
                 ),
                 data={
                     "failure_type": (
@@ -115,7 +113,7 @@ class GitDiffTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Git diff inspection failed."
+                    "Git diff 查看失败。"
                 ),
                 data={
                     "staged": (
@@ -140,22 +138,22 @@ class GitDiffTool(
             )
 
         diff_kind = (
-            "staged"
+            "已暂存"
             if diff.staged
-            else "unstaged"
+            else "未暂存"
         )
 
         summary = (
-            f"Git {diff_kind} diff inspected. "
-            f"Characters={diff.total_chars}, "
-            f"truncated={diff.truncated}."
+            f"已查看 Git {diff_kind} diff。"
+            f"字符数={diff.total_chars}，"
+            f"已截断={diff.truncated}。"
         )
 
         llm_content = (
             diff.text
             if diff.text
             else (
-                f"No {diff_kind} Git diff."
+                f"无 {diff_kind} Git diff。"
             )
         )
 

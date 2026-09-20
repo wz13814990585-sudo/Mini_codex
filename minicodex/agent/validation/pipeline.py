@@ -103,7 +103,7 @@ class ValidationPipeline:
 
         if result.data.get("workspace_changed_during_validation"):
             evidence = replace(evidence, outcome=ValidationOutcome.INCONCLUSIVE, failed_count=None,
-                               summary="Workspace changed during validation; rerun against the current revision.")
+                               summary="验证期间工作区已变更；请针对当前版本重新运行。")
         check_id = str(arguments.get("validation_check", ""))
         candidates = [c for c in self.state.plan.checks if c.purpose == evidence.purpose]
         # Only a genuinely single-outcome task can omit the explicit binding.

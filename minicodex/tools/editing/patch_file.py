@@ -18,9 +18,8 @@ class PatchFileTool(
     capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
-        "Replace an exact unique block of text inside an "
-        "existing project file. Use this for small targeted "
-        "changes when the current exact source is known."
+        "在已有项目文件中替换一段完全匹配且唯一的文本。"
+        "在已知当前精确源码时，用于小范围定向修改。"
     )
 
     parameters = {
@@ -29,20 +28,19 @@ class PatchFileTool(
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative path of the file to modify."
+                    "要修改的文件相对路径。"
                 ),
             },
             "old_text": {
                 "type": "string",
                 "description": (
-                    "Exact existing text that should "
-                    "be replaced."
+                    "应被替换的、当前文件中的精确原文。"
                 ),
             },
             "new_text": {
                 "type": "string",
                 "description": (
-                    "New text that should replace old_text."
+                    "用于替换 old_text 的新文本。"
                 ),
             },
         },
@@ -82,13 +80,13 @@ class PatchFileTool(
         if not file_path.exists():
 
             raise FileNotFoundError(
-                f"File not found: {path}"
+                f"文件未找到：{path}"
             )
 
         if not file_path.is_file():
 
             raise ValueError(
-                f"Path is not a file: {path}"
+                f"路径不是文件：{path}"
             )
 
         before_content = (
@@ -110,7 +108,7 @@ class PatchFileTool(
         if count == 0:
             return ToolResult(
                 success=False,
-                summary=f"Patch context is stale for {path}.",
+                summary=f"{path} 的补丁上下文已过期。",
                 data={
                     "path": path,
                     "checkpoint_id": None,
@@ -121,13 +119,13 @@ class PatchFileTool(
                     "reason_code": ReasonCode.STALE_CONTEXT.value,
                     "retry_action": "read_target_region_then_retry_once",
                 },
-                error="old_text was not found in the current file.",
+                error="当前文件中未找到 old_text。",
             )
 
         if count > 1:
             return ToolResult(
                 success=False,
-                summary=f"Patch context is ambiguous for {path}.",
+                summary=f"{path} 的补丁上下文不唯一。",
                 data={
                     "path": path,
                     "checkpoint_id": None,
@@ -139,7 +137,7 @@ class PatchFileTool(
                     "match_count": count,
                     "retry_action": "read_target_region_then_use_more_specific_context",
                 },
-                error="old_text appears multiple times.",
+                error="old_text 在文件中出现多次。",
             )
 
         # =====================================================
@@ -201,8 +199,7 @@ class PatchFileTool(
         return ToolResult(
             success=True,
             summary=(
-                f"Successfully patched "
-                f"and verified file: {path}"
+                f"已成功打补丁并校验文件：{path}"
             ),
             data={
                 "path": path,

@@ -152,5 +152,5 @@ def test_fast_system_prompt_is_compact():
 
     prompt = agent._build_system_prompt()
 
-    assert "FAST mode" in prompt
+    assert "FAST 模式" in prompt
     assert len(prompt) < 1000

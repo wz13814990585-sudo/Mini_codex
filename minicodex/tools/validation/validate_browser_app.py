@@ -14,20 +14,20 @@ class ValidateBrowserAppTool(BaseTool):
     name = "validate_browser_app"
     capabilities = frozenset({"validation.browser"})
     description = (
-        "Run bounded Playwright checks against one local HTML file: page load, "
-        "console errors, selector/text assertions, click, keypress, and resulting text."
+        "对单个本地 HTML 文件执行有界的 Playwright 检查：页面加载、"
+        "控制台错误、选择器/文本断言、点击、按键，以及操作后的文本。"
     )
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Workspace-relative HTML path."},
-            "selector": {"type": "string", "description": "Selector that must exist."},
-            "expected_text": {"type": "string", "description": "Text expected after actions."},
-            "click_selector": {"type": "string", "description": "Optional selector to click."},
-            "keypress": {"type": "string", "description": "Optional Playwright key name."},
-            "keypress_selector": {"type": "string", "description": "Optional keypress target."},
-            "assertion_kind": {"type": "string", "enum": ["text", "visible", "value", "attribute", "class", "style"], "description": "Post-action assertion type."},
-            "expected_value": {"type": "string", "description": "Expected post-action assertion value."},
+            "path": {"type": "string", "description": "工作区相对的 HTML 路径。"},
+            "selector": {"type": "string", "description": "必须存在的选择器。"},
+            "expected_text": {"type": "string", "description": "操作后期望出现的文本。"},
+            "click_selector": {"type": "string", "description": "可选：要点击的选择器。"},
+            "keypress": {"type": "string", "description": "可选：Playwright 按键名。"},
+            "keypress_selector": {"type": "string", "description": "可选：按键目标选择器。"},
+            "assertion_kind": {"type": "string", "enum": ["text", "visible", "value", "attribute", "class", "style"], "description": "操作后的断言类型。"},
+            "expected_value": {"type": "string", "description": "操作后断言的期望值。"},
         },
         "required": ["path"],
     }
@@ -53,18 +53,18 @@ class ValidateBrowserAppTool(BaseTool):
     ) -> ToolResult:
         target = resolve_workspace_path(self.workspace, path)
         if not target.is_file():
-            return self._result(path, "failed", [f"HTML file not found: {path}"])
+            return self._result(path, "failed", [f"未找到 HTML 文件：{path}"])
         if not self.available():
             return ToolResult(
                 success=False,
-                summary="Browser validation is unavailable; Playwright is not installed.",
+                summary="浏览器验证不可用；未安装 Playwright。",
                 data={
                     "path": path,
                     "outcome": "inconclusive",
                     "failure_type": "missing_dependency",
                     "fallback": "validate_static_web",
                 },
-                error="Optional dependency 'playwright' is unavailable.",
+                error="可选依赖 'playwright' 不可用。",
             )
 
         from playwright.sync_api import sync_playwright
@@ -84,7 +84,7 @@ class ValidateBrowserAppTool(BaseTool):
                 page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
                 page.goto(target.as_uri(), wait_until="load")
                 if selector and page.locator(selector).count() == 0:
-                    errors.append(f"selector not found: {selector}")
+                    errors.append(f"未找到选择器：{selector}")
                 if click_selector:
                     page.locator(click_selector).click()
                 if keypress:
@@ -101,24 +101,24 @@ class ValidateBrowserAppTool(BaseTool):
                         else page.locator("body").inner_text()
                     )
                     if expected_value not in actual:
-                        errors.append(f"expected text not found: {expected_value}")
+                        errors.append(f"未找到期望文本：{expected_value}")
                 elif assertion_kind == "visible" and not page.locator(selector).first.is_visible():
-                    errors.append(f"selector is not visible: {selector}")
+                    errors.append(f"选择器不可见：{selector}")
                 elif assertion_kind == "value" and page.locator(selector).first.input_value() != expected_value:
-                    errors.append(f"expected value not found: {expected_value}")
+                    errors.append(f"未找到期望值：{expected_value}")
                 elif assertion_kind == "class" and expected_value not in (page.locator(selector).first.get_attribute("class") or "").split():
-                    errors.append(f"expected class not found: {expected_value}")
+                    errors.append(f"未找到期望 class：{expected_value}")
                 elif assertion_kind == "attribute":
                     name, _, value = expected_value.partition("=")
                     if not name or page.locator(selector).first.get_attribute(name) != value:
-                        errors.append(f"expected attribute not found: {expected_value}")
+                        errors.append(f"未找到期望属性：{expected_value}")
                 elif assertion_kind == "style" and expected_value not in (page.locator(selector).first.get_attribute("style") or ""):
-                    errors.append(f"expected style not found: {expected_value}")
+                    errors.append(f"未找到期望 style：{expected_value}")
                 browser.close()
         except Exception as error:
             return ToolResult(
                 success=False,
-                summary="Browser validation could not execute.",
+                summary="无法执行浏览器验证。",
                 data={
                     "path": path,
                     "outcome": "inconclusive",
@@ -136,9 +136,9 @@ class ValidateBrowserAppTool(BaseTool):
         return ToolResult(
             success=True,
             summary=(
-                "Browser acceptance validation passed."
+                "浏览器验收验证通过。"
                 if outcome == "passed"
-                else f"Browser acceptance validation found {len(errors)} error(s)."
+                else f"浏览器验收验证发现 {len(errors)} 个错误。"
             ),
             data={"path": path, "outcome": outcome, "errors": errors},
         )

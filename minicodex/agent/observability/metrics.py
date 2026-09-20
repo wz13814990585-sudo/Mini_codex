@@ -13,6 +13,8 @@ class ExecutionMetrics:
     llm_call_count: int = 0
     agent_steps: int = 0
     tool_call_count: int = 0
+    failed_tool_call_count: int = 0
+    failed_edit_tool_count: int = 0
     inspection_tool_count: int = 0
     edit_tool_count: int = 0
     validation_tool_count: int = 0
@@ -27,7 +29,6 @@ class ExecutionMetrics:
     final_completion_reason: str | None = None
     final_reason_code: str | None = None
     false_completion: bool = False
-    wrong_edit: bool = False
     routing_llm_calls: int = 0
     routing_prompt_tokens: int = 0
     routing_completion_tokens: int = 0
@@ -57,6 +58,7 @@ class ExecutionMetrics:
     redundant_reads: int = 0
     redundant_searches: int = 0
     wrong_validation_target_count: int = 0
+    edited_paths: list[str] = field(default_factory=list)
     cost_usd: float | None = None
     _started: float = field(default_factory=time.monotonic, repr=False)
     _observations: set = field(default_factory=set, repr=False)
@@ -68,6 +70,7 @@ class ExecutionMetrics:
         self.searches_before_first_edit = 0
         self.redundant_reads = self.redundant_searches = 0
         self.wrong_validation_target_count = 0
+        self.edited_paths.clear()
         self.cost_usd = None
         self._observations.clear()
         self.execution_mode = execution_mode
@@ -75,6 +78,8 @@ class ExecutionMetrics:
         self.llm_call_count = 0
         self.agent_steps = 0
         self.tool_call_count = 0
+        self.failed_tool_call_count = 0
+        self.failed_edit_tool_count = 0
         self.inspection_tool_count = 0
         self.edit_tool_count = 0
         self.validation_tool_count = 0
@@ -89,7 +94,6 @@ class ExecutionMetrics:
         self.final_completion_reason = None
         self.final_reason_code = None
         self.false_completion = False
-        self.wrong_edit = False
         self.routing_llm_calls = 0
         self.routing_prompt_tokens = 0
         self.routing_completion_tokens = 0
@@ -127,6 +131,8 @@ class ExecutionMetrics:
         from ..progress import ActionController
 
         self.tool_call_count += 1
+        if not success:
+            self.failed_tool_call_count += 1
         import json
         signature = (tool_name, json.dumps(arguments or {}, sort_keys=True), revision)
         is_search = "code.search" in capabilities or tool_name in {"search_code", "search_symbol"}
@@ -140,8 +146,14 @@ class ExecutionMetrics:
         self.llm_call_count = max(self.llm_call_count, int(llm_call_count))
         if tool_name in ActionController.INSPECTION_TOOLS or capabilities & {"filesystem.read", "code.search", "git.inspect"}:
             self.inspection_tool_count += 1
-        if (tool_name in ActionController.EDIT_TOOLS or "code.edit" in capabilities) and success:
+        is_edit = tool_name in ActionController.EDIT_TOOLS or "code.edit" in capabilities
+        if is_edit and not success:
+            self.failed_edit_tool_count += 1
+        if is_edit and success:
             self.edit_tool_count += 1
+            path = str((arguments or {}).get("path", "")).strip().replace("\\", "/")
+            if path and path not in self.edited_paths:
+                self.edited_paths.append(path)
             if self.calls_before_first_edit is None:
                 self.calls_before_first_edit = llm_call_count
                 self.time_to_first_edit = time.monotonic() - self._started
@@ -196,6 +208,10 @@ class ExecutionMetrics:
     @property
     def repeated_action_rate(self) -> float:
         return self.repeated_action_count / self.tool_call_count if self.tool_call_count else 0.0
+
+    @property
+    def failed_tool_call_rate(self) -> float:
+        return self.failed_tool_call_count / self.tool_call_count if self.tool_call_count else 0.0
 
     @property
     def validation_to_edit_ratio(self):

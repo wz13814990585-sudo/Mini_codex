@@ -16,10 +16,9 @@ class GitStatusTool(
     capabilities = frozenset({"git.inspect"})
 
     description = (
-        "Inspect the current Git repository state, including "
-        "branch, HEAD, dirty state, staged, modified, deleted, "
-        "untracked files, task-start changes, and files touched "
-        "by MiniCodex during the current task."
+        "查看当前 Git 仓库状态，包括分支、HEAD、是否有未提交更改、"
+        "已暂存/已修改/已删除/未跟踪文件、任务开始时的变更，"
+        "以及 MiniCodex 在当前任务中改动过的文件。"
     )
 
     parameters = {
@@ -57,8 +56,7 @@ class GitStatusTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Git repository state "
-                    "could not be inspected."
+                    "无法查看 Git 仓库状态。"
                 ),
                 data={
                     "failure_type": (
@@ -82,7 +80,7 @@ class GitStatusTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Git is unavailable."
+                    "Git 不可用。"
                 ),
                 data=(
                     task_state
@@ -90,7 +88,7 @@ class GitStatusTool(
                 ),
                 error=(
                     state.error
-                    or "Git executable unavailable."
+                    or "Git 可执行文件不可用。"
                 ),
             )
 
@@ -101,8 +99,7 @@ class GitStatusTool(
             return ToolResult(
                 success=True,
                 summary=(
-                    "Workspace is not a "
-                    "Git repository."
+                    "工作区不是 Git 仓库。"
                 ),
                 data=(
                     task_state
@@ -117,11 +114,11 @@ class GitStatusTool(
         return ToolResult(
             success=True,
             summary=(
-                "Git repository state inspected. "
-                f"Branch={state.branch or 'detached'}, "
-                f"dirty={state.dirty}, "
-                f"changed_files="
-                f"{len(state.changed_files)}."
+                "已查看 Git 仓库状态。"
+                f"分支={state.branch or 'detached'}，"
+                f"有未提交更改={state.dirty}，"
+                f"变更文件数="
+                f"{len(state.changed_files)}。"
             ),
             data=(
                 task_state

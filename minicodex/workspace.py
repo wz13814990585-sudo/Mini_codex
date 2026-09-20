@@ -23,9 +23,9 @@ class WorkspaceConfig:
         candidate = Path.cwd() if workspace is None else Path(workspace).expanduser()
         root = candidate.resolve()
         if not root.exists():
-            raise ValueError(f"Workspace does not exist: {candidate}")
+            raise ValueError(f"工作区不存在：{candidate}")
         if not root.is_dir():
-            raise ValueError(f"Workspace is not a directory: {candidate}")
+            raise ValueError(f"工作区不是目录：{candidate}")
         app_root = Path(application_root or Path(__file__).resolve().parent.parent).resolve()
         identity = sha256(str(root).encode("utf-8")).hexdigest()[:16]
         repository_key = f"{root.name}-{identity}"

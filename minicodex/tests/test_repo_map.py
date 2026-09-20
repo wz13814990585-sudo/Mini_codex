@@ -52,7 +52,7 @@ def test_repo_map_builds_basic_structure(
     )
 
     assert (
-        "Repository structure:"
+        "仓库结构："
         in result
     )
 
@@ -327,7 +327,7 @@ def test_repo_map_empty_repository(
 
     assert (
         result
-        == "Repository appears empty."
+        == "仓库看起来是空的。"
     )
 
 
@@ -347,8 +347,7 @@ def test_repo_map_missing_workspace(
     assert (
         result
         == (
-            "Repository map unavailable: "
-            "workspace does not exist."
+            "仓库地图不可用：工作区不存在。"
         )
     )
 
@@ -373,8 +372,7 @@ def test_repo_map_workspace_is_file(
     assert (
         result
         == (
-            "Repository map unavailable: "
-            "workspace is not a directory."
+            "仓库地图不可用：工作区不是目录。"
         )
     )
 
@@ -487,7 +485,7 @@ def test_repo_map_is_visible_to_llm(
             )
 
             assert (
-                "Repository map:"
+                "仓库地图："
                 in combined
             )
 
@@ -745,6 +743,6 @@ def test_repo_map_failure_does_not_crash_agent(
     agent._refresh_repo_map()
 
     assert (
-        "Repository map unavailable"
+        "仓库地图不可用"
         in agent.repo_map_text
     )

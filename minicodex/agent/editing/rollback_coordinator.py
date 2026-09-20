@@ -32,10 +32,10 @@ class RollbackCoordinator:
         if checkpoint is None or not checkpoint.sealed or checkpoint.rolled_back:
             return None
 
-        print("\n[Automatic Rollback]")
+        print("\n[自动回滚]")
         print(
-            f"Validation regression detected: {validation_progress.previous_failed} "
-            f"failed -> {validation_progress.current_failed} failed."
+            f"检测到验证回归：失败数从 {validation_progress.previous_failed} "
+            f"变为 {validation_progress.current_failed}。"
         )
         result = engine.rollback(checkpoint.checkpoint_id)
         summary = getattr(agent, "working_summary", None)
@@ -55,10 +55,10 @@ class RollbackCoordinator:
             return ControlDecision(
                 restart=True,
                 followup_message=(
-                    "Validation regressed and automatic rollback failed. "
-                    f"{result.to_llm_text()} Inspect the physical workspace before editing."
+                    "验证发生回归且自动回滚失败。"
+                    f"{result.to_llm_text()} 请在编辑前先检查物理工作区。"
                 ),
-                skipped_reason="automatic rollback failed",
+                skipped_reason="自动回滚失败",
                 reason_code=ReasonCode.BLOCKED,
             )
 
@@ -106,17 +106,16 @@ class RollbackCoordinator:
             controller.observe_action(
                 "automatic_rollback",
                 agent.task_progress_state(),
-                ProgressSignal(ProgressKind.OBSERVATION, "Rollback is not positive advancement."),
+                ProgressSignal(ProgressKind.OBSERVATION, "回滚不算正向进展。"),
             )
-        print("\n[Rollback Successful]")
-        print(f"Restored checkpoint: {checkpoint.checkpoint_id}")
+        print("\n[回滚成功]")
+        print(f"已恢复检查点：{checkpoint.checkpoint_id}")
         return ControlDecision(
             restart=True,
             followup_message=(
-                "The Harness automatically rolled back the regressed edit. "
-                f"Checkpoint {checkpoint.checkpoint_id} was restored at revision "
-                f"{rollback_revision}. Previous validation is stale; choose a materially "
-                "different repair."
+                "Harness 已自动回滚发生回归的编辑。"
+                f"检查点 {checkpoint.checkpoint_id} 已恢复到版本 "
+                f"{rollback_revision}。此前验证已过期；请选择实质不同的修复方案。"
             ),
-            skipped_reason="automatic rollback changed the workspace revision",
+            skipped_reason="自动回滚已改变工作区版本",
         )

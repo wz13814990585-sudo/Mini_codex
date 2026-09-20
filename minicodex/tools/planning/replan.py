@@ -8,10 +8,8 @@ class ReplanTool(BaseTool):
     capabilities = frozenset({"plan.control"})
 
     description = (
-        "Request a revised implementation plan when the current "
-        "plan is no longer appropriate because of new evidence, "
-        "unexpected project structure, failed assumptions, or "
-        "a blocking issue."
+        "当当前计划因新证据、意外的项目结构、假设失败或阻塞问题"
+        "而不再合适时，请求修订实现计划。"
     )
 
     parameters = {
@@ -20,8 +18,7 @@ class ReplanTool(BaseTool):
             "reason": {
                 "type": "string",
                 "description": (
-                    "Explain clearly why the current plan "
-                    "needs to be revised."
+                    "清楚说明为什么需要修订当前计划。"
                 ),
             }
         },
@@ -50,7 +47,7 @@ class ReplanTool(BaseTool):
         message = str(
             callback_result.get(
                 "message",
-                "Replan request finished.",
+                "重新规划请求已完成。",
             )
         )
 

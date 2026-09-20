@@ -28,7 +28,7 @@ class ValidationCheck:
     strength: EvidenceStrength = EvidenceStrength.TARGETED
     revision: int = 0
     milestone: str = "task"
-    reason: str = "Prove the requested outcome independently."
+    reason: str = "独立证明请求结果。"
     observable: str = ""
     spec: VerificationSpec | None = None
     spec_source: str = ""

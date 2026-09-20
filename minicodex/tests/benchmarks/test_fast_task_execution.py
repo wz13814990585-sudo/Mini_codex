@@ -250,7 +250,7 @@ def test_benchmark_existing_tetris_finishes_without_edit(tmp_path):
     assert agent.execution_metrics.inspection_tool_count == 1
     assert agent.execution_metrics.validation_tool_count == 1
     assert agent.execution_metrics.final_outcome == "already_satisfied"
-    assert "Task already satisfied." in result
+    assert "当前任务要求已经满足，无需修改代码。" in result
 
 
 def test_fast_validation_pass_does_not_request_another_llm_round(tmp_path):

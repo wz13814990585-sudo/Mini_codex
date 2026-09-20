@@ -17,4 +17,4 @@ class OutputLevel(str, Enum):
         try:
             return cls(str(value or cls.NORMAL.value).strip().lower())
         except ValueError as exc:
-            raise ValueError("output_level must be normal, verbose, or debug") from exc
+            raise ValueError("output_level 必须为 normal、verbose 或 debug") from exc

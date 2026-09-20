@@ -272,4 +272,5 @@ def test_fast_standalone_scope_rejects_full_repository_regression():
         {"path": ".", "purpose": "regression"},
         policy,
     )
-    assert "not applicable" in reason
+    assert "不适用于" in reason
+    assert "针对性验收" in reason

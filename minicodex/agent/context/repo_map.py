@@ -55,15 +55,13 @@ class RepoMap:
         if not root.exists():
 
             return (
-                "Repository map unavailable: "
-                "workspace does not exist."
+                "仓库地图不可用：工作区不存在。"
             )
 
         if not root.is_dir():
 
             return (
-                "Repository map unavailable: "
-                "workspace is not a directory."
+                "仓库地图不可用：工作区不是目录。"
             )
 
         files = self._collect_files(
@@ -73,11 +71,11 @@ class RepoMap:
         if not files:
 
             return (
-                "Repository appears empty."
+                "仓库看起来是空的。"
             )
 
         lines = [
-            "Repository structure:"
+            "仓库结构："
         ]
 
         emitted_directories = set()

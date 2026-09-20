@@ -143,7 +143,7 @@ def test_replace_symbol_rejects_invalid_python(
 
     with pytest.raises(
         ValueError,
-        match="invalid Python syntax",
+        match="无效的 Python 语法",
     ):
 
         tool.execute(
@@ -186,7 +186,7 @@ def test_replace_symbol_rejects_missing_symbol(
 
     with pytest.raises(
         ValueError,
-        match="was not found",
+        match="未找到",
     ):
 
         tool.execute(
@@ -235,7 +235,7 @@ def test_replace_symbol_rejects_ambiguous_short_name(
 
     with pytest.raises(
         ValueError,
-        match="ambiguous",
+        match="匹配不唯一",
     ):
 
         tool.execute(

@@ -67,7 +67,7 @@ class PlanQualityValidator:
                 PlanQualityIssue(
                     step_id=steps[self.max_steps].id,
                     code="too_many_steps",
-                    message=f"Plan exceeds the {self.max_steps}-step limit.",
+                    message=f"计划超过 {self.max_steps} 步上限。",
                 )
             )
 
@@ -82,7 +82,7 @@ class PlanQualityValidator:
                 PlanQualityIssue(
                     step_id=step.id,
                     code="repeated_verification",
-                    message="Repeated verification belongs in one outcome milestone.",
+                    message="重复验证应合并为一个结果里程碑。",
                 )
             )
 
@@ -95,8 +95,8 @@ class PlanQualityValidator:
                         step_id=step.id,
                         code="process_only",
                         message=(
-                            "Plan steps must describe an outcome, not only "
-                            "inspection or confirmation activity."
+                            "计划步骤必须描述结果，"
+                            "而不能仅是检查或确认活动。"
                         ),
                     )
                 )
@@ -125,9 +125,8 @@ class PlanQualityValidator:
             if action_count >= 5 or separator_count >= 4:
                 step.requires_semantic_completion = True
                 warning = (
-                    "Broad step has no machine-checkable acceptance criteria; "
-                    "it requires explicit semantic completion and will not be "
-                    "auto-completed by inspection evidence."
+                    "过宽步骤缺少可机器检验的验收准则；"
+                    "需要显式语义完成，且不会因检查证据而自动完成。"
                 )
                 if warning not in step.quality_warnings:
                     step.quality_warnings.append(warning)

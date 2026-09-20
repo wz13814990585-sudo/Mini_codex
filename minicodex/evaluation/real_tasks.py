@@ -56,7 +56,8 @@ REAL_TASKS = (
 
 
 LIVE_METRICS = (
-    "intent", "mode", "success", "final_outcome", "false_completion", "wrong_edit",
+    "intent", "mode", "success", "final_outcome", "false_completion", "unauthorized_edit",
+    "wrong_file_edit", "failed_tool_call_count", "failed_tool_call_rate",
     "llm_call_count", "tool_call_count", "inspection_count", "calls_before_first_edit",
     "edit_count", "validation_count", "replan_count", "rollback_count",
     "action_required_count", "prompt_tokens", "max_steps_exhausted",

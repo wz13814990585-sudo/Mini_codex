@@ -71,18 +71,18 @@ class TaskCompletionPolicy:
         phase = getattr(task_state, "phase", None)
         if getattr(task_state, "edit_issues", ()):
             return replace(decision, status=CompletionStatus.NOT_READY, outcome=TaskOutcome.INCOMPLETE,
-                           reason=f"Post-edit verification remains unresolved: {task_state.edit_issues}")
+                           reason=f"编辑后验证仍未解决：{task_state.edit_issues}")
         if decision.can_complete and validation_plan.checks:
             missing_checks = [c.id for c in validation_plan.checks if c.required and not ledger.proof(c.id)]
             if missing_checks:
                 return replace(decision, status=CompletionStatus.NOT_READY, outcome=TaskOutcome.INCOMPLETE,
-                               reason="Missing current requirement evidence: " + ", ".join(missing_checks))
+                               reason="缺少当前需求证据：" + ", ".join(missing_checks))
         if getattr(phase, "value", phase) == "blocked":
             return replace(
                 decision,
                 status=CompletionStatus.NOT_READY,
                 outcome=TaskOutcome.BLOCKED,
-                reason="The task is blocked by a concrete external or safety constraint.",
+                reason="任务被具体的外部或安全约束阻塞。",
             )
 
         requirements = getattr(agent, "task_requirements", None)
@@ -91,7 +91,7 @@ class TaskCompletionPolicy:
                                     if not validation_plan.for_requirement(r.id)]
             if missing_requirements:
                 return replace(decision, status=CompletionStatus.NOT_READY, outcome=TaskOutcome.INCOMPLETE,
-                               reason="Requirements have no verification contract: " + ", ".join(missing_requirements))
+                               reason="需求缺少验证契约：" + ", ".join(missing_requirements))
             return decision
         if (
             decision.can_complete
@@ -115,7 +115,7 @@ class TaskCompletionPolicy:
                 decision,
                 status=CompletionStatus.NOT_READY,
                 outcome=TaskOutcome.INCOMPLETE,
-                reason=f"Task requirements lack current evidence: {missing}",
+                reason=f"任务需求缺少当前证据：{missing}",
             )
 
         return decision

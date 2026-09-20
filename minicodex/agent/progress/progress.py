@@ -244,9 +244,8 @@ class ProgressController:
             return (
                 False,
                 (
-                    "The same tool with the same "
-                    "arguments has been repeated "
-                    "without meaningful progress."
+                    "同一工具以相同参数被重复调用，"
+                    "且未带来有意义的进展。"
                 ),
             )
 
@@ -289,8 +288,8 @@ class ProgressController:
                 current_failed=failed_count,
                 current_revision=edit_revision,
                 validation_key=validation_key,
-                message="Contradictory comparable results indicate unstable validation.",
-                signal=ProgressSignal(ProgressKind.OBSERVATION, "Validation is suspected flaky."),
+                message="可比验证结果相互矛盾，表明验证不稳定。",
+                signal=ProgressSignal(ProgressKind.OBSERVATION, "验证疑似不稳定。"),
             )
 
         # =====================================================
@@ -312,7 +311,7 @@ class ProgressController:
                 validation_key=(
                     validation_key
                 ),
-                signal=ProgressSignal(ProgressKind.OBSERVATION, "Validation was inconclusive."),
+                signal=ProgressSignal(ProgressKind.OBSERVATION, "验证结果不确定。"),
             )
 
         normalized_key = (
@@ -382,9 +381,9 @@ class ProgressController:
                         validation_key
                     ),
                     message=(
-                        "Validation succeeded."
+                        "验证成功。"
                     ),
-                    signal=ProgressSignal(ProgressKind.ADVANCED, "Validation changed from unknown to passing."),
+                    signal=ProgressSignal(ProgressKind.ADVANCED, "验证从未知变为通过。"),
                 )
 
             return ValidationProgress(
@@ -403,10 +402,10 @@ class ProgressController:
                     validation_key
                 ),
                 message=(
-                    "Initial comparable validation "
-                    f"recorded: {failed_count} failed."
+                    "已记录首次可比验证："
+                    f"{failed_count} 项失败。"
                 ),
-                signal=ProgressSignal(ProgressKind.OBSERVATION, "Initial failing validation baseline."),
+                signal=ProgressSignal(ProgressKind.OBSERVATION, "首次失败验证基线。"),
             )
 
         (
@@ -441,12 +440,12 @@ class ProgressController:
                     validation_key
                 ),
                 message=(
-                    "Validation succeeded."
+                    "验证成功。"
                 ),
                 signal=(
-                    ProgressSignal(ProgressKind.ADVANCED, "Comparable validation changed from failing to passing.")
+                    ProgressSignal(ProgressKind.ADVANCED, "可比验证从失败变为通过。")
                     if previous_failed not in {None, 0}
-                    else ProgressSignal(ProgressKind.NONE, "Comparable validation remains passing.")
+                    else ProgressSignal(ProgressKind.NONE, "可比验证仍为通过。")
                 ),
             )
 
@@ -481,11 +480,11 @@ class ProgressController:
                     validation_key
                 ),
                 message=(
-                    "Validation improved: "
-                    f"{previous_failed} failed -> "
-                    f"{failed_count} failed."
+                    "验证有改善："
+                    f"{previous_failed} 项失败 -> "
+                    f"{failed_count} 项失败。"
                 ),
-                signal=ProgressSignal(ProgressKind.ADVANCED, "The comparable failure count decreased."),
+                signal=ProgressSignal(ProgressKind.ADVANCED, "可比失败数量下降。"),
             )
 
         # =====================================================
@@ -508,12 +507,12 @@ class ProgressController:
                     current_revision=edit_revision,
                     validation_key=validation_key,
                     message=(
-                        f"Failure identities changed: {len(resolved_ids)} resolved, "
-                        f"{len(new_ids)} new."
+                        f"失败身份发生变化：已解决 {len(resolved_ids)} 项，"
+                        f"新增 {len(new_ids)} 项。"
                     ),
                     signal=ProgressSignal(
                         ProgressKind.REGRESSED if new_ids else ProgressKind.OBSERVATION,
-                        "Comparable failure identities changed.",
+                        "可比失败身份已变化。",
                     ),
                 )
 
@@ -544,14 +543,13 @@ class ProgressController:
                     validation_key
                 ),
                 message=(
-                    "Validation unchanged: "
-                    f"{failed_count} tests "
-                    "still failing."
+                    "验证无变化："
+                    f"仍有 {failed_count} 项测试失败。"
                 ),
                 stalled=(
                     stalled
                 ),
-                signal=ProgressSignal(ProgressKind.NONE, "The comparable failure count did not change."),
+                signal=ProgressSignal(ProgressKind.NONE, "可比失败数量未变化。"),
             )
 
         # =====================================================
@@ -585,12 +583,12 @@ class ProgressController:
                 validation_key
             ),
             message=(
-                "Validation regressed: "
-                f"{previous_failed} failed -> "
-                f"{failed_count} failed."
+                "验证回退："
+                f"{previous_failed} 项失败 -> "
+                f"{failed_count} 项失败。"
             ),
             stalled=(
                 stalled
             ),
-            signal=ProgressSignal(ProgressKind.REGRESSED, "The comparable failure count increased."),
+            signal=ProgressSignal(ProgressKind.REGRESSED, "可比失败数量上升。"),
         )

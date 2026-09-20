@@ -75,13 +75,10 @@ class ValidateStaticWebTool(BaseTool):
     capabilities = frozenset({"validation.static_web"})
 
     description = (
-        "Deterministically validate one static HTML file. It parses "
-        "HTML, extracts inline script blocks internally, checks "
-        "JavaScript syntax with Node when available, and reports "
-        "structured element/data-marker counts. This is targeted "
-        "acceptance evidence and does not replace full regression "
-        "tests. Use optional minimum counts only when the task "
-        "explicitly requires those static HTML attributes/elements."
+        "确定性校验单个静态 HTML 文件：解析 HTML、内部提取内联脚本、"
+        "在 Node 可用时检查 JavaScript 语法，并报告结构化元素/"
+        "data 标记计数。这是定向验收证据，不能替代完整回归测试。"
+        "仅当任务明确要求这些静态 HTML 属性/元素时，才使用可选的最小计数。"
     )
 
     parameters = {
@@ -89,32 +86,32 @@ class ValidateStaticWebTool(BaseTool):
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Workspace-relative HTML file path.",
+                "description": "工作区相对的 HTML 文件路径。",
             },
-            "expected_text": {"type": "string", "description": "Required literal source text supporting the requested content."},
+            "expected_text": {"type": "string", "description": "必须出现在源码中的字面文本，用于支撑请求内容。"},
             "min_button_count": {
                 "type": "integer",
                 "minimum": 0,
-                "description": "Required static <button> count.",
+                "description": "要求的静态 <button> 数量。",
             },
             "min_data_row_count": {
                 "type": "integer",
                 "minimum": 0,
                 "description": (
-                    "Required count of static elements with data-row."
+                    "要求的带 data-row 的静态元素数量。"
                 ),
             },
             "min_data_col_count": {
                 "type": "integer",
                 "minimum": 0,
                 "description": (
-                    "Required count of static elements with data-col."
+                    "要求的带 data-col 的静态元素数量。"
                 ),
             },
             "require_inline_script": {
                 "type": "boolean",
                 "description": (
-                    "Fail when no inline script exists. Defaults false."
+                    "若无内联脚本则失败。默认为 false。"
                 ),
             },
         },
@@ -169,7 +166,7 @@ class ValidateStaticWebTool(BaseTool):
                 outcome="failed",
                 html_parse="failed",
                 script_syntax="not_checked",
-                errors=[f"HTML file not found: {path}"],
+                errors=[f"未找到 HTML 文件：{path}"],
             )
 
         try:
@@ -181,13 +178,13 @@ class ValidateStaticWebTool(BaseTool):
                 html_parse="failed",
                 script_syntax="not_checked",
                 errors=[
-                    f"Could not read HTML: {type(error).__name__}: {error}"
+                    f"无法读取 HTML：{type(error).__name__}: {error}"
                 ],
             )
 
         parser = _StaticWebParser()
         if expected_text and expected_text not in source:
-            errors.append(f"Required content not found: {expected_text}")
+            errors.append(f"未找到所需内容：{expected_text}")
 
         try:
             parser.feed(source)
@@ -196,13 +193,13 @@ class ValidateStaticWebTool(BaseTool):
         except Exception as error:
             html_parse = "failed"
             errors.append(
-                f"HTML parse failed: {type(error).__name__}: {error}"
+                f"HTML 解析失败：{type(error).__name__}: {error}"
             )
 
         if parser.tags["html"] == 0 or parser.tags["body"] == 0:
             html_parse = "failed"
             errors.append(
-                "Document must contain <html> and <body> elements."
+                "文档必须包含 <html> 与 <body> 元素。"
             )
 
         counts = {
@@ -216,11 +213,11 @@ class ValidateStaticWebTool(BaseTool):
         for name, minimum in minimums.items():
             if counts[name] < minimum:
                 errors.append(
-                    f"{name}={counts[name]} is below required {minimum}."
+                    f"{name}={counts[name]} 低于要求的 {minimum}。"
                 )
 
         if require_inline_script and not parser.inline_scripts:
-            errors.append("At least one inline <script> block is required.")
+            errors.append("至少需要一个内联 <script> 块。")
 
         script_syntax = self._validate_scripts(
             parser.inline_scripts,
@@ -256,8 +253,7 @@ class ValidateStaticWebTool(BaseTool):
 
         if not self.node_executable:
             errors.append(
-                "Node.js is unavailable; inline JavaScript syntax "
-                "could not be checked."
+                "Node.js 不可用；无法检查内联 JavaScript 语法。"
             )
             return "unavailable"
 
@@ -301,10 +297,10 @@ class ValidateStaticWebTool(BaseTool):
                     detail = (
                         result.stderr.strip()
                         or result.error
-                        or "Node syntax check failed."
+                        or "Node 语法检查失败。"
                     )
                     errors.append(
-                        f"Inline script {index}: {detail}"
+                        f"内联脚本 {index}：{detail}"
                     )
                     return "failed"
             finally:
@@ -347,12 +343,12 @@ class ValidateStaticWebTool(BaseTool):
             "validation_succeeded": outcome == "passed",
         }
         summary = (
-            f"Static web validation {outcome} for {path}: "
-            f"HTML={html_parse}, JavaScript={script_syntax}, "
-            f"inline_scripts={inline_script_count}, "
-            f"buttons={metrics['button_count']}, "
-            f"data-row={metrics['data_row_count']}, "
-            f"data-col={metrics['data_col_count']}."
+            f"静态 Web 验证结果为 {outcome}（{path}）："
+            f"HTML={html_parse}，JavaScript={script_syntax}，"
+            f"内联脚本={inline_script_count}，"
+            f"按钮={metrics['button_count']}，"
+            f"data-row={metrics['data_row_count']}，"
+            f"data-col={metrics['data_col_count']}。"
         )
         data["validation_summary"] = summary
         return ToolResult(

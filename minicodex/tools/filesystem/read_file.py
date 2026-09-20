@@ -14,8 +14,8 @@ class ReadFileTool(BaseTool):
     capabilities = frozenset({"filesystem.read", "file.read"})
 
     description = (
-        "Read the contents of a text file from the current project. "
-        "Defaults to at most 200 lines; use offset/limit to continue."
+        "读取当前项目中文本文件的内容。"
+        "默认最多返回 200 行；可用 offset/limit 继续阅读。"
     )
 
     parameters = {
@@ -24,21 +24,21 @@ class ReadFileTool(BaseTool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative path of the file to read."
+                    "要读取的文件相对路径。"
                 ),
             },
             "offset": {
                 "type": "integer",
                 "description": (
-                    "1-based line number to start reading from. "
-                    "Defaults to 1."
+                    "从第几行开始读取（从 1 起算）。"
+                    "默认为 1。"
                 ),
             },
             "limit": {
                 "type": "integer",
                 "description": (
-                    "Maximum number of lines to return. "
-                    "Defaults to 200."
+                    "最多返回的行数。"
+                    "默认为 200。"
                 ),
             },
         },
@@ -67,12 +67,12 @@ class ReadFileTool(BaseTool):
 
         if not file_path.exists():
             raise FileNotFoundError(
-                f"File not found: {path}"
+                f"文件未找到：{path}"
             )
 
         if not file_path.is_file():
             raise ValueError(
-                f"Path is not a file: {path}"
+                f"路径不是文件：{path}"
             )
 
         content = file_path.read_text(
@@ -96,7 +96,7 @@ class ReadFileTool(BaseTool):
             return ToolResult(
                 success=True,
                 summary=(
-                    f"Read {path}: file is empty."
+                    f"已读取 {path}：文件为空。"
                 ),
                 data={
                     "path": path,
@@ -117,8 +117,8 @@ class ReadFileTool(BaseTool):
             return ToolResult(
                 success=True,
                 summary=(
-                    f"Read {path}: offset {start} "
-                    f"is past the end of the file."
+                    f"已读取 {path}：起始行 {start} "
+                    f"已超出文件末尾。"
                 ),
                 data={
                     "path": path,
@@ -155,9 +155,9 @@ class ReadFileTool(BaseTool):
         return ToolResult(
             success=True,
             summary=(
-                f"Read {path} "
-                f"lines {start}-{end} "
-                f"of {total}."
+                f"已读取 {path} "
+                f"第 {start}-{end} 行"
+                f"（共 {total} 行）。"
             ),
             data={
                 "path": path,

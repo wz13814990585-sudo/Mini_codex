@@ -8,6 +8,11 @@ from ..task_state import RuntimeEventType
 
 _NEXT_MODE = {ExecutionMode.FAST: ExecutionMode.STANDARD, ExecutionMode.STANDARD: ExecutionMode.COMPLEX}
 
+# Stable machine reason codes (not user-facing display text).
+REASON_MULTIPLE_CHANGED_FILES = "multiple_changed_files"
+REASON_NEAR_STEP_CEILING = "near_step_ceiling_without_acceptance"
+REASON_MULTI_FILE_COORDINATION = "coordinated_multi_file_work"
+
 
 @dataclass
 class RuntimeTaskControl:
@@ -37,14 +42,22 @@ class RuntimeTaskControl:
         needs_plan = (
             bool(getattr(agent.execution_route, "needs_plan", False))
             or target == ExecutionMode.COMPLEX
-            or "multiple changed files" in reason
+            or reason == REASON_MULTIPLE_CHANGED_FILES
+            or "multiple changed files" in reason  # legacy English reasons
         )
         agent.execution_policy = policy_for(target, needs_plan=needs_plan)
         agent.task_max_steps = min(agent.configured_max_steps, agent.execution_policy.max_steps)
         agent.apply_runtime_event(RuntimeEventType.MODE_ESCALATED, mode=target)
         self.mode_escalations += 1
         agent.execution_metrics.mode_escalations = self.mode_escalations
-        agent.working_summary.add(f"Mode escalated {current.value}->{target.value}: {reason}")
+        display = {
+            REASON_MULTIPLE_CHANGED_FILES: "运行时工作已扩展到多个变更文件",
+            REASON_NEAR_STEP_CEILING: "当前策略接近总步数上限且尚未通过验收",
+            REASON_MULTI_FILE_COORDINATION: "运行时证据表明存在需协调的多文件工作",
+        }.get(reason, reason)
+        agent.working_summary.add(
+            f"执行模式已升级 {current.value}->{target.value}：{display}"
+        )
         return True
 
     def should_escalate(self, agent, *, remaining_steps: int) -> str | None:
@@ -57,9 +70,9 @@ class RuntimeTaskControl:
             return None
         mode = policy.mode
         if mode == ExecutionMode.FAST and changed >= 3:
-            return "runtime work expanded to multiple changed files"
+            return REASON_MULTIPLE_CHANGED_FILES
         if remaining_steps <= 2 and mode != ExecutionMode.COMPLEX and not agent.validation_pipeline.state.acceptance_passed:
-            return "current policy is near its total step ceiling without acceptance"
+            return REASON_NEAR_STEP_CEILING
         return None
 
     def should_activate_plan(self, agent) -> str | None:
@@ -70,7 +83,7 @@ class RuntimeTaskControl:
         except Exception:
             changed = 0
         if changed >= 3:
-            return "runtime evidence revealed coordinated multi-file work"
+            return REASON_MULTI_FILE_COORDINATION
         return None
 
     def enable_planning(self, agent) -> None:

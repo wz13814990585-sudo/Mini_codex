@@ -21,7 +21,7 @@ def test_acceptance_validation_rejects_full_suite(
     with pytest.raises(
         ValueError,
         match=(
-            "specific test path"
+            "具体的测试路径"
         ),
     ):
 
@@ -77,7 +77,7 @@ def test_run_tests_rejects_outside_workspace(
 
     with pytest.raises(
         ValueError,
-        match="workspace",
+        match="工作区",
     ):
 
         tool.execute(
@@ -274,5 +274,5 @@ def test_acceptance_rejects_source_module_as_test_target(tmp_path):
     (tmp_path / "pkg/example.py").write_text("value = 1\n", encoding="utf-8")
     tool = RunTestsTool(workspace=tmp_path)
 
-    with pytest.raises(ValueError, match="source module"):
+    with pytest.raises(ValueError, match="源码模块"):
         tool.execute(path="pkg/example.py", purpose="acceptance")

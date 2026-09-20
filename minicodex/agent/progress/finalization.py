@@ -11,10 +11,9 @@ class FinalizationController:
         "git_diff",
     }
     INSTRUCTION = (
-        "Finalization mode is active because the task budget is low. "
-        "Do not spend remaining steps on reconnaissance. Run only missing "
-        "validation, make a necessary concrete edit, complete an evidenced "
-        "plan step, or report a blocker."
+        "因任务预算偏低，已进入收尾模式。"
+        "不要把剩余步骤花在侦察上。仅运行缺失的验证、"
+        "做必要的具体编辑、完成有证据的计划步骤，或报告阻塞原因。"
     )
 
     def __init__(self):

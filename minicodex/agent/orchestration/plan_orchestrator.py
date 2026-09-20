@@ -25,8 +25,8 @@ class PlanOrchestrator:
             return PlanTurnState(current, True)
 
         reason = (
-            f"Plan step {current.id} has exceeded its attempt budget. "
-            f"Current step: {current.description}"
+            f"计划步骤 {current.id} 已超过尝试次数上限。"
+            f"当前步骤：{current.description}"
         )
         previous_plan = plan
         recovery_message, should_continue = agent.recovery.recover(
@@ -105,7 +105,7 @@ class PlanOrchestrator:
                 "completed": False,
                 "step_id": None,
                 "step_description": None,
-                "message": "No active plan.",
+                "message": "当前没有活动计划。",
             }
         current = plan.get_current_step()
         if current is not None and agent.execution_policy is not None:
@@ -118,7 +118,7 @@ class PlanOrchestrator:
                     return PlanOrchestrator._completion_rejected(
                         current,
                         "plan_step_criteria_not_satisfied",
-                        "The current plan step has unsatisfied machine-checkable criteria.",
+                        "当前计划步骤仍有未满足的可机器检查条件。",
                     )
             elif getattr(current, "requires_semantic_completion", False) and not agent.step_evidence.has_validation(
                 step_id=current.id,
@@ -127,7 +127,7 @@ class PlanOrchestrator:
                 return PlanOrchestrator._completion_rejected(
                     current,
                     "broad_semantic_step_without_acceptance_evidence",
-                    "A broad semantic step requires current-revision acceptance evidence.",
+                    "宽泛语义步骤需要当前版本的验收证据。",
                 )
             elif not agent.step_evidence.has_sufficient(
                 step_id=current.id,
@@ -136,7 +136,7 @@ class PlanOrchestrator:
                 return PlanOrchestrator._completion_rejected(
                     current,
                     "semantic_step_completion_without_fresh_evidence",
-                    "Semantic completion requires sufficient current-revision evidence.",
+                    "语义完成需要充分的当前版本证据。",
                 )
         step = plan.complete_current_step()
         if step is None:
@@ -144,7 +144,7 @@ class PlanOrchestrator:
                 "completed": False,
                 "step_id": None,
                 "step_description": None,
-                "message": "No active plan step.",
+                "message": "当前没有活动计划步骤。",
             }
         agent.recovery.mark_progress()
         agent.progress.reset()
@@ -155,7 +155,7 @@ class PlanOrchestrator:
             "completed": True,
             "step_id": step.id,
             "step_description": step.description,
-            "message": f"Completed plan step {step.id}: {step.description}",
+            "message": f"已完成计划步骤 {step.id}：{step.description}",
         }
 
     @staticmethod
@@ -171,18 +171,18 @@ class PlanOrchestrator:
     @staticmethod
     def replan_task(agent, reason: str) -> dict:
         if agent.active_plan is None:
-            return PlanOrchestrator._replan_failure(reason, "No active plan to revise.")
+            return PlanOrchestrator._replan_failure(reason, "没有可修订的活动计划。")
         policy = agent.execution_policy
         if policy is not None and not policy.enable_replan:
             return PlanOrchestrator._replan_failure(
-                reason, "Replanning is disabled by execution policy."
+                reason, "执行策略已禁用重新规划。"
             )
         if policy is not None and agent.replan_count >= policy.max_replans:
-            return PlanOrchestrator._replan_failure(reason, "Replan budget exhausted.")
+            return PlanOrchestrator._replan_failure(reason, "重新规划预算已用尽。")
         if agent.replanner is None:
-            return PlanOrchestrator._replan_failure(reason, "No replanner configured.")
+            return PlanOrchestrator._replan_failure(reason, "未配置重新规划器。")
         if agent.active_user_request is None:
-            return PlanOrchestrator._replan_failure(reason, "Original request unavailable.")
+            return PlanOrchestrator._replan_failure(reason, "原始请求不可用。")
         try:
             new_plan = agent.replanner.replan(
                 user_request=agent.active_user_request,
@@ -192,21 +192,21 @@ class PlanOrchestrator:
             )
         except Exception as exc:
             return PlanOrchestrator._replan_failure(
-                reason, f"Replanning failed: {type(exc).__name__}: {exc}"
+                reason, f"重新规划失败：{type(exc).__name__}: {exc}"
             )
         agent.active_plan = new_plan
         agent.replan_count += 1
         agent.plan_version += 1
         agent.progress.reset()
         agent.sync_plan_state()
-        print("\n[Replanned]")
-        print(f"Reason: {reason}")
+        print("\n[已重新规划]")
+        print(f"原因：{reason}")
         agent._print_plan(new_plan)
         return {
             "replanned": True,
             "reason": reason,
             "failure_reason": None,
-            "message": "Plan successfully revised. Continue with the new plan.",
+            "message": "计划已成功修订。请按新计划继续。",
         }
 
     @staticmethod

@@ -542,7 +542,7 @@ def build_task_memory_record(
 
     summary_parts = [
         (
-            f"Outcome={outcome}."
+            f"结果={outcome}。"
         )
     ]
 
@@ -552,17 +552,14 @@ def build_task_memory_record(
 
         summary_parts.append(
             (
-                f"Edit revision="
-                f"{edit_revision}."
+                f"编辑版本={edit_revision}。"
             )
         )
 
         summary_parts.append(
             (
-                "Acceptance="
-                f"{acceptance_passed}; "
-                "full regression="
-                f"{full_passed}."
+                f"验收={acceptance_passed}；"
+                f"完整回归={full_passed}。"
             )
         )
 
@@ -573,8 +570,7 @@ def build_task_memory_record(
 
         summary_parts.append(
             (
-                "Plan completed="
-                f"{plan_completed}."
+                f"计划完成={plan_completed}。"
             )
         )
 
@@ -584,8 +580,7 @@ def build_task_memory_record(
 
         summary_parts.append(
             (
-                "Runtime error: "
-                f"{runtime_error}"
+                f"运行时错误：{runtime_error}"
             )
         )
 
@@ -595,7 +590,7 @@ def build_task_memory_record(
 
         summary_parts.append(
             (
-                "Key facts: "
+                "关键事实："
                 + " | ".join(
                     memory_lines
                 )
@@ -620,7 +615,7 @@ def build_task_memory_record(
 
             summary_parts.append(
                 (
-                    "Result: "
+                    "结果："
                     + cleaned_output[
                         :300
                     ]

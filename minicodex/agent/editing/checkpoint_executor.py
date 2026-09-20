@@ -95,14 +95,13 @@ class CheckpointingToolExecutor:
                 error=ToolResult(
                     success=False,
                     summary=(
-                        f"Edit tool '{tool_name}' was blocked because no "
-                        "explicit target path was provided."
+                        f"编辑工具 '{tool_name}' 被拦截：未提供明确的目标路径。"
                     ),
                     data={
                         "tool_name": tool_name,
                         "failure_type": "checkpoint_precondition",
                     },
-                    error="Safe edit execution requires an explicit 'path'.",
+                    error="安全编辑执行需要明确的 'path'。",
                 ),
             )
         return prepared
@@ -178,11 +177,9 @@ class CheckpointingToolExecutor:
                 result=ToolResult(
                     success=False,
                     summary=(
-                        f"Edit tool "
+                        f"编辑工具 "
                         f"'{prepared.tool_name}' "
-                        "was blocked because no "
-                        "explicit target path was "
-                        "provided."
+                        "被拦截：未提供明确的目标路径。"
                     ),
                     data={
                         "tool_name": (
@@ -193,8 +190,7 @@ class CheckpointingToolExecutor:
                         ),
                     },
                     error=(
-                        "Safe edit execution requires "
-                        "an explicit 'path'."
+                        "安全编辑执行需要明确的 'path'。"
                     ),
                 ),
             )
@@ -225,9 +221,7 @@ class CheckpointingToolExecutor:
                         "checkpoint_revision"
                     ),
                     summary=(
-                        "Edit was blocked because "
-                        "the next edit revision "
-                        "could not be determined."
+                        "编辑被拦截：无法确定下一个编辑版本号。"
                     ),
                     error=e,
                 )
@@ -248,9 +242,7 @@ class CheckpointingToolExecutor:
                 result=ToolResult(
                     success=False,
                     summary=(
-                        "Edit was blocked because "
-                        "the next edit revision "
-                        "was invalid."
+                        "编辑被拦截：下一个编辑版本号无效。"
                     ),
                     data={
                         "tool_name": (
@@ -264,8 +256,7 @@ class CheckpointingToolExecutor:
                         ),
                     },
                     error=(
-                        "Next edit revision "
-                        "must be >= 1."
+                        "下一个编辑版本号必须 >= 1。"
                     ),
                 ),
             )
@@ -295,11 +286,9 @@ class CheckpointingToolExecutor:
                         "checkpoint_capture"
                     ),
                     summary=(
-                        f"Edit tool "
+                        f"编辑工具 "
                         f"'{prepared.tool_name}' "
-                        "was blocked because a "
-                        "pre-edit checkpoint could "
-                        "not be created."
+                        "被拦截：无法创建编辑前检查点。"
                     ),
                     error=e,
                     path=path,
@@ -323,14 +312,14 @@ class CheckpointingToolExecutor:
                 arguments=prepared.arguments,
                 result=ToolResult(
                     success=False,
-                    summary=f"Edit conflict detected for {path}; the file changed after inspection.",
+                    summary=f"检测到 {path} 的编辑冲突；检查后文件已变更。",
                     data={
                         "path": path, "failure_type": "workspace_conflict",
                         "expected_sha256": checkpoint.snapshot.sha256,
                         "current_sha256": current_hash,
                         "retry_action": "read_current_file_then_rebuild_edit",
                     },
-                    error="Concurrent workspace modification prevented the edit.",
+                    error="工作区并发修改阻止了本次编辑。",
                 ),
             )
 
@@ -516,9 +505,8 @@ class CheckpointingToolExecutor:
             result.data[
                 "checkpoint_warning"
             ] = (
-                "The edit physically succeeded, "
-                "but rollback protection for this "
-                "edit could not be finalized."
+                "编辑在物理上已成功，"
+                "但本次编辑的回滚保护未能最终完成。"
             )
 
         # =====================================================

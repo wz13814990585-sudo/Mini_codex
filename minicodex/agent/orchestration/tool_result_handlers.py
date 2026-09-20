@@ -40,7 +40,7 @@ class EditResultHandler:
                                        arguments=arguments, result=result)
         agent.progress.mark_meaningful_progress()
         _, completed = agent.plan_orchestrator.reconcile(agent)
-        return ProgressSignal(ProgressKind.ADVANCED, f"Edit created revision {revision}."), completed
+        return ProgressSignal(ProgressKind.ADVANCED, f"编辑已创建新的代码版本：revision {revision}。"), completed
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class ValidationResultHandler:
         evidence = agent.validation_pipeline.observe(tool_name=tool_name, arguments=arguments, result=result,
                                                      capabilities=capabilities)
         if evidence is None:
-            return ValidationHandled(None, ProgressSignal(ProgressKind.NONE, "No validation evidence was produced."), None, False)
+            return ValidationHandled(None, ProgressSignal(ProgressKind.NONE, "未产生验证证据。"), None, False)
         checks = agent.validation_pipeline.state.plan.checks
         contract = next((check for check in checks if check.id == evidence.check_id), None)
         if metrics is not None and checks and evidence.purpose.value == "acceptance" and (
@@ -102,5 +102,5 @@ class ValidationResultHandler:
         decision = agent.validation_orchestrator.apply(agent=agent, evidence=evidence)
         if evidence.outcome.value == "passed" and agent.task_state.recovery_level > 0 and metrics is not None:
             metrics.recovery_successes += 1
-        signal = agent.latest_progress_signal or ProgressSignal(ProgressKind.NONE, "Validation did not yield comparable progress.")
+        signal = agent.latest_progress_signal or ProgressSignal(ProgressKind.NONE, "验证未产生可比较的进展。")
         return ValidationHandled(evidence, signal, decision, completed)

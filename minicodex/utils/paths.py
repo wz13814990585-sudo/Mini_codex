@@ -27,7 +27,7 @@ def resolve_workspace_path(workspace: str | Path, path: str | Path) -> Path:
     try:
         resolved.relative_to(root)
     except ValueError as exc:
-        raise ValueError("Access outside the workspace is not allowed.") from exc
+        raise ValueError("禁止访问当前工作区之外的路径。") from exc
     return resolved
 
 

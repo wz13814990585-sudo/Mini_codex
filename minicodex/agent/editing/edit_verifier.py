@@ -69,7 +69,7 @@ class EditVerifier:
         ):
 
             raise ValueError(
-                "Edit would not change the file."
+                "编辑不会改变文件内容。"
             )
 
     # =========================================================
@@ -114,11 +114,11 @@ class EditVerifier:
 
             raise ValueError(
                 (
-                    "Edit would produce invalid "
-                    "Python syntax: "
+                    "编辑将产生无效的 "
+                    "Python 语法："
                     f"{e.msg} "
-                    f"(line {e.lineno}, "
-                    f"column {e.offset})."
+                    f"（第 {e.lineno} 行，"
+                    f"第 {e.offset} 列）。"
                 )
             ) from e
 
@@ -145,8 +145,8 @@ class EditVerifier:
 
             raise RuntimeError(
                 (
-                    "Post-edit verification failed: "
-                    "file does not exist after write."
+                    "编辑后校验失败："
+                    "写入后文件不存在。"
                 )
             )
 
@@ -154,8 +154,8 @@ class EditVerifier:
 
             raise RuntimeError(
                 (
-                    "Post-edit verification failed: "
-                    "path is not a file after write."
+                    "编辑后校验失败："
+                    "写入后路径不是文件。"
                 )
             )
 
@@ -176,9 +176,8 @@ class EditVerifier:
 
             raise RuntimeError(
                 (
-                    "Post-edit verification failed: "
-                    "content on disk does not match "
-                    "the expected edited content."
+                    "编辑后校验失败："
+                    "磁盘内容与期望的编辑结果不一致。"
                 )
             )
 

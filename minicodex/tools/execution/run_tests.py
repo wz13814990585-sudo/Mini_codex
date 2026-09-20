@@ -35,12 +35,10 @@ class RunTestsTool(
     capabilities = frozenset({"test.run"})
 
     description = (
-        "Run Python tests using pytest inside the MiniCodex "
-        "process sandbox and return structured validation "
-        "evidence. Use purpose='acceptance' for specific tests "
-        "that demonstrate the user's requested behavior. Use "
-        "purpose='regression' for existing or full-suite "
-        "regression validation."
+        "在 MiniCodex 进程沙箱中使用 pytest 运行 Python 测试，"
+        "并返回结构化验证证据。"
+        "使用 purpose='acceptance' 运行能证明用户请求行为的特定测试；"
+        "使用 purpose='regression' 做既有或全量回归验证。"
     )
 
     parameters = {
@@ -49,9 +47,9 @@ class RunTestsTool(
             "path": {
                 "type": "string",
                 "description": (
-                    "Test path such as "
-                    "'minicodex/tests/test_example.py'. "
-                    "Use '.' for the full regression suite."
+                    "测试路径，例如 "
+                    "'minicodex/tests/test_example.py'。"
+                    "使用 '.' 表示完整回归套件。"
                 ),
             },
             "purpose": {
@@ -61,10 +59,9 @@ class RunTestsTool(
                     "regression",
                 ],
                 "description": (
-                    "'acceptance' demonstrates "
-                    "the specific requested behavior. "
-                    "'regression' checks existing "
-                    "behavior."
+                    "'acceptance' 用于证明"
+                    "用户请求的具体行为；"
+                    "'regression' 用于检查既有行为。"
                 ),
             },
         },
@@ -153,9 +150,9 @@ class RunTestsTool(
 
             raise ValueError(
                 (
-                    "purpose must be either "
-                    "'acceptance' or "
-                    "'regression'."
+                    "purpose 必须为 "
+                    "'acceptance' 或 "
+                    "'regression'。"
                 )
             )
 
@@ -176,11 +173,8 @@ class RunTestsTool(
 
             raise ValueError(
                 (
-                    "Acceptance validation "
-                    "must target a specific "
-                    "test path. The full suite "
-                    "cannot by itself serve as "
-                    "acceptance evidence."
+                    "验收验证必须指向具体的测试路径。"
+                    "完整测试套件本身不能作为验收证据。"
                 )
             )
 
@@ -189,8 +183,8 @@ class RunTestsTool(
             and not TestTargetResolver.is_test_path(normalized_path)
         ):
             raise ValueError(
-                "Acceptance validation must target an actual test file or "
-                "pytest node id; a source module is not acceptance evidence."
+                "验收验证必须指向实际的测试文件或 "
+                "pytest node id；源码模块不能作为验收证据。"
             )
 
         if not (
@@ -216,10 +210,10 @@ class RunTestsTool(
         # =====================================================
 
         if not self.environment.command_available:
-            return ToolResult(success=False, summary="Project test environment is unavailable.", data={
+            return ToolResult(success=False, summary="项目测试环境不可用。", data={
                 "path": normalized_path, "purpose": normalized_purpose, "outcome": "inconclusive",
                 "failure_type": "environment_unavailable", "environment": self.environment.summary(),
-            }, error="The detected project command is not installed.")
+            }, error="检测到的项目命令未安装。")
         command = [
             *self.environment.pytest_argv(),
             "-p",
@@ -249,8 +243,7 @@ class RunTestsTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Tests could not be started "
-                    "inside the process sandbox."
+                    "无法在进程沙箱中启动测试。"
                 ),
                 data={
                     "path": (
@@ -271,13 +264,13 @@ class RunTestsTool(
                     ),
                     "outcome": "inconclusive",
                     "failed_count": None,
-                    "validation_summary": "Tests could not be started.",
+                    "validation_summary": "无法启动测试。",
                 },
                 error=(
                     sandbox_result.error
                     or (
-                        "Sandbox pytest "
-                        "process could not start."
+                        "沙箱 pytest "
+                        "进程无法启动。"
                     )
                 ),
             )
@@ -294,9 +287,8 @@ class RunTestsTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Tests timed out after "
-                    f"{self.timeout} seconds "
-                    "inside the sandbox."
+                    f"测试在沙箱中超时"
+                    f"（{self.timeout} 秒）。"
                 ),
                 data={
                     "path": (
@@ -322,11 +314,10 @@ class RunTestsTool(
                     ),
                     "outcome": "inconclusive",
                     "failed_count": None,
-                    "validation_summary": "Tests timed out.",
+                    "validation_summary": "测试超时。",
                 },
                 error=(
-                    "pytest execution "
-                    "timed out"
+                    "pytest 执行超时"
                 ),
             )
 
@@ -383,8 +374,7 @@ class RunTestsTool(
         ):
 
             summary += (
-                " Captured pytest output "
-                "was truncated by the sandbox."
+                " 沙箱截断了捕获的 pytest 输出。"
             )
 
         return ToolResult(
@@ -455,8 +445,7 @@ class RunTestsTool(
 
             raise ValueError(
                 (
-                    "Test path must remain "
-                    "inside the workspace."
+                    "测试路径必须位于工作区内。"
                 )
             )
 
@@ -672,7 +661,7 @@ def build_pytest_summary(
         parts.append(
             (
                 f"{parsed['passed']} "
-                "passed"
+                "通过"
             )
         )
 
@@ -685,7 +674,7 @@ def build_pytest_summary(
         parts.append(
             (
                 f"{parsed['failed']} "
-                "failed"
+                "失败"
             )
         )
 
@@ -698,7 +687,7 @@ def build_pytest_summary(
         parts.append(
             (
                 f"{parsed['errors']} "
-                "errors"
+                "错误"
             )
         )
 
@@ -711,7 +700,7 @@ def build_pytest_summary(
         parts.append(
             (
                 f"{parsed['skipped']} "
-                "skipped"
+                "跳过"
             )
         )
 
@@ -721,7 +710,7 @@ def build_pytest_summary(
 
         parts.append(
             (
-                "pytest exited with code "
+                "pytest 退出码为 "
                 f"{parsed['exit_code']}"
             )
         )
@@ -745,7 +734,7 @@ def build_pytest_llm_content(
 
     sections = [
         (
-            "Exit code: "
+            "退出码："
             f"{parsed['exit_code']}"
         )
     ]
@@ -758,8 +747,8 @@ def build_pytest_llm_content(
 
         sections.append(
             (
-                "Sandbox note: pytest "
-                "output was truncated."
+                "沙箱说明：pytest "
+                "输出已被截断。"
             )
         )
 
@@ -771,7 +760,7 @@ def build_pytest_llm_content(
 
         sections.append(
             (
-                "FAILED TESTS:\n"
+                "失败测试：\n"
                 + "\n".join(
                     parsed[
                         "failed_tests"
@@ -788,7 +777,7 @@ def build_pytest_llm_content(
 
         sections.append(
             (
-                "DETAILS:\n"
+                "详情：\n"
                 + "\n".join(
                     parsed[
                         "failure_details"
@@ -805,7 +794,7 @@ def build_pytest_llm_content(
 
         sections.append(
             (
-                "STDERR:\n"
+                "标准错误：\n"
                 + "\n".join(
                     parsed[
                         "stderr"

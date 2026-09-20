@@ -118,7 +118,7 @@ def test_write_file_rejects_noop_overwrite(
 
     with pytest.raises(
         ValueError,
-        match="would not change",
+        match="不会改变",
     ):
 
         tool.execute(
@@ -151,7 +151,7 @@ def test_write_file_rejects_invalid_python_before_write(
 
     with pytest.raises(
         ValueError,
-        match="invalid Python syntax",
+        match="无效的 Python 语法",
     ):
 
         tool.execute(

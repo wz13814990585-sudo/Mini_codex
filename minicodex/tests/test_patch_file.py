@@ -39,7 +39,7 @@ def test_patch_file_returns_structured_result(
     )
 
     assert (
-        "Successfully patched"
+        "已成功打补丁"
         in result.summary
     )
 

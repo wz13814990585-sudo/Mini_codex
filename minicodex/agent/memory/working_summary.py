@@ -103,7 +103,8 @@ class WorkingSummary:
         self.items[:] = [
             item for item in self.items
             if not any(marker in item.casefold() for marker in (
-                "validation failed", "tests failed", "still failing", "inconclusive validation"
+                "validation failed", "tests failed", "still failing", "inconclusive validation",
+                "验证失败", "测试失败", "仍然失败", "验证结果不确定", "验证尚无定论",
             ))
         ]
         self.memory.invalidate_validation_before(revision)
@@ -124,7 +125,8 @@ class WorkingSummary:
             if any(target in lowered for target in targets):
                 score += 4
             if any(word in lowered for word in (
-                "failed", "modified", "validation", "blocked", "stale", "installed"
+                "failed", "modified", "validation", "blocked", "stale", "installed",
+                "失败", "已修改", "验证", "阻塞", "过期", "已安装", "修改",
             )):
                 score += 2
             if index >= max(0, len(self.items) - max_items):
@@ -206,15 +208,13 @@ class WorkingSummary:
                 if path:
 
                     self.add(
-                        f"Inspected file: "
-                        f"{path}."
+                        f"已检查文件：{path}。"
                     )
 
                 else:
 
                     self.add(
-                        "A file was inspected "
-                        "successfully."
+                        "已成功检查文件。"
                     )
 
             else:
@@ -254,8 +254,7 @@ class WorkingSummary:
                 if query:
 
                     self.add(
-                        "Searched project code for: "
-                        f"{query}."
+                        f"已搜索项目代码：{query}。"
                     )
 
             else:
@@ -298,8 +297,7 @@ class WorkingSummary:
                 if query:
 
                     self.add(
-                        "Searched project symbols for: "
-                        f"{query}."
+                        f"已搜索项目符号：{query}。"
                     )
 
             else:
@@ -336,15 +334,13 @@ class WorkingSummary:
                 if path:
 
                     self.add(
-                        "Modified file successfully: "
-                        f"{path}."
+                        f"已成功修改文件：{path}。"
                     )
 
                 else:
 
                     self.add(
-                        "A project file was modified "
-                        "successfully."
+                        "已成功修改项目文件。"
                     )
 
             else:
@@ -375,13 +371,13 @@ class WorkingSummary:
 
             if result.success:
                 action = (
-                    "already available"
+                    "已可用"
                     if result.data.get("already_available")
-                    else "installed and import-verified"
+                    else "已安装并通过导入验证"
                 )
                 self.add(
-                    f"Python dependency {package} ({import_name}) "
-                    f"is {action}."
+                    f"Python 依赖 {package}（{import_name}）"
+                    f"{action}。"
                 )
             else:
                 self.add(
@@ -399,8 +395,8 @@ class WorkingSummary:
                 result.data.get("outcome", "inconclusive")
             )
             self.add(
-                f"Web validation for {path or 'unknown path'} "
-                f"was {outcome}."
+                f"路径 {path or '未知路径'} 的 Web 验证结果为 "
+                f"{outcome}。"
             )
             return
 
@@ -464,9 +460,8 @@ class WorkingSummary:
             ):
 
                 self.add(
-                    "Validation passed: "
-                    f"{passed} tests passed, "
-                    "0 failures."
+                    f"验证通过：{passed} 个测试通过，"
+                    "0 个失败。"
                 )
 
             elif (
@@ -476,18 +471,15 @@ class WorkingSummary:
             ):
 
                 self.add(
-                    "Validation still failing: "
-                    f"{passed} passed, "
-                    f"{failed} failed, "
-                    f"{errors} errors."
+                    f"验证仍失败：{passed} 通过，"
+                    f"{failed} 失败，"
+                    f"{errors} 错误。"
                 )
 
             else:
 
                 self.add(
-                    "Validation ran, but no "
-                    "definitive pass/fail result "
-                    "was available."
+                    "已运行验证，但尚无明确的通过/失败结果。"
                 )
 
             return
@@ -525,8 +517,7 @@ class WorkingSummary:
             ):
 
                 self.add(
-                    "Command succeeded: "
-                    f"{command}."
+                    f"命令成功：{command}。"
                 )
 
             elif (
@@ -536,9 +527,7 @@ class WorkingSummary:
             ):
 
                 self.add(
-                    "Command completed "
-                    "unsuccessfully: "
-                    f"{command}."
+                    f"命令未成功完成：{command}。"
                 )
 
             else:
@@ -581,9 +570,8 @@ class WorkingSummary:
                 )
 
                 self.add(
-                    "Completed plan step "
-                    f"{step_id}: "
-                    f"{description}."
+                    f"已完成计划步骤 {step_id}："
+                    f"{description}。"
                 )
 
             return
@@ -617,16 +605,13 @@ class WorkingSummary:
                 if reason:
 
                     self.add(
-                        "Implementation plan "
-                        "was revised. "
-                        f"Reason: {reason}"
+                        f"实现计划已修订。原因：{reason}"
                     )
 
                 else:
 
                     self.add(
-                        "Implementation plan "
-                        "was revised."
+                        "实现计划已修订。"
                     )
 
             return
@@ -643,8 +628,7 @@ class WorkingSummary:
             if result.success:
 
                 self.add(
-                    "Git repository state "
-                    "was refreshed."
+                    "Git 仓库状态已刷新。"
                 )
 
             else:
@@ -673,14 +657,13 @@ class WorkingSummary:
                 if path:
 
                     self.add(
-                        "Inspected Git diff for: "
-                        f"{path}."
+                        f"已检查 Git 差异：{path}。"
                     )
 
                 else:
 
                     self.add(
-                        "Inspected current Git diff."
+                        "已检查当前 Git 差异。"
                     )
 
             else:
@@ -727,8 +710,7 @@ class WorkingSummary:
 
             # Preserve the established empty-summary result.
             return (
-                "No important execution facts "
-                "have been recorded yet."
+                "尚未记录重要的执行事实。"
             )
 
         sections = []
@@ -746,8 +728,8 @@ class WorkingSummary:
 
             sections.append(
                 (
-                    "Structured working memory "
-                    "(latest known task state):\n"
+                    "结构化工作记忆"
+                    "（最新已知任务状态）：\n"
                     f"{self.memory.render()}"
                 )
             )
@@ -766,7 +748,7 @@ class WorkingSummary:
 
             sections.append(
                 (
-                    "Recent execution facts:\n"
+                    "近期执行事实：\n"
                     + "\n".join(
                         f"- {item}"
                         for item
@@ -812,13 +794,13 @@ class WorkingSummary:
 
             return (
                 f"{tool_name}"
-                f"{target_text} failed: "
+                f"{target_text} 失败："
                 f"{error}"
             )
 
         return (
             f"{tool_name}"
-            f"{target_text} failed."
+            f"{target_text} 失败。"
         )
 
     # =========================================================

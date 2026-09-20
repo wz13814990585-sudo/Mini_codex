@@ -22,10 +22,9 @@ class ReplaceSymbolTool(
     capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
-        "Replace a Python class, function, method, or async "
-        "function by structural symbol name. The tool resolves "
-        "the latest symbol range, validates Python syntax, and "
-        "uses verified line-range editing."
+        "按结构化符号名替换 Python 类、函数、方法或异步函数。"
+        "工具会解析最新符号范围、校验 Python 语法，"
+        "并使用已验证的行范围编辑。"
     )
 
     parameters = {
@@ -34,38 +33,35 @@ class ReplaceSymbolTool(
             "symbol": {
                 "type": "string",
                 "description": (
-                    "Symbol name or qualified name. "
-                    "Examples: 'Planner', 'create_plan', "
-                    "'MiniCodexAgent.replan'."
+                    "符号名或限定名。"
+                    "示例：'Planner'、'create_plan'、"
+                    "'MiniCodexAgent.replan'。"
                 ),
             },
             "new_text": {
                 "type": "string",
                 "description": (
-                    "Complete replacement source code "
-                    "for the selected symbol."
+                    "所选符号的完整替换源代码。"
                 ),
             },
             "path": {
                 "type": "string",
                 "description": (
-                    "Optional path filter used to "
-                    "disambiguate symbols."
+                    "可选路径过滤，用于消歧义。"
                 ),
             },
             "kind": {
                 "type": "string",
                 "description": (
-                    "Optional exact symbol kind: class, "
-                    "function, method, async_function, "
-                    "or async_method."
+                    "可选的精确符号类型：class、"
+                    "function、method、async_function "
+                    "或 async_method。"
                 ),
             },
             "expected_text": {
                 "type": "string",
                 "description": (
-                    "Optional exact source text expected "
-                    "for the current symbol."
+                    "可选：当前符号应匹配的精确源码文本。"
                 ),
             },
         },
@@ -115,7 +111,7 @@ class ReplaceSymbolTool(
         if not symbol_query:
 
             raise ValueError(
-                "Symbol name cannot be empty."
+                "符号名不能为空。"
             )
 
         if not str(
@@ -123,7 +119,7 @@ class ReplaceSymbolTool(
         ).strip():
 
             raise ValueError(
-                "new_text cannot be empty."
+                "new_text 不能为空。"
             )
 
         # =====================================================
@@ -158,7 +154,7 @@ class ReplaceSymbolTool(
         if not file_path.exists():
 
             raise FileNotFoundError(
-                f"File not found: {target.path}"
+                f"文件未找到：{target.path}"
             )
 
         source = (
@@ -178,9 +174,9 @@ class ReplaceSymbolTool(
 
             raise ValueError(
                 (
-                    f"Symbol "
+                    f"符号 "
                     f"'{target.qualified_name}' "
-                    "does not have an end line."
+                    "没有结束行。"
                 )
             )
 
@@ -219,8 +215,8 @@ class ReplaceSymbolTool(
                 return ToolResult(
                     success=False,
                     summary=(
-                        f"Symbol replacement context is stale for "
-                        f"{target.qualified_name}."
+                        f"符号 {target.qualified_name} "
+                        f"的替换上下文已过期。"
                     ),
                     data={
                         "path": target.path,
@@ -235,7 +231,7 @@ class ReplaceSymbolTool(
                         "reason_code": ReasonCode.STALE_CONTEXT.value,
                         "retry_action": "read_target_region_then_retry_once",
                     },
-                    error="The current symbol no longer matches expected_text.",
+                    error="当前符号已与 expected_text 不一致。",
                 )
 
         # =====================================================
@@ -294,11 +290,11 @@ class ReplaceSymbolTool(
 
             raise ValueError(
                 (
-                    "Replacement would produce invalid "
-                    "Python syntax: "
+                    "替换将产生无效的 "
+                    "Python 语法："
                     f"{e.msg} "
-                    f"(line {e.lineno}, "
-                    f"column {e.offset})."
+                    f"（第 {e.lineno} 行，"
+                    f"第 {e.offset} 列）。"
                 )
             ) from e
 
@@ -325,9 +321,9 @@ class ReplaceSymbolTool(
         return ToolResult(
             success=True,
             summary=(
-                f"Successfully replaced and verified "
-                f"symbol {target.qualified_name} "
-                f"in {target.path}."
+                f"已成功替换并校验符号 "
+                f"{target.qualified_name} "
+                f"（位于 {target.path}）。"
             ),
             data={
                 "symbol": (
@@ -494,8 +490,7 @@ class ReplaceSymbolTool(
 
             raise ValueError(
                 (
-                    f"Symbol '{query}' "
-                    "was not found."
+                    f"未找到符号 '{query}'。"
                 )
             )
 
@@ -509,9 +504,9 @@ class ReplaceSymbolTool(
 
         raise ValueError(
             (
-                f"No exact symbol match "
-                f"for '{query}'. "
-                f"Possible candidates: "
+                f"没有与 '{query}' "
+                f"精确匹配的符号。"
+                f"可能的候选："
                 f"{candidate_names}"
             )
         )
@@ -538,10 +533,10 @@ class ReplaceSymbolTool(
         )
 
         return (
-            f"Symbol '{query}' is ambiguous. "
-            f"Candidates: {candidates}. "
-            "Provide a qualified symbol name "
-            "or a path filter."
+            f"符号 '{query}' 匹配不唯一。"
+            f"候选：{candidates}。"
+            "请提供限定符号名"
+            "或路径过滤条件。"
         )
 
     # =========================================================

@@ -126,9 +126,8 @@ class CompletionGate:
                     full_validation_passed
                 ),
                 reason=(
-                    "No successful edit has been "
-                    "recorded and acceptance has not proven that the "
-                    "requested state already exists."
+                    "尚未记录成功编辑，且验收证据尚未证明"
+                    "请求状态已存在。"
                 ),
             )
 
@@ -152,9 +151,8 @@ class CompletionGate:
                     full_validation_passed
                 ),
                 reason=(
-                    "The current edit revision does not "
-                    "have acceptance evidence showing "
-                    "that the requested behavior works."
+                    "当前编辑版本尚无验收证据表明"
+                    "请求行为可用。"
                 ),
             )
 
@@ -166,8 +164,8 @@ class CompletionGate:
                 acceptance_passed=acceptance_passed,
                 full_validation_passed=full_validation_passed,
                 reason=(
-                    "Acceptance passed and full repository regression is "
-                    "not applicable to this change scope."
+                    "验收已通过，且全仓库回归不适用于"
+                    "本次变更范围。"
                 ),
                 outcome=(
                     TaskOutcome.EDITED_AND_VALIDATED
@@ -188,8 +186,8 @@ class CompletionGate:
                     acceptance_passed=acceptance_passed,
                     full_validation_passed=full_validation_passed,
                     reason=(
-                        "Acceptance passed, but relevant regression "
-                        "evidence is still required for this change scope."
+                        "验收已通过，但本次变更范围仍需"
+                        "相关回归证据。"
                     ),
                 )
             return CompletionDecision(
@@ -199,8 +197,7 @@ class CompletionGate:
                 acceptance_passed=acceptance_passed,
                 full_validation_passed=full_validation_passed,
                 reason=(
-                    "The current edit revision has acceptance and relevant "
-                    "regression evidence."
+                    "当前编辑版本已具备验收与相关回归证据。"
                 ),
                 outcome=(
                     TaskOutcome.EDITED_AND_VALIDATED
@@ -227,9 +224,8 @@ class CompletionGate:
                 acceptance_passed=True,
                 full_validation_passed=False,
                 reason=(
-                    "Acceptance validation passed, but "
-                    "the current edit revision still "
-                    "requires full regression validation."
+                    "验收验证已通过，但当前编辑版本仍需"
+                    "完整回归验证。"
                 ),
             )
 
@@ -248,9 +244,8 @@ class CompletionGate:
             acceptance_passed=True,
             full_validation_passed=True,
             reason=(
-                "The current edit revision has both "
-                "acceptance evidence and successful "
-                "full regression validation."
+                "当前编辑版本已同时具备验收证据与"
+                "成功的完整回归验证。"
             ),
             outcome=(
                 TaskOutcome.EDITED_AND_VALIDATED

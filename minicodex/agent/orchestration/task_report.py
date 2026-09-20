@@ -22,61 +22,56 @@ class TaskReportBuilder:
         if outcome == TaskOutcome.INCOMPLETE:
             return self.incomplete(agent, reason, debug=debug)
 
-        lines = [
-            (
-                "Task already satisfied."
-                if outcome == TaskOutcome.ALREADY_SATISFIED
-                else "Task completed successfully."
-            )
-        ]
+        if outcome == TaskOutcome.ALREADY_SATISFIED:
+            lines = ["当前任务要求已经满足，无需修改代码。"]
+        else:
+            lines = ["任务已成功完成。"]
         changed = self.changed_files(agent)
         if changed:
-            lines.extend(["", "Changed:"])
+            lines.extend(["", "修改文件："])
             lines.extend(f"- {path}" for path in changed)
-        elif outcome == TaskOutcome.ALREADY_SATISFIED:
-            lines.extend(["", "No workspace changes were required."])
 
         validation_lines = self.validation_lines(agent)
         if validation_lines:
-            lines.extend(["", "Validation:"])
+            lines.extend(["", "验证结果："])
             lines.extend(validation_lines)
 
         requirements = getattr(agent, "task_requirements", None)
         if requirements is not None and requirements.items:
-            lines.extend(["", "Requirements:"])
+            lines.extend(["", "需求完成情况："])
             lines.extend(
                 f"- [{'x' if item.satisfied else ' '}] {item.description}"
                 for item in requirements.items
             )
 
         if debug:
-            lines.extend(["", "Outcome:", f"{outcome.name} ({outcome.value})"])
+            lines.extend(["", "结果：", f"{outcome.name} ({outcome.value})"])
         return "\n".join(lines)
 
     def blocked(self, reason: str, *, debug: bool = False) -> str:
-        concrete = str(redact(str(reason or "A deterministic blocker prevented completion."))).strip()
-        lines = ["Task blocked.", "", "Reason:", f"- {concrete}"]
+        concrete = str(redact(str(reason or "确定性阻塞导致无法完成。"))).strip()
+        lines = ["任务被阻塞。", "", "原因：", f"- {concrete}"]
         if debug:
-            lines.extend(["", "Outcome:", "BLOCKED"])
+            lines.extend(["", "结果：", "BLOCKED"])
         return "\n".join(lines)
 
     def incomplete(self, agent, reason: str, *, debug: bool = False) -> str:
         lines = [
-            "Task incomplete.",
+            "任务未完成。",
             "",
-            "Reason:",
-            f"- {str(redact(str(reason or 'Required completion evidence is missing.'))).strip()}",
+            "原因：",
+            f"- {str(redact(str(reason or '缺少所需的完成证据。'))).strip()}",
         ]
         changed = self.changed_files(agent)
         if changed:
-            lines.extend(["", "Changed before stopping:"])
+            lines.extend(["", "停止前已修改："])
             lines.extend(f"- {path}" for path in changed)
         requirements = getattr(agent, "task_requirements", None)
         if requirements is not None and requirements.unsatisfied:
-            lines.extend(["", "Unproven requirements:"])
+            lines.extend(["", "尚缺少以下需求证据："])
             lines.extend(f"- {item.description}" for item in requirements.unsatisfied)
         if debug:
-            lines.extend(["", "Outcome:", "INCOMPLETE"])
+            lines.extend(["", "结果：", "INCOMPLETE"])
         return "\n".join(lines)
 
     @staticmethod
@@ -97,9 +92,9 @@ class TaskReportBuilder:
         state = pipeline.state
         lines: list[str] = []
         if state.acceptance_passed:
-            lines.append("- targeted acceptance: passed")
+            lines.append("- 针对性验收验证：通过")
         if state.targeted_passed:
-            lines.append("- relevant regression: passed")
+            lines.append("- 相关回归验证：通过")
         if state.full_passed:
-            lines.append("- full regression: passed")
+            lines.append("- 全量回归验证：通过")
         return lines

@@ -17,8 +17,8 @@ class SearchCodeTool(BaseTool):
     name = "search_code"
 
     description = (
-        "Search for text inside project files and return matching "
-        "file paths, line numbers, and matching lines."
+        "在项目文件中搜索文本，返回匹配的文件路径、"
+        "行号以及匹配行内容。"
     )
 
     parameters = {
@@ -27,22 +27,22 @@ class SearchCodeTool(BaseTool):
             "query": {
                 "type": "string",
                 "description": (
-                    "Text to search for, for example "
-                    "'def calculate' or 'FastAPI('."
+                    "要搜索的文本，例如 "
+                    "'def calculate' 或 'FastAPI('。"
                 ),
             },
             "path": {
                 "type": "string",
                 "description": (
-                    "Optional relative file or directory to "
-                    "search. Defaults to the project root."
+                    "可选的相对文件或目录搜索范围。"
+                    "默认为项目根目录。"
                 ),
             },
             "max_results": {
                 "type": "integer",
                 "description": (
-                    "Maximum matches to return, from 1 to 200. "
-                    "Defaults to 40."
+                    "最多返回的匹配数，范围 1 到 200。"
+                    "默认为 40。"
                 ),
             },
         },
@@ -81,7 +81,7 @@ class SearchCodeTool(BaseTool):
 
         if not search_root.exists():
             raise FileNotFoundError(
-                f"Search path not found: {path}"
+                f"搜索路径未找到：{path}"
             )
 
         if search_root.is_file():
@@ -92,7 +92,7 @@ class SearchCodeTool(BaseTool):
 
         else:
             raise ValueError(
-                f"Search path is not a file or directory: {path}"
+                f"搜索路径不是文件或目录：{path}"
             )
 
         ignored_dirs = {
@@ -195,7 +195,7 @@ class SearchCodeTool(BaseTool):
             return ToolResult(
                 success=True,
                 summary=(
-                    f"No matches found for '{query}'."
+                    f"未找到与 '{query}' 匹配的结果。"
                 ),
                 data={
                     "query": query,
@@ -221,8 +221,8 @@ class SearchCodeTool(BaseTool):
         if truncated:
             llm_lines.append(
                 (
-                    "[Results truncated at "
-                    f"{result_limit} matches]"
+                    f"[结果已截断，最多显示 "
+                    f"{result_limit} 条匹配]"
                 )
             )
 
@@ -232,16 +232,16 @@ class SearchCodeTool(BaseTool):
 
         if truncated:
             summary = (
-                f"Found at least "
-                f"{returned_match_count} matches "
-                f"for '{query}'; "
-                "results were truncated."
+                f"至少找到 "
+                f"{returned_match_count} 条与 "
+                f"'{query}' 的匹配；"
+                "结果已被截断。"
             )
         else:
             summary = (
-                f"Found "
-                f"{returned_match_count} matches "
-                f"for '{query}'."
+                f"找到 "
+                f"{returned_match_count} 条与 "
+                f"'{query}' 的匹配。"
             )
 
         return ToolResult(

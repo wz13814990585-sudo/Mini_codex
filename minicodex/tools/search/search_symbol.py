@@ -17,10 +17,9 @@ class SearchSymbolTool(
     capabilities = frozenset({"code.search", "code.symbol"})
 
     description = (
-        "Search Python code symbols using the AST-based "
-        "symbol index. Use this to locate classes, "
-        "functions, methods, and async functions before "
-        "reading or editing their source code."
+        "使用基于 AST 的符号索引搜索 Python 代码符号。"
+        "在阅读或编辑源码前，用此工具定位类、函数、"
+        "方法以及异步函数。"
     )
 
     parameters = {
@@ -29,31 +28,31 @@ class SearchSymbolTool(
             "query": {
                 "type": "string",
                 "description": (
-                    "Symbol name or qualified symbol name. "
-                    "Examples: 'run', 'MiniCodexAgent.run', "
-                    "'Planner', or 'create_plan'."
+                    "符号名或限定符号名。"
+                    "示例：'run'、'MiniCodexAgent.run'、"
+                    "'Planner' 或 'create_plan'。"
                 ),
             },
             "kind": {
                 "type": "string",
                 "description": (
-                    "Optional exact symbol kind: "
-                    "class, function, method, "
-                    "async_function, or async_method."
+                    "可选的精确符号类型："
+                    "class、function、method、"
+                    "async_function 或 async_method。"
                 ),
             },
             "path": {
                 "type": "string",
                 "description": (
-                    "Optional path filter. "
-                    "Example: 'minicodex/agent'."
+                    "可选的路径过滤条件。"
+                    "示例：'minicodex/agent'。"
                 ),
             },
             "max_results": {
                 "type": "integer",
                 "description": (
-                    "Maximum number of symbols to return, "
-                    "from 1 to 200. Defaults to 40."
+                    "最多返回的符号数，范围 1 到 200。"
+                    "默认为 40。"
                 ),
             },
         },
@@ -86,7 +85,7 @@ class SearchSymbolTool(
         if not query:
 
             raise ValueError(
-                "Symbol query cannot be empty."
+                "符号查询不能为空。"
             )
 
         valid_kinds = {
@@ -113,9 +112,9 @@ class SearchSymbolTool(
             ):
 
                 raise ValueError(
-                    "Invalid symbol kind: "
-                    f"{kind}. "
-                    "Expected one of: "
+                    "无效的符号类型："
+                    f"{kind}。"
+                    "期望为以下之一："
                     + ", ".join(
                         sorted(
                             valid_kinds
@@ -153,8 +152,8 @@ class SearchSymbolTool(
             return ToolResult(
                 success=True,
                 summary=(
-                    "No code symbols found "
-                    f"for '{query}'."
+                    "未找到与 "
+                    f"'{query}' 匹配的代码符号。"
                 ),
                 data={
                     "query": query,
@@ -236,10 +235,10 @@ class SearchSymbolTool(
         return ToolResult(
             success=True,
             summary=(
-                f"Found "
+                f"找到 "
                 f"{len(matches)} "
-                f"symbol matches "
-                f"for '{query}'."
+                f"个与 "
+                f"'{query}' 匹配的符号。"
             ),
             data={
                 "query": query,

@@ -130,8 +130,7 @@ def close_tool_batch_before_control_transition(
                 "role": "tool",
                 "tool_call_id": _tool_call_id(tool_call),
                 "content": (
-                    "Tool call skipped because "
-                    f"{skipped_reason}."
+                    f"工具调用已跳过，原因：{skipped_reason}。"
                 ),
             }
         )

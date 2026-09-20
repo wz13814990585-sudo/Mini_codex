@@ -57,7 +57,7 @@ class DependencyResolver:
                 manifests=relative,
                 preferred_manifest=preferred,
                 action="install_declared_dependency",
-                reason="The dependency is already declared by the project.",
+                reason="该依赖已在项目中声明。",
             )
         if standalone or not manifests:
             return DependencyResolution(
@@ -69,8 +69,7 @@ class DependencyResolver:
                 preferred_manifest=preferred,
                 action="install_without_manifest_mutation",
                 reason=(
-                    "This is an isolated artifact with no applicable project "
-                    "dependency declaration requirement."
+                    "这是孤立产物，不适用项目依赖声明要求。"
                 ),
             )
         return DependencyResolution(
@@ -82,8 +81,8 @@ class DependencyResolver:
             preferred_manifest=preferred,
             action="update_manifest_first",
             reason=(
-                f"'{package}' is not declared. Update {preferred or 'the existing manifest'} "
-                "with a checkpointed edit before installing it."
+                f"'{package}' 尚未声明。请先用受检查点保护的编辑更新"
+                f"{preferred or '现有清单'}，然后再安装。"
             ),
         )
 

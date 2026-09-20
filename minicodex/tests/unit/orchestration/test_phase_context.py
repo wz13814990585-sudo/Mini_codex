@@ -38,7 +38,7 @@ def test_acting_context_has_edit_hint_without_validation_noise(tmp_path):
         agent, current_plan_step=None, remaining_agent_steps=4
     )
 
-    assert "Edit strategy: prefer patch_file" in context
+    assert "编辑策略" in context and "patch_file" in context
     assert "Latest failure paths" not in context
 
 
@@ -54,7 +54,8 @@ def test_fixing_context_focuses_failure_paths(tmp_path):
     )
 
     assert "tests/test_app.py, app.py" in context
-    assert "Recover locally" in context
+    assert "先在局部恢复" in context
+    assert "当前阶段：修复中 [FIXING]" in context
 
 
 def test_context_builder_keeps_attached_long_term_memory_advisory(tmp_path):
@@ -68,5 +69,5 @@ def test_context_builder_keeps_attached_long_term_memory_advisory(tmp_path):
         agent, current_plan_step=None, remaining_agent_steps=3
     )
 
-    assert "Advisory prior-task memory" in context
+    assert "参考性历史任务记忆" in context
     assert "narrower patch" in context

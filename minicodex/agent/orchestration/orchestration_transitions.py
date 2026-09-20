@@ -84,7 +84,7 @@ def validation_transition(
         if mode == ExecutionMode.FAST:
             return ControlDecision(
                 restart=False,
-                skipped_reason="deterministic completion evidence is sufficient",
+                skipped_reason="确定性完成证据已充分",
             )
         return ControlDecision()
     # A materialized plan is the production source of the next action.  Do
@@ -94,11 +94,12 @@ def validation_transition(
         return ControlDecision(
             restart=True,
             followup_message=(
-                f"Run required validation check {check.id}: {check.observable or check.reason}. "
-                f"Use capability {check.capability}, strength {check.strength.name}, and validation_check='{check.id}'."
-                if check is not None else "Run the next required validation check."
+                f"请执行必需的验证项 {check.id}：{check.observable or check.reason}。"
+                f"使用能力 {check.capability}、强度 {check.strength.name}，"
+                f"并设置 validation_check='{check.id}'。"
+                if check is not None else "请执行下一个必需的验证项。"
             ),
-            skipped_reason="a required validation check remains unproven",
+            skipped_reason="仍有必需验证项尚未证明",
             reason_code=ReasonCode.ACCEPTANCE_MISSING,
         )
     if (
@@ -108,38 +109,36 @@ def validation_transition(
         return ControlDecision(
             restart=True,
             followup_message=(
-                "Acceptance passed. Run one focused regression test for the "
-                "changed area with purpose='regression'."
+                "验收已通过。请针对变更区域运行一次聚焦回归测试，"
+                "并设置 purpose='regression'。"
             ),
-            skipped_reason="relevant regression evidence is required",
+            skipped_reason="仍需要相关回归证据",
             reason_code=ReasonCode.REGRESSION_MISSING,
         )
     if next_action == ValidationNextAction.RUN_ACCEPTANCE_VALIDATION:
         return ControlDecision(
             restart=True,
             followup_message=acceptance_reminder,
-            skipped_reason="validation requires acceptance evidence",
+            skipped_reason="验证仍需要验收证据",
             reason_code=ReasonCode.ACCEPTANCE_MISSING,
         )
     if next_action == ValidationNextAction.RUN_FULL_VALIDATION:
         return ControlDecision(
             restart=True,
             followup_message=(
-                "Acceptance passed. Run the full regression suite with "
-                "run_tests(path='.', "
-                "purpose='regression') before completion."
+                "验收已通过。完成前请运行完整回归套件："
+                "run_tests(path='.', purpose='regression')。"
             ),
-            skipped_reason="validation requires full regression evidence",
+            skipped_reason="验证仍需要完整回归证据",
             reason_code=ReasonCode.FULL_REGRESSION_MISSING,
         )
     if next_action == ValidationNextAction.INVESTIGATE_INCONCLUSIVE:
         return ControlDecision(
             restart=True,
             followup_message=(
-                "Validation was inconclusive. Inspect the concrete validator "
-                "failure and obtain reliable evidence."
+                "验证结果尚无定论。请检查具体验证器失败信息，并获取可靠证据。"
             ),
-            skipped_reason="validation was inconclusive",
+            skipped_reason="验证结果尚无定论",
         )
     if next_action in {ValidationNextAction.TASK_VALIDATED, ValidationNextAction.FIX_FAILURE}:
         return None if stalled else ControlDecision()

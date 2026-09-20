@@ -66,7 +66,7 @@ class RollbackEngine:
         """Undo only this task's checkpoint chain, never a Git reset."""
         manager = self.checkpoint_manager
         if manager.history_trimmed:
-            return ToolResult(False, "Task undo unavailable: checkpoint history was trimmed", {})
+            return ToolResult(False, "任务撤销不可用：检查点历史已被裁剪", {})
         checkpoints = [c for c in manager.all_checkpoints() if c.sealed and not c.rolled_back]
         expected = {}
         for checkpoint in reversed(checkpoints):
@@ -77,7 +77,7 @@ class RollbackEngine:
                 if conflict is not None:
                     return conflict
             elif expected[path] != checkpoint.after_sha256:
-                return ToolResult(False, "Concurrent changes between agent edits prevent whole-task undo",
+                return ToolResult(False, "智能体编辑之间存在并发变更，无法整任务撤销",
                                   {"path": path, "failure_type": "rollback_conflict"})
             expected[path] = checkpoint.snapshot.sha256
         restored = []
@@ -87,7 +87,7 @@ class RollbackEngine:
                 result.data["restored_paths"] = restored
                 return result
             restored.append(checkpoint.snapshot.path)
-        return ToolResult(True, "Task edits reverted to their exact pre-task contents",
+        return ToolResult(True, "任务编辑已恢复到任务开始前的精确内容",
                           {"restored_paths": list(dict.fromkeys(restored))})
 
     def rollback(
@@ -111,8 +111,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback failed because "
-                    "the checkpoint does not exist."
+                    "回滚失败：检查点不存在。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -123,7 +122,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "Unknown checkpoint."
+                    "未知检查点。"
                 ),
             )
 
@@ -136,8 +135,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback failed because "
-                    "the checkpoint was never sealed."
+                    "回滚失败：检查点从未封存。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -149,9 +147,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "Only checkpoints belonging "
-                    "to successful edits can be "
-                    "rolled back."
+                    "只能回滚属于成功编辑的检查点。"
                 ),
             )
 
@@ -164,9 +160,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback failed because "
-                    "this checkpoint has already "
-                    "been rolled back."
+                    "回滚失败：该检查点已被回滚。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -178,8 +172,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "Checkpoint cannot be "
-                    "rolled back twice."
+                    "检查点不能被回滚两次。"
                 ),
             )
 
@@ -238,8 +231,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback failed while "
-                    "restoring the checkpoint."
+                    "恢复检查点时回滚失败。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -294,9 +286,8 @@ class RollbackEngine:
         return ToolResult(
             success=True,
             summary=(
-                "Successfully rolled back "
-                f"{checkpoint.snapshot.path} "
-                "to its pre-edit checkpoint."
+                f"已成功将 {checkpoint.snapshot.path} "
+                "回滚到编辑前的检查点。"
             ),
             data={
                 "checkpoint_id": (
@@ -345,9 +336,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback was blocked because "
-                    "the current file state no longer "
-                    "matches the checkpoint."
+                    "回滚被阻止：当前文件状态已与检查点不一致。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -364,8 +353,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "Expected the edited file to "
-                    "exist before rollback."
+                    "回滚前期望已编辑文件仍然存在。"
                 ),
             )
 
@@ -374,8 +362,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback was blocked because "
-                    "the target is no longer a file."
+                    "回滚被阻止：目标已不再是文件。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -392,7 +379,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "Current path type changed."
+                    "当前路径类型已改变。"
                 ),
             )
 
@@ -417,9 +404,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback was blocked because "
-                    "the file changed after this "
-                    "checkpointed edit."
+                    "回滚被阻止：此检查点编辑之后文件又发生了变化。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -443,8 +428,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "Refusing to overwrite newer "
-                    "workspace changes."
+                    "拒绝覆盖工作区中更新的变更。"
                 ),
             )
 
@@ -473,9 +457,7 @@ class RollbackEngine:
 
             raise ValueError(
                 (
-                    "Checkpoint says the file "
-                    "existed but contains no "
-                    "snapshot content."
+                    "检查点声称文件曾存在，但快照内容为空。"
                 )
             )
 
@@ -504,9 +486,7 @@ class RollbackEngine:
 
                 raise ValueError(
                     (
-                        "Cannot remove rollback "
-                        "target because it is not "
-                        "a file."
+                        "无法删除回滚目标：它不是文件。"
                     )
                 )
 
@@ -537,7 +517,7 @@ class RollbackEngine:
                 return ToolResult(
                     success=False,
                     summary=(
-                        "Rollback verification failed."
+                        "回滚校验失败。"
                     ),
                     data={
                         "checkpoint_id": (
@@ -549,7 +529,7 @@ class RollbackEngine:
                         ),
                     },
                     error=(
-                        "Restored file does not exist."
+                        "恢复后的文件不存在。"
                     ),
                 )
 
@@ -576,7 +556,7 @@ class RollbackEngine:
                 return ToolResult(
                     success=False,
                     summary=(
-                        "Rollback verification failed."
+                        "回滚校验失败。"
                     ),
                     data={
                         "checkpoint_id": (
@@ -596,8 +576,7 @@ class RollbackEngine:
                         ),
                     },
                     error=(
-                        "Restored file content "
-                        "does not match snapshot."
+                        "恢复后的文件内容与快照不一致。"
                     ),
                 )
 
@@ -612,7 +591,7 @@ class RollbackEngine:
             return ToolResult(
                 success=False,
                 summary=(
-                    "Rollback verification failed."
+                    "回滚校验失败。"
                 ),
                 data={
                     "checkpoint_id": (
@@ -624,8 +603,7 @@ class RollbackEngine:
                     ),
                 },
                 error=(
-                    "File should have been removed "
-                    "during rollback."
+                    "回滚期间本应删除该文件。"
                 ),
             )
 

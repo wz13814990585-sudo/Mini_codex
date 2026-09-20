@@ -191,8 +191,8 @@ def test_no_progress_restriction_closes_batch_before_guidance():
 
     history = conversation_after_first_response(llm)
     assert_batch_order(history, ["A", "B"])
-    assert "blocked" in history[1]["content"].lower()
-    assert "skipped" in history[2]["content"].lower()
+    assert "拦截" in history[1]["content"] or "阻塞" in history[1]["content"]
+    assert "跳过" in history[2]["content"] or "skipped" in history[2]["content"].lower()
     assert history[3]["role"] == "user"
 
 
@@ -220,9 +220,12 @@ def test_validation_transition_closes_batch_before_followup():
 
     history = conversation_after_first_response(llm)
     assert_batch_order(history, ["A", "B"])
-    assert "skipped" in history[2]["content"].lower()
+    assert "跳过" in history[2]["content"] or "skipped" in history[2]["content"].lower()
     assert history[3]["role"] == "user"
-    assert "full regression" in history[3]["content"].lower()
+    assert (
+        "完整回归" in history[3]["content"]
+        or "full regression" in history[3]["content"].lower()
+    )
 
 
 def test_action_required_closes_batch_before_message():
@@ -242,7 +245,7 @@ def test_action_required_closes_batch_before_message():
     history = conversation_after_first_response(llm)
     assert_batch_order(history, ["A", "B"])
     assert history[3]["role"] == "user"
-    assert "enough context" in history[3]["content"].lower()
+    assert "上下文已足够" in history[3]["content"]
 
 
 def test_protocol_validator_accepts_closed_batch():

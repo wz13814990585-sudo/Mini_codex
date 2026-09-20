@@ -128,5 +128,5 @@ def test_tetris_html_uses_fast_edit_validate_finish_path(tmp_path):
     assert (tmp_path / "try_code/index.html").is_file()
     assert agent.validation_pipeline.state.acceptance_passed is True
     assert agent.validation_pipeline.state.full_passed is False
-    assert "Task completed" in result
+    assert "任务已成功完成" in result
     assert agent.execution_metrics.final_outcome == "edited_and_validated"

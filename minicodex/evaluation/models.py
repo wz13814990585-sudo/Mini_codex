@@ -15,18 +15,24 @@ import statistics
 FAILURE_CATEGORIES = (
     "routing_failure",
     "requirement_failure",
-    "wrong_file",
-    "no_edit",
+    "planning_failure",
+    "target_location_failure",
+    "wrong_file_edit",
+    "unauthorized_edit",
+    "repeated_reconnaissance",
+    "no_progress",
+    "no_tool_loop",
+    "tool_error",
     "edit_failure",
     "spec_binding_failure",
     "wrong_validation_target",
+    "validation_failure",
+    "regression_failure",
     "capability_missing",
     "environment_failure",
-    "repeated_inspection",
-    "no_tool_loop",
-    "max_steps",
     "recovery_failure",
     "false_completion",
+    "max_steps_exhausted",
     "oracle_failure",
     "unknown",
 )
@@ -111,6 +117,11 @@ class EvaluationCase:
 
     benchmark_version: str = ""
 
+    # Optional deterministic benchmark edit-scope contract.  An empty tuple
+    # deliberately disables strict wrong-file measurement for ambiguous tasks.
+    expected_edit_paths: tuple[str, ...] = ()
+    allowed_edit_paths: tuple[str, ...] = ()
+
 
 # =============================================================
 # Evaluation Result
@@ -182,7 +193,8 @@ class EvaluationResult:
 
     false_completion: bool = False
 
-    wrong_edit: bool = False
+    unauthorized_edit: bool = False
+    wrong_file_edit: bool = False
     routing_llm_calls: int = 0
     requirements_llm_calls: int = 0
     semantic_judge_llm_calls: int = 0
@@ -236,6 +248,8 @@ class EvaluationResult:
     recovery_success: bool = False
     total_control_llm_calls: int = 0
     other_control_llm_calls: int = 0
+    failed_tool_call_count: int = 0
+    failed_tool_call_rate: float = 0.0
     failure_reason: str | None = None
     trace_path: str | None = None
 
@@ -466,9 +480,17 @@ class EvaluationSummary:
             "validation_inconclusive": sum(r.validation_inconclusive for r in self.results),
             "max_step_exhaustion_rate": rate(sum(r.max_steps_exhausted for r in self.results), total),
             "wrong_validation_target_rate": rate(sum(r.wrong_validation_target for r in self.results), total),
-            "wrong_edit_rate": rate(sum(r.wrong_edit for r in self.results), total),
+            "unauthorized_edit_count": sum(r.unauthorized_edit for r in self.results),
+            "unauthorized_edit_rate": rate(sum(r.unauthorized_edit for r in self.results), total),
+            "wrong_file_edit_count": sum(r.wrong_file_edit for r in self.results),
+            "wrong_file_edit_rate": rate(sum(r.wrong_file_edit for r in self.results), total),
             "average_tool_calls": average(r.tool_call_count for r in self.results),
             "median_tool_calls": median(r.tool_call_count for r in self.results),
+            "average_failed_tool_calls": average(r.failed_tool_call_count for r in self.results),
+            "failed_tool_call_rate": rate(
+                sum(r.failed_tool_call_count for r in self.results),
+                sum(r.tool_call_count for r in self.results),
+            ),
             "tool_calls_per_success": rate(sum(r.tool_call_count for r in self.results), successful),
             "average_steps": average(r.agent_steps for r in self.results),
             "median_steps": median(r.agent_steps for r in self.results),
@@ -486,7 +508,6 @@ class EvaluationSummary:
             "average_inspections_before_first_edit": average(
                 r.inspections_before_first_edit for r in self.results if r.inspections_before_first_edit is not None
             ),
-            "wrong_file_edit_rate": rate(sum(r.wrong_edit for r in self.results), total),
             "repeated_tool_rate": rate(sum(r.repeated_action_count for r in self.results),
                                        sum(r.tool_call_count for r in self.results)),
             "rollback_rate": rate(sum(r.rollback_count > 0 for r in self.results), total),

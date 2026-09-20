@@ -42,8 +42,7 @@ def acceptance_evidence_reminder(
     agent,
     *,
     prefix: str = (
-        "Regression validation is not enough to prove that the user's requested "
-        "behavior works. "
+        "仅靠回归验证不足以证明用户请求的行为已经生效。"
     ),
 ) -> str:
     registry = getattr(agent, "registry", None)
@@ -78,26 +77,26 @@ def acceptance_evidence_reminder(
                                      paths=tuple(dict.fromkeys(candidates)),
                                      revision=getattr(getattr(agent, "workspace_session", None), "revision", 0)) if check else None
         if selection is not None:
-            return prefix + f"Run {selection.tool_name} with {selection.arguments!r}; it resolves {check.id}."
+            return prefix + f"请运行 {selection.tool_name}，参数为 {selection.arguments!r}；它对应 {check.id}。"
 
     html = next((path for path in candidates if path.lower().endswith(".html")), None)
     if html and "validate_static_web" in registered:
         return prefix + (
-            "Obtain targeted acceptance evidence for the CURRENT edit revision "
-            f"with validate_static_web(path={html!r})."
+            "请为当前编辑版本获取定向验收证据："
+            f"validate_static_web(path={html!r})。"
         )
     if "run_command" in registered:
         return prefix + (
-            "Run a specific behavior command using "
-            "run_command(command=<acceptance_command>, purpose='acceptance')."
+            "请使用 run_command(command=<验收命令>, purpose='acceptance') "
+            "运行能证明具体行为的命令。"
         )
     if "run_tests" in registered:
         return prefix + (
-            "Create or resolve a specific relevant test, then use "
-            "run_tests(path=<specific_test>, purpose='acceptance'); never pass a "
-            "source module or the full suite as acceptance evidence."
+            "请创建或定位具体相关测试，然后使用 "
+            "run_tests(path=<具体测试>, purpose='acceptance')；"
+            "切勿把源码模块或完整套件当作验收证据。"
         )
-    return prefix + "Obtain explicit targeted acceptance evidence for the current edit revision."
+    return prefix + "请为当前编辑版本获取明确的定向验收证据。"
 
 
 class ValidationOrchestrator:
@@ -120,10 +119,10 @@ class ValidationOrchestrator:
                 metrics.flaky_reruns += 1
                 metrics.premature_rollbacks_prevented += 1
             if attempts >= 6:
-                return ControlDecision(early_stop="Validation remained unstable after bounded rechecks; no regression conclusion is justified.")
+                return ControlDecision(early_stop="有界复核后验证仍不稳定；无法据此得出回归结论。")
             return ControlDecision(restart=True,
-                followup_message="Contradictory same-revision evidence is unstable. Rerun the identical check before repairing or rolling back.",
-                skipped_reason="bounded flaky recheck")
+                followup_message="同一版本的矛盾证据不稳定。请在修复或回滚前用相同检查再跑一次。",
+                skipped_reason="有界不稳定复核")
         failed_count = (
             0
             if evidence.outcome == ValidationOutcome.PASSED
@@ -144,7 +143,7 @@ class ValidationOrchestrator:
         )
         agent.latest_progress_signal = progress.signal
         if progress.message:
-            print("\n[Validation Progress]")
+            print("\n[验证进展]")
             print(progress.message)
 
         if (
@@ -160,10 +159,10 @@ class ValidationOrchestrator:
                 return ControlDecision(
                     restart=True,
                     followup_message=(
-                        "Comparable validation contradicted itself on the same revision. "
-                        "Rerun it once for stability; do not repair or rollback yet."
+                        "可比较验证在同一版本上自相矛盾。"
+                        "请先再跑一次以确认稳定性；此时不要修复或回滚。"
                     ),
-                    skipped_reason="suspected flaky validation",
+                    skipped_reason="疑似不稳定验证",
                 )
 
             judge = getattr(agent, "semantic_judge", None)
@@ -185,20 +184,20 @@ class ValidationOrchestrator:
                 return ControlDecision(
                     restart=True,
                     followup_message=(
-                        "The regression evidence matches an explicit requested contract change. "
-                        "Retain the implementation and update only legitimate affected tests while "
-                        "preserving their validation strength, then rerun acceptance/regression."
+                        "回归证据与明确要求的契约变更一致。"
+                        "请保留实现，仅更新合法受影响的测试并保持其验证强度，"
+                        "然后重新运行验收/回归。"
                     ),
-                    skipped_reason="semantic judge classified expected change",
+                    skipped_reason="语义评判判定为预期变更",
                 )
             if classification == RegressionClassification.UNCERTAIN:
                 return ControlDecision(
                     restart=True,
                     followup_message=(
-                        "Regression meaning is uncertain. Inspect the changed behavior and focused "
-                        "failure evidence; do not rollback until causality is established."
+                        "回归含义尚不确定。请检查变更行为与聚焦失败证据；"
+                        "在建立因果关系之前不要回滚。"
                     ),
-                    skipped_reason="semantic regression assessment uncertain",
+                    skipped_reason="语义回归评估尚不确定",
                 )
 
             repair_policy = getattr(agent, "regression_recovery_policy", None)
@@ -212,10 +211,10 @@ class ValidationOrchestrator:
                     return ControlDecision(
                         restart=True,
                         followup_message=(
-                            "A true regression is evidenced. Make one bounded materially different "
-                            "corrective edit and rerun the same comparable validation."
+                            "已有真实回归证据。请做一次有界且实质不同的纠正编辑，"
+                            "并用同一可比较验证再跑一遍。"
                         ),
-                        skipped_reason="bounded repair precedes rollback",
+                        skipped_reason="有界修复优先于回滚",
                     )
             rollback = self.rollback_coordinator.coordinate(agent, evidence, progress)
             if rollback is not None:
@@ -223,12 +222,12 @@ class ValidationOrchestrator:
 
         if progress.meaningful_progress:
             agent.recovery.mark_progress()
-            print("\n[Meaningful Progress Detected]")
+            print("\n[检测到有意义进展]")
 
         decision_policy = ValidationDecisionPolicy(agent.validation_pipeline.state)
         next_action = decision_policy.next_action(evidence)
-        print("\n[Validation Policy]")
-        print(f"Next action: {next_action.value}")
+        print("\n[验证策略]")
+        print(f"下一步：{next_action.value}")
         ordinary = validation_transition(
             agent,
             next_action=next_action,
@@ -239,28 +238,28 @@ class ValidationOrchestrator:
         if ordinary is not None:
             return ordinary
 
-        reason = f"Validation is repeatedly failing without meaningful improvement. {progress.message}"
+        reason = f"验证反复失败且无明显改善。{progress.message}"
         policy = getattr(agent, "execution_policy", None)
         if policy is not None and not policy.enable_heavy_recovery:
             return ControlDecision(
-                early_stop="FAST mode stopped because targeted validation remained stalled.",
+                early_stop="FAST 模式已停止：定向验证持续停滞。",
                 reason_code=ReasonCode.BLOCKED,
             )
         recovery_message, should_continue = agent.recovery.recover(
             reason=reason,
             replan_callback=agent.replan,
         )
-        print("\n[Validation Recovery]")
+        print("\n[验证恢复]")
         print(recovery_message)
         if not should_continue:
             return ControlDecision(
-                early_stop="Agent stopped because validation remained stalled.",
+                early_stop="智能体已停止：验证持续停滞。",
                 reason_code=ReasonCode.BLOCKED,
             )
         return ControlDecision(
             restart=True,
             followup_message=recovery_message,
-            skipped_reason="validation recovery restarted the loop",
+            skipped_reason="验证恢复已重启循环",
         )
 
 _DEFAULT = ValidationOrchestrator()

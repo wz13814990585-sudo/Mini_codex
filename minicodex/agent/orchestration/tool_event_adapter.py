@@ -44,16 +44,27 @@ class ToolEventAdapter:
                 # Validators can run generators or race with an editor. Their
                 # observation cannot prove the revision they changed mid-check.
                 result.data["workspace_changed_during_validation"] = True
+        metrics = getattr(agent, "execution_metrics", None)
+        current_revision = agent.validation_pipeline.state.edit_revision
+        if metrics is not None:
+            metrics.record_tool(
+                tool_name,
+                llm_call_count=agent.token_metrics.call_count,
+                arguments=arguments,
+                success=result.success,
+                revision=current_revision,
+                capabilities=capabilities,
+            )
         self._emit_normal_progress(agent, tool_name, arguments, result)
-        print(f"\n[Tool] {tool_name}")
+        print(f"\n[工具] {tool_name}")
         if arguments:
-            print(f"[Arguments] {arguments}")
+            print(f"[参数] {arguments}")
 
         if run.preparation_failed:
             agent.working_summary.record_tool_result(tool_name=tool_name, arguments={}, result=result)
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
-            self._append_observation(messages, tool_call.id, result, "Tool Preparation Failed")
-            signal = ProgressSignal(ProgressKind.NONE, "Tool preparation failed.")
+            self._append_observation(messages, tool_call.id, result, "工具准备失败")
+            signal = ProgressSignal(ProgressKind.NONE, "工具准备失败。")
             signals.append(signal)
             self._observe(agent, tool_name, signal)
             return None
@@ -62,18 +73,17 @@ class ToolEventAdapter:
         if run.restriction is not None:
             if run.restriction.failure_type == "action_required_restriction":
                 self._emit_event(agent, RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.ACTING)
-            metrics = getattr(agent, "execution_metrics", None)
             if metrics is not None and controller is not None:
                 metrics.action_required_trigger_count = controller.action_required_trigger_count
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
-            self._append_observation(messages, tool_call.id, result, "Tool Restriction")
-            signal = ProgressSignal(ProgressKind.NONE, "Tool call was restricted.")
+            self._append_observation(messages, tool_call.id, result, "工具受限")
+            signal = ProgressSignal(ProgressKind.NONE, "工具调用被限制。")
             signals.append(signal)
             self._observe(agent, tool_name, signal)
             self._close(
                 messages,
                 tool_calls[index + 1 :],
-                "execution policy restricted the current tool batch",
+                "执行策略限制了当前工具批次",
                 run.restriction.reason,
             )
             return ToolBatchResult(
@@ -81,12 +91,11 @@ class ToolEventAdapter:
                 restart=True, followup_message=run.restriction.reason,
             )
 
-        metrics = getattr(agent, "execution_metrics", None)
         if run.duplicate_blocked:
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
             if metrics is not None:
                 metrics.repeated_action_count += 1
-            print("\n[Duplicate Tool Blocked]")
+            print("\n[重复工具调用已拦截]")
         elif not result.success:
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
             failure_type = str(result.data.get("failure_type", "") or "")
@@ -98,7 +107,6 @@ class ToolEventAdapter:
                     f"{failure_type}: {result.error or result.summary}"
                 )
 
-        current_revision = agent.validation_pipeline.state.edit_revision
         recorded_revision = (
             current_revision + 1
             if is_edit and result.success
@@ -120,14 +128,6 @@ class ToolEventAdapter:
             )
         self._append_observation(messages, tool_call.id, result)
         if metrics is not None:
-            metrics.record_tool(
-                tool_name,
-                llm_call_count=agent.token_metrics.call_count,
-                arguments=arguments,
-                success=result.success,
-                revision=current_revision,
-                capabilities=capabilities,
-            )
             telemetry = result.data.get("semantic_judge_telemetry")
             if telemetry:
                 from types import SimpleNamespace
@@ -143,13 +143,13 @@ class ToolEventAdapter:
                 level=1,
                 failure_type="stale_context" if stale else "edit_failure",
             )
-            signal = ProgressSignal(ProgressKind.NONE, "Bounded local edit recovery is required.")
+            signal = ProgressSignal(ProgressKind.NONE, "需要有界的本地编辑恢复。")
             signals.append(signal)
             self._observe(agent, tool_name, signal)
             self._close(
                 messages,
                 tool_calls[index + 1 :],
-                "bounded edit recovery changed the next allowed action",
+                "有界编辑恢复改变了下一步允许的操作",
                 retry_message,
             )
             return ToolBatchResult(
@@ -184,16 +184,16 @@ class ToolEventAdapter:
                 result=result,
             )
 
-        signal = ProgressSignal(ProgressKind.OBSERVATION, "Tool produced an observation.")
+        signal = ProgressSignal(ProgressKind.OBSERVATION, "工具产生了一条观察结果。")
         if is_edit and result.success:
             signal, completed = self.edit_handler.apply(
                 agent, tool_name=tool_name, arguments=arguments, result=result,
                 current_plan_step=current_plan_step, emit=self._emit_event,
             )
-            print(f"\n[Edit Applied]\n[Validation Revision] {agent.validation_pipeline.state.edit_revision}")
+            print(f"\n[编辑已应用]\n[验证版本] {agent.validation_pipeline.state.edit_revision}")
             checkpoint_id = result.data.get("checkpoint_id")
             if checkpoint_id:
-                print(f"[Checkpoint] {checkpoint_id}")
+                print(f"[检查点] {checkpoint_id}")
             if completed:
                 self._observe(agent, tool_name, signal)
                 signals.append(signal)
@@ -209,12 +209,12 @@ class ToolEventAdapter:
                 self._close(
                     messages,
                     tool_calls[index + 1 :],
-                    "machine-checkable plan criteria advanced the active plan",
+                    "可机器检查的计划条件推进了当前计划",
                 )
                 return ToolBatchResult(tuple(runs), tuple(evidence_items), tuple(signals), restart=True)
 
         if tool_name == "replan" and result.data.get("replanned"):
-            signal = ProgressSignal(ProgressKind.ADVANCED, "Plan was revised.")
+            signal = ProgressSignal(ProgressKind.ADVANCED, "计划已修订。")
 
         if is_validation:
             handled = self.validation_handler.apply(
@@ -223,9 +223,9 @@ class ToolEventAdapter:
             )
             if handled.evidence is not None:
                 evidence_items.append(handled.evidence)
-                print(f"\n[Validation Evidence]\nRevision: {handled.evidence.edit_revision}"
-                      f"\nScope: {handled.evidence.scope.value}\nPurpose: {handled.evidence.purpose.value}"
-                      f"\nOutcome: {handled.evidence.outcome.value}")
+                print(f"\n[验证证据]\n版本：{handled.evidence.edit_revision}"
+                      f"\n范围：{handled.evidence.scope.value}\n用途：{handled.evidence.purpose.value}"
+                      f"\n结果：{handled.evidence.outcome.value}")
             signal, decision = handled.signal, handled.decision
             if handled.completed_plan and decision is not None:
                 decision = type(decision)(restart=True, early_stop=decision.early_stop,
@@ -239,7 +239,7 @@ class ToolEventAdapter:
                                        early_stop=finished, completion_finished=True)
             if decision is not None and (decision.early_stop or decision.restart):
                 self._close(messages, tool_calls[index + 1 :],
-                            decision.skipped_reason or "validation changed agent loop control flow",
+                            decision.skipped_reason or "验证改变了智能体循环控制流",
                             decision.followup_message)
                 return ToolBatchResult(tuple(runs), tuple(evidence_items), tuple(signals),
                                        restart=decision.restart, early_stop=decision.early_stop,
@@ -263,7 +263,7 @@ class ToolEventAdapter:
             self._close(
                 messages,
                 tool_calls[index + 1 :],
-                "the plan changed and remaining calls used the previous plan",
+                "计划已变更，剩余调用仍使用旧计划",
             )
             return ToolBatchResult(tuple(runs), tuple(evidence_items), tuple(signals), restart=True)
 
@@ -274,7 +274,7 @@ class ToolEventAdapter:
         text = result.to_llm_text()
         if heading:
             print(f"\n[{heading}]")
-        print(f"\n[Observation]\n{text}")
+        print(f"\n[观察结果]\n{text}")
         messages.append({"role": "tool", "tool_call_id": call_id, "content": text})
 
     @staticmethod
@@ -317,7 +317,7 @@ class ToolEventAdapter:
         close_tool_batch_before_control_transition(
             messages,
             remaining,
-            "deterministic completion became ready during the tool batch",
+            "工具批次期间确定性完成条件已就绪",
         )
         return handling.output or ""
 
@@ -330,14 +330,14 @@ class ToolEventAdapter:
         capabilities = (agent.registry.capabilities_for(tool_name)
                         if tool_name in getattr(agent.registry, "_tools", {}) else frozenset())
         if "file.read" in capabilities:
-            emit(f"Reading {path or 'target'}...")
+            emit(f"正在读取 {path or '目标'}...")
         elif "code.edit" in capabilities:
-            emit(f"Editing {path or 'target'}...")
+            emit(f"正在编辑 {path or '目标'}...")
         elif "test.run" in capabilities:
-            emit("Running focused tests...")
+            emit("正在运行定向测试...")
             if result.success and result.data.get("tests_passed") is True:
-                emit(f"{int(result.data.get('passed', 0) or 0)} tests passed.")
+                emit(f"{int(result.data.get('passed', 0) or 0)} 个测试通过。")
         elif capabilities & {"validation.static_web", "validation.browser", "service.validate"}:
-            emit(f"Validating {path or 'web artifact'}...")
+            emit(f"正在验证 {path or 'Web 产物'}...")
             if result.success and result.data.get("outcome") == "passed":
-                emit("Validation passed.")
+                emit("验证通过。")

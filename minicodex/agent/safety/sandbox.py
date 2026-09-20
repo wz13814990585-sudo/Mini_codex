@@ -549,8 +549,7 @@ class SandboxRunner:
                 ):
 
                     stdout += (
-                        "\n[Sandbox output "
-                        "truncated]\n"
+                        "\n[沙箱输出已截断]\n"
                     )
 
                 if (
@@ -558,8 +557,7 @@ class SandboxRunner:
                 ):
 
                     stderr += (
-                        "\n[Sandbox output "
-                        "truncated]\n"
+                        "\n[沙箱输出已截断]\n"
                     )
 
                 duration = (
@@ -603,8 +601,7 @@ class SandboxRunner:
                     ),
                     error=(
                         (
-                            "Process exceeded "
-                            f"{timeout} seconds."
+                            f"进程已超过 {timeout} 秒。"
                         )
                         if timed_out
                         else None

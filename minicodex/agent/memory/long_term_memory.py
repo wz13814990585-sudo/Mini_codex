@@ -604,15 +604,13 @@ class LongTermMemoryStore:
         ):
 
             return (
-                "No relevant historical "
-                "task memory was retrieved."
+                "未检索到相关历史任务记忆。"
             )
 
         lines = [
             (
-                "Relevant long-term memory "
-                "(historical only; verify current "
-                "repository state with tools):"
+                "相关长期记忆"
+                "（仅供历史参考；请用工具核验当前仓库状态）："
             )
         ]
 
@@ -627,7 +625,7 @@ class LongTermMemoryStore:
             lines.append(
                 (
                     f"- [{record.outcome}] "
-                    f"Previous task: "
+                    f"以往任务："
                     f"{record.task_prompt}"
                 )
             )
@@ -638,8 +636,7 @@ class LongTermMemoryStore:
 
                 lines.append(
                     (
-                        "  Experience: "
-                        f"{record.summary}"
+                        f"  经验：{record.summary}"
                     )
                 )
 
@@ -649,7 +646,7 @@ class LongTermMemoryStore:
 
                 lines.append(
                     (
-                        "  Previously touched: "
+                        "  以往触及："
                         + ", ".join(
                             record.touched_files
                         )

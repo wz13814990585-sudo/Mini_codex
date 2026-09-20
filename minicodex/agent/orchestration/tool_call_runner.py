@@ -42,7 +42,7 @@ class ToolCallRunner:
         if restriction is not None:
             result = ToolResult(
                 success=False,
-                summary=f"Tool call '{tool_name}' was blocked by the active execution control policy.",
+                summary=f"工具调用 '{tool_name}' 被当前执行控制策略拦截。",
                 data={
                     "tool_name": tool_name,
                     "failure_type": restriction.failure_type,
@@ -69,7 +69,7 @@ class ToolCallRunner:
         if not allowed:
             result = ToolResult(
                 success=False,
-                summary=f"Tool call '{tool_name}' was blocked as a duplicate.",
+                summary=f"工具调用 '{tool_name}' 因重复调用被拦截。",
                 data={
                     "tool_name": tool_name,
                     "failure_type": "duplicate_call",

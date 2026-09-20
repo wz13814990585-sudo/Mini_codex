@@ -16,9 +16,9 @@ class ReplaceLinesTool(
     capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
-        "Replace an exact line range in an existing text file. "
-        "Use this after read_file has verified the current range. "
-        "The edit is checked before and after writing."
+        "替换已有文本文件中的精确行范围。"
+        "请先用 read_file 确认当前范围后再调用。"
+        "写入前后都会进行校验。"
     )
 
     parameters = {
@@ -27,34 +27,32 @@ class ReplaceLinesTool(
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative path of the file to modify."
+                    "要修改的文件相对路径。"
                 ),
             },
             "start_line": {
                 "type": "integer",
                 "description": (
-                    "1-based first line to replace."
+                    "要替换的起始行（从 1 起算）。"
                 ),
             },
             "end_line": {
                 "type": "integer",
                 "description": (
-                    "1-based last line to replace, inclusive."
+                    "要替换的结束行（从 1 起算，含该行）。"
                 ),
             },
             "new_text": {
                 "type": "string",
                 "description": (
-                    "Replacement text for the requested "
-                    "line range."
+                    "用于替换指定行范围的新文本。"
                 ),
             },
             "expected_text": {
                 "type": "string",
                 "description": (
-                    "Optional exact text expected in the "
-                    "current line range. If it no longer "
-                    "matches, the edit is rejected."
+                    "可选：当前行范围应匹配的精确文本。"
+                    "若不匹配，则拒绝本次编辑。"
                 ),
             },
         },
@@ -97,13 +95,13 @@ class ReplaceLinesTool(
         if not file_path.exists():
 
             raise FileNotFoundError(
-                f"File not found: {path}"
+                f"文件未找到：{path}"
             )
 
         if not file_path.is_file():
 
             raise ValueError(
-                f"Path is not a file: {path}"
+                f"路径不是文件：{path}"
             )
 
         before_content = (
@@ -136,15 +134,15 @@ class ReplaceLinesTool(
         if start < 1:
 
             raise ValueError(
-                "start_line must be >= 1."
+                "start_line 必须 >= 1。"
             )
 
         if end < start:
 
             raise ValueError(
                 (
-                    "end_line must be "
-                    ">= start_line."
+                    "end_line 必须 "
+                    ">= start_line。"
                 )
             )
 
@@ -152,9 +150,9 @@ class ReplaceLinesTool(
 
             raise ValueError(
                 (
-                    f"Requested line range "
-                    f"{start}-{end} exceeds "
-                    f"file length {total_lines}."
+                    f"请求的行范围 "
+                    f"{start}-{end} 超出 "
+                    f"文件长度 {total_lines}。"
                 )
             )
 
@@ -195,8 +193,8 @@ class ReplaceLinesTool(
                 return ToolResult(
                     success=False,
                     summary=(
-                        f"Line replacement context is stale for {path} "
-                        f"lines {start}-{end}."
+                        f"{path} 第 {start}-{end} 行的"
+                        f"行替换上下文已过期。"
                     ),
                     data={
                         "path": path,
@@ -211,7 +209,7 @@ class ReplaceLinesTool(
                         "retry_action": "read_target_region_then_retry_once",
                     },
                     error=(
-                        "The current line range no longer matches expected_text."
+                        "当前行范围已与 expected_text 不一致。"
                     ),
                 )
 
@@ -298,8 +296,8 @@ class ReplaceLinesTool(
         return ToolResult(
             success=True,
             summary=(
-                f"Successfully replaced and verified "
-                f"{path} lines {start}-{end}."
+                f"已成功替换并校验 "
+                f"{path} 第 {start}-{end} 行。"
             ),
             data={
                 "path": path,

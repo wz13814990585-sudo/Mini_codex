@@ -135,7 +135,7 @@ def test_ready_coding_task_returns_harness_report_without_extra_llm(tmp_path):
     report = agent.run("Create try_code/demo.html")
 
     assert len(llm.histories) == 2
-    assert report.startswith("Task completed successfully.")
+    assert report.startswith("任务已成功完成。")
     assert "try_code/demo.html" in report
 
 
@@ -166,7 +166,7 @@ def test_existing_artifact_reports_already_satisfied(tmp_path):
     agent = make_agent(tmp_path, llm)
     report = agent.run("Create try_code/demo.html")
 
-    assert "Task already satisfied." in report
+    assert "当前任务要求已经满足，无需修改代码。" in report
     assert agent.execution_metrics.final_outcome == "already_satisfied"
     assert "ALREADY_SATISFIED" not in report
 
@@ -178,9 +178,10 @@ def test_llm_blocker_without_deterministic_evidence_is_not_accepted(tmp_path):
     agent.configured_max_steps = 1
     report = agent.run("Create try_code/demo.html")
 
-    assert report.startswith("Task incomplete.")
+    assert report.startswith("任务未完成。")
     assert agent.execution_metrics.final_outcome == "incomplete"
     assert "Outcome:" not in report
+    assert "结果：" not in report
 
 
 def test_inspect_only_reads_target_then_allows_findings_without_edit_tools(tmp_path):

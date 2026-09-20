@@ -13,7 +13,7 @@ from ..task_state import AgentPhase, RuntimeEventType
 def _chat_with_heartbeat(agent, *, messages: list, tools: list):
     validate_tool_message_protocol(messages)
     interval = max(0.0, float(getattr(agent, "status_interval_seconds", 15.0)))
-    print("\n[LLM] Waiting for model response...")
+    print("\n[模型] 正在等待模型响应...")
     if interval == 0:
         return agent.llm.chat(messages=messages, tools=tools)
 
@@ -23,7 +23,7 @@ def _chat_with_heartbeat(agent, *, messages: list, tools: list):
     def report_wait() -> None:
         while not stopped.wait(interval):
             print(
-                f"[LLM] Still working ({int(time.monotonic() - started)}s elapsed)...",
+                f"[模型] 仍在处理中（已用时 {int(time.monotonic() - started)} 秒）...",
                 flush=True,
             )
 
@@ -34,7 +34,7 @@ def _chat_with_heartbeat(agent, *, messages: list, tools: list):
     finally:
         stopped.set()
         reporter.join(timeout=0.1)
-        print(f"[LLM] Response received after {time.monotonic() - started:.1f}s.")
+        print(f"[模型] 已收到响应，用时 {time.monotonic() - started:.1f} 秒。")
 
 
 @dataclass(frozen=True)
@@ -70,22 +70,22 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
     if remaining <= 0:
         return _PreparedTurn(task_max_steps, 0, None)
 
-    print(f"\n[Agent Step {step + 1}/{task_max_steps}]")
+    print(f"\n[Agent 步骤 {step + 1}/{task_max_steps}]")
     plan_turn = agent.plan_orchestrator.begin_turn(agent)
     current = plan_turn.current_step
     if current is not None:
-        print(f"\n[Current Plan Step] {current.id}. {current.description}")
-        print(f"[Step Failures] {current.attempts}/{agent.max_step_attempts}")
+        print(f"\n[当前计划步骤] {current.id}. {current.description}")
+        print(f"[步骤失败次数] {current.attempts}/{agent.max_step_attempts}")
     if plan_turn.followup_message:
-        print("\n[Step Recovery]")
+        print("\n[步骤恢复]")
         print(plan_turn.followup_message)
         messages.append({"role": "user", "content": plan_turn.followup_message})
     if not plan_turn.can_continue:
         handled = agent.completion_handler.handle_incomplete(
-            agent, reason=plan_turn.terminal_reason or "Plan recovery could not continue."
+            agent, reason=plan_turn.terminal_reason or "计划恢复无法继续。"
         )
         return _PreparedTurn(
-            task_max_steps, remaining, current, handled.output or "Task incomplete."
+            task_max_steps, remaining, current, handled.output or "任务未完成。"
         )
 
     controller = getattr(agent, "action_controller", None)
@@ -115,7 +115,7 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
         and remaining < task_max_steps
         and finalization.enter_if_needed(remaining, agent.execution_policy)
     ):
-        print("\n[Finalization Mode]")
+        print("\n[收尾模式]")
         agent.apply_runtime_event(RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.FINALIZING)
         finalization.allow_proof_inspection = (
             getattr(getattr(resolution, "status", ""), "value", getattr(resolution, "status", ""))
@@ -125,15 +125,15 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
             current, completed = agent.plan_orchestrator.reconcile(agent)
             if completed:
                 print(
-                    "Final reconciliation completed steps: "
+                    "最终核对已完成的步骤："
                     + ", ".join(str(step_id) for step_id in completed)
                 )
 
     pressure = agent.context_budget.pressure
-    print("\n[Context Budget]")
-    print(f"Last Prompt Tokens: {agent.context_budget.last_prompt_tokens}")
-    print(f"Usage: {agent.context_budget.usage_ratio:.1%}")
-    print(f"Pressure: {pressure.value}")
+    print("\n[上下文预算]")
+    print(f"上次提示词 Token：{agent.context_budget.last_prompt_tokens}")
+    print(f"使用率：{agent.context_budget.usage_ratio:.1%}")
+    print(f"压力：{pressure.value}")
     return _PreparedTurn(task_max_steps, remaining, current)
 
 
@@ -146,12 +146,12 @@ def _record_model_usage(agent, response) -> None:
             total_prompt_tokens=agent.token_metrics.total.prompt_tokens,
         )
     agent.context_budget.observe(response.usage.prompt_tokens)
-    print("\n[Token Usage]")
-    print(f"Prompt: {response.usage.prompt_tokens}")
-    print(f"Completion: {response.usage.completion_tokens}")
-    print(f"Total: {response.usage.total_tokens}")
-    print(f"Task Total: {agent.token_metrics.total.total_tokens}")
-    print(f"Context Pressure: {agent.context_budget.pressure.value}")
+    print("\n[Token 用量]")
+    print(f"提示词：{response.usage.prompt_tokens}")
+    print(f"补全：{response.usage.completion_tokens}")
+    print(f"合计：{response.usage.total_tokens}")
+    print(f"任务累计：{agent.token_metrics.total.total_tokens}")
+    print(f"上下文压力：{agent.context_budget.pressure.value}")
 
 
 def _apply_action_pressure(agent, messages: list) -> None:
@@ -163,7 +163,7 @@ def _apply_action_pressure(agent, messages: list) -> None:
     metrics = getattr(agent, "execution_metrics", None)
     if metrics is not None:
         metrics.action_required_trigger_count = controller.action_required_trigger_count
-    print("\n[ACTION_REQUIRED]")
+    print("\n[需要采取行动]")
     print(controller.INSTRUCTION)
     messages.append({"role": "user", "content": controller.INSTRUCTION})
 
@@ -218,7 +218,7 @@ def run_agent_loop(agent, user_input: str) -> str:
             if handled.finished:
                 return handled.output or ""
             messages.append(
-                {"role": "assistant", "content": content or "No tool action was taken."}
+                {"role": "assistant", "content": content or "未采取工具动作。"}
             )
             if handled.followup_instruction:
                 messages.append({"role": "user", "content": handled.followup_instruction})
@@ -233,7 +233,7 @@ def run_agent_loop(agent, user_input: str) -> str:
             handled = agent.completion_handler.handle_control_stop(
                 agent, reason=batch.early_stop, reason_code=batch.reason_code
             )
-            return handled.output or "Task incomplete."
+            return handled.output or "任务未完成。"
         if batch.restart:
             continue
 
@@ -246,6 +246,6 @@ def run_agent_loop(agent, user_input: str) -> str:
         agent.reconcile_plan_progress()
     agent.apply_runtime_event(RuntimeEventType.BUDGET_EXHAUSTED)
     exhausted = agent.completion_handler.handle_budget_exhausted(
-        agent, reason="The maximum number of agent steps was reached."
+        agent, reason="已达到 Agent 步骤上限。"
     )
-    return exhausted.output or "Task incomplete."
+    return exhausted.output or "任务未完成。"

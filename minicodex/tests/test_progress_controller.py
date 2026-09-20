@@ -27,7 +27,7 @@ def test_interleaved_duplicate_calls_are_counted():
     )
 
     assert allowed is False
-    assert "repeated" in reason
+    assert "重复调用" in reason
 
 
 def test_meaningful_progress_resets_duplicate_phase():

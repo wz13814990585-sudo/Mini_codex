@@ -47,27 +47,27 @@ class ValidatorResolver:
         if isinstance(spec, TestVerificationSpec):
             if not spec.test_target or not self.test_target_resolver._exists(spec.test_target):
                 return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
-                                        "The bound focused test target is absent or stale for this workspace revision.")
+                                        "绑定的聚焦测试目标在本工作区版本中缺失或已过期。")
             return self._resolve_capability(candidates, "test.run", check, common,
                                             {"path": spec.test_target},
-                                            "The binder-selected TestVerificationSpec is the exact test target.")
+                                            "绑定器选定的 TestVerificationSpec 即为精确测试目标。")
         if isinstance(spec, CommandVerificationSpec):
             return self._resolve_capability(candidates, "process.run", check, common,
-                                            {"command": spec.command}, "The spec binds a configured command.")
+                                            {"command": spec.command}, "规格已绑定配置的命令。")
         if isinstance(spec, HttpVerificationSpec):
             service = self._service_arguments_from_spec(spec, profile)
             if service is None:
                 return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
-                                        "HTTP proof needs a safe profile start/dev command containing {port}.")
+                                        "HTTP 证明需要包含 {port} 的安全 profile start/dev 命令。")
             return self._resolve_capability(candidates, "service.validate", check, common, service,
-                                            "The typed HTTP contract supplies method, path, and expected status.")
+                                            "类型化 HTTP 契约提供了方法、路径与期望状态码。")
         if isinstance(spec, BrowserVerificationSpec):
             assertion_kind = spec.assertion_kind or ("text" if spec.expected_text else "")
             assertion_target = spec.assertion_target or spec.selector
             expected_value = spec.expected_value or spec.expected_text
             if not spec.action or not spec.selector or not assertion_kind or not assertion_target or not expected_value:
                 return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
-                                        "Interactive browser proof needs an action, selector, and post-action assertion.")
+                                        "交互式浏览器证明需要操作、选择器以及操作后断言。")
             action_args = ({"keypress": spec.value, "keypress_selector": spec.selector}
                            if spec.action == "keypress" else {"click_selector": spec.selector})
             return self._resolve_capability(candidates, "validation.browser", check, common,
@@ -75,42 +75,42 @@ class ValidatorResolver:
                                              "expected_text": spec.expected_text,
                                              "assertion_kind": assertion_kind,
                                              "expected_value": expected_value, **action_args},
-                                            "The typed browser interaction defines the exact assertion.")
+                                            "类型化浏览器交互定义了精确断言。")
         if isinstance(spec, FileVerificationSpec):
             name = self._first(candidates, "validation.static_web") if spec.path.endswith(".html") else None
             if name:
                 return self._result(name, {**common, "path": spec.path, "expected_text": spec.contains}, check,
-                                    "The file spec maps to static validation.")
+                                    "文件规格映射到静态验证。")
         if isinstance(spec, SemanticVerificationSpec):
             return self._resolve_capability(candidates, "validation.semantic", check, common,
                                             {"path": spec.path, "claim": spec.claim},
-                                            "The semantic claim requires the semantic validator.")
+                                            "语义声明需要语义验证器。")
         if check.capability == "process.run" and check.target:
             return self._resolve_capability(candidates, "process.run", check, common,
-                                            {"command": check.target}, "The plan supplies its exact configured command.")
+                                            {"command": check.target}, "计划提供了精确配置的命令。")
         if check.capability == "validation.browser":
             if not self._first(candidates, "validation.browser"):
                 return self._unresolved(check, ResolutionStatus.CAPABILITY_MISSING,
-                                        "Required capability validation.browser is unavailable.")
+                                        "所需能力 validation.browser 不可用。")
             return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
-                                    "Runtime browser proof has no typed interaction specification.")
+                                    "运行时浏览器证明缺少类型化交互规格。")
         if check.capability == "service.validate":
             name = self._first(candidates, "service.validate")
             service = self._service_arguments(check.observable, profile)
             if name and service:
                 return self._result(name, {**common, **service}, check,
-                                    "The runtime API check supplied a parseable method, path, and status observable.")
+                                    "运行时 API 检查提供了可解析的方法、路径与状态可观测量。")
         if check.capability == "validation.structure":
             html = next((p for p in check_paths if p.endswith(".html")), None)
             name = self._first(candidates, "validation.static_web") if html else None
             if name and html:
                 return self._result(name, {**common, "path": html, "expected_text": check.observable}, check,
-                                    "The structural check uses the static artifact validator.")
+                                    "结构性检查使用静态产物验证器。")
             command = self._structure_command(check, check_paths)
             name = self._first(candidates, "process.run")
             if name and command:
                 return self._result(name, {**common, "command": command}, check,
-                                    "The structural check has an exact local file assertion.")
+                                    "结构性检查具有精确的本地文件断言。")
         test_tool = self._first(candidates, "test.run")
         if test_tool:
             selected = self.test_target_resolver.resolve(check_paths, revision=revision)
@@ -120,11 +120,11 @@ class ValidatorResolver:
         command_tool = self._first(candidates, "process.run")
         if command_tool and check.target:
             return self._result(command_tool, {**common, "command": check.target}, check,
-                                "The bound proof target is an executable command.")
+                                "绑定的证明目标是可执行命令。")
         expected = check.capability
         return self._unresolved(check, ResolutionStatus.CAPABILITY_MISSING if expected not in candidates or not candidates[expected]
                                 else ResolutionStatus.TARGET_UNRESOLVED,
-                                f"No safe validator resolution exists for required capability {expected}.")
+                                f"所需能力 {expected} 不存在安全的验证器解析结果。")
 
     @staticmethod
     def _tools_by_capability(registry):
@@ -152,7 +152,7 @@ class ValidatorResolver:
         name = self._first(candidates, capability)
         if not name:
             return self._unresolved(check, ResolutionStatus.CAPABILITY_MISSING,
-                                    f"Required capability {capability} is unavailable.")
+                                    f"所需能力 {capability} 不可用。")
         return self._result(name, {**common, **arguments}, check, reason)
 
     @staticmethod

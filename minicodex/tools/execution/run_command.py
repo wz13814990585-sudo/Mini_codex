@@ -19,12 +19,10 @@ class RunCommandTool(
     capabilities = frozenset({"process.run"})
 
     description = (
-        "Run a shell command inside the current project "
-        "workspace through the MiniCodex process sandbox and "
-        "return stdout, stderr, exit code, and sandbox metadata. "
-        "Set purpose='acceptance' only when the command directly "
-        "checks the behavior requested by the user. "
-        "Do not use this to run pytest; call run_tests instead."
+        "通过 MiniCodex 进程沙箱在当前项目工作区执行 shell 命令，"
+        "返回标准输出、标准错误、退出码以及沙箱元数据。"
+        "仅当命令直接检查用户请求的行为时，才设置 purpose='acceptance'。"
+        "不要用此工具运行 pytest；请改用 run_tests。"
     )
 
     parameters = {
@@ -33,9 +31,9 @@ class RunCommandTool(
             "command": {
                 "type": "string",
                 "description": (
-                    "Shell command to execute, "
-                    "for example "
-                    "'python calculator.py'."
+                    "要执行的 shell 命令，"
+                    "例如 "
+                    "'python calculator.py'。"
                 ),
             },
             "purpose": {
@@ -46,9 +44,8 @@ class RunCommandTool(
                     "regression",
                 ],
                 "description": (
-                    "Command intent. Defaults to diagnostic; "
-                    "acceptance results are registered as "
-                    "targeted validation evidence."
+                    "命令意图。默认为 diagnostic；"
+                    "acceptance 结果会登记为定向验证证据。"
                 ),
             },
         },
@@ -117,8 +114,8 @@ class RunCommandTool(
             "regression",
         }:
             raise ValueError(
-                "purpose must be either "
-                "'diagnostic', 'acceptance', or 'regression'."
+                "purpose 必须为 "
+                "'diagnostic'、'acceptance' 或 'regression'。"
             )
 
         sandbox_result = (
@@ -142,8 +139,7 @@ class RunCommandTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Command could not be started "
-                    "inside the process sandbox."
+                    "无法在进程沙箱中启动命令。"
                 ),
                 data={
                     "command": (
@@ -172,8 +168,7 @@ class RunCommandTool(
                 error=(
                     sandbox_result.error
                     or (
-                        "Sandbox process "
-                        "could not start."
+                        "沙箱进程无法启动。"
                     )
                 ),
             )
@@ -190,9 +185,8 @@ class RunCommandTool(
             return ToolResult(
                 success=False,
                 summary=(
-                    "Command timed out after "
-                    f"{self.timeout} seconds "
-                    "inside the sandbox."
+                    f"命令在沙箱中超时"
+                    f"（{self.timeout} 秒）。"
                 ),
                 data={
                     "command": (
@@ -231,8 +225,7 @@ class RunCommandTool(
                     ),
                 },
                 error=(
-                    "Command execution "
-                    "timed out."
+                    "命令执行超时。"
                 ),
             )
 
@@ -267,18 +260,15 @@ class RunCommandTool(
         ):
 
             summary = (
-                "Command completed "
-                "successfully inside the "
-                "sandbox with exit code "
-                f"{exit_code}."
+                "命令在沙箱中成功完成，"
+                f"退出码为 {exit_code}。"
             )
 
         else:
 
             summary = (
-                "Command completed inside "
-                "the sandbox with exit code "
-                f"{exit_code}."
+                "命令在沙箱中已结束，"
+                f"退出码为 {exit_code}。"
             )
 
         if (
@@ -287,8 +277,7 @@ class RunCommandTool(
         ):
 
             summary += (
-                " Captured output was "
-                "truncated by the sandbox."
+                " 沙箱截断了捕获的输出。"
             )
 
         # =====================================================
@@ -297,7 +286,7 @@ class RunCommandTool(
 
         llm_parts = [
             (
-                "Exit code: "
+                "退出码："
                 f"{exit_code}"
             )
         ]
@@ -309,8 +298,7 @@ class RunCommandTool(
 
             llm_parts.append(
                 (
-                    "Sandbox note: captured "
-                    "output was truncated."
+                    "沙箱说明：捕获的输出已被截断。"
                 )
             )
 
@@ -320,7 +308,7 @@ class RunCommandTool(
 
             llm_parts.append(
                 (
-                    "STDOUT:\n"
+                    "标准输出：\n"
                     + stdout
                 )
             )
@@ -331,7 +319,7 @@ class RunCommandTool(
 
             llm_parts.append(
                 (
-                    "STDERR:\n"
+                    "标准错误：\n"
                     + stderr
                 )
             )

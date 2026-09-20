@@ -14,9 +14,8 @@ class WriteFileTool(
     capabilities = frozenset({"filesystem.write", "code.edit"})
 
     description = (
-        "Create a new text file or overwrite an existing "
-        "text file inside the current project. Use mainly "
-        "for new files or genuine full-file replacement."
+        "在当前项目中创建新文本文件，或覆盖已有文本文件。"
+        "主要用于新建文件或真正的整文件替换。"
     )
 
     parameters = {
@@ -25,15 +24,14 @@ class WriteFileTool(
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative path of the file to write, "
-                    "for example 'calculator.py'."
+                    "要写入的文件相对路径，"
+                    "例如 'calculator.py'。"
                 ),
             },
             "content": {
                 "type": "string",
                 "description": (
-                    "The complete text content that "
-                    "should be written to the file."
+                    "应写入文件的完整文本内容。"
                 ),
             },
         },
@@ -80,7 +78,7 @@ class WriteFileTool(
 
                 raise ValueError(
                     (
-                        "Cannot overwrite non-file path: "
+                        "无法覆盖非文件路径："
                         f"{path}"
                     )
                 )
@@ -147,15 +145,13 @@ class WriteFileTool(
         if existed_before:
 
             summary = (
-                f"Successfully overwrote "
-                f"and verified file: {path}"
+                f"已成功覆盖并校验文件：{path}"
             )
 
         else:
 
             summary = (
-                f"Successfully created "
-                f"and verified file: {path}"
+                f"已成功创建并校验文件：{path}"
             )
 
         return ToolResult(

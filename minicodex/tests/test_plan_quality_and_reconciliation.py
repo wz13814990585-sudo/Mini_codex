@@ -76,7 +76,7 @@ def test_process_only_plan_uses_fallback_after_one_regeneration():
 
     assert llm.calls == 2
     assert len(plan.steps) == 2
-    assert "implementation outcome" in plan.steps[0].description.lower()
+    assert "实现结果" in plan.steps[0].description
 
 
 def test_semantic_completion_requires_fresh_current_revision_evidence():

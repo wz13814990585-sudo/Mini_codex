@@ -11,8 +11,7 @@ def test_working_summary_initial_state():
     assert (
         summary.render()
         == (
-            "No important execution facts "
-            "have been recorded yet."
+            "尚未记录重要的执行事实。"
         )
     )
 
@@ -22,15 +21,15 @@ def test_working_summary_adds_unique_facts():
     summary = WorkingSummary()
 
     summary.add(
-        "Inspected file: app.py."
+        "已检查文件：app.py。"
     )
 
     summary.add(
-        "Inspected file: app.py."
+        "已检查文件：app.py。"
     )
 
     assert summary.items == [
-        "Inspected file: app.py."
+        "已检查文件：app.py。"
     ]
 
 
@@ -87,7 +86,7 @@ def test_record_read_file_success():
     )
 
     assert (
-        "Inspected file: app.py."
+        "已检查文件：app.py。"
         in summary.items
     )
 
@@ -145,7 +144,7 @@ def test_record_patch_file_success():
     )
 
     assert (
-        "Modified file successfully: app.py."
+        "已成功修改文件：app.py。"
         in summary.items
     )
 
@@ -170,7 +169,7 @@ def test_record_write_file_success():
     )
 
     assert (
-        "Modified file successfully: new.py."
+        "已成功修改文件：new.py。"
         in summary.items
     )
 
@@ -200,9 +199,8 @@ def test_record_run_tests_passed():
     )
 
     assert (
-        "Validation passed: "
-        "12 tests passed, "
-        "0 failures."
+        "验证通过：12 个测试通过，"
+        "0 个失败。"
         in summary.items
     )
 
@@ -232,10 +230,9 @@ def test_record_run_tests_failed():
     )
 
     assert (
-        "Validation still failing: "
-        "8 passed, "
-        "2 failed, "
-        "1 errors."
+        "验证仍失败：8 通过，"
+        "2 失败，"
+        "1 错误。"
         in summary.items
     )
 
@@ -262,8 +259,7 @@ def test_record_command_success():
     )
 
     assert (
-        "Command succeeded: "
-        "python app.py."
+        "命令成功：python app.py。"
         in summary.items
     )
 
@@ -294,8 +290,8 @@ def test_record_plan_step_completed():
     )
 
     assert (
-        "Completed plan step "
-        "2: Fix parser."
+        "已完成计划步骤 2："
+        "Fix parser。"
         in summary.items
     )
 
@@ -323,8 +319,7 @@ def test_record_replan():
     )
 
     assert (
-        "Implementation plan was revised. "
-        "Reason: Original assumption was wrong"
+        "实现计划已修订。原因：Original assumption was wrong"
         in summary.items
     )
 
@@ -334,11 +329,11 @@ def test_render_formats_summary():
     summary = WorkingSummary()
 
     summary.add(
-        "Inspected file: app.py."
+        "已检查文件：app.py。"
     )
 
     summary.add(
-        "Modified file successfully: app.py."
+        "已成功修改文件：app.py。"
     )
 
     rendered = (
@@ -346,12 +341,12 @@ def test_render_formats_summary():
     )
 
     assert (
-        "- Inspected file: app.py."
+        "- 已检查文件：app.py。"
         in rendered
     )
 
     assert (
-        "- Modified file successfully: app.py."
+        "- 已成功修改文件：app.py。"
         in rendered
     )
 
@@ -549,7 +544,7 @@ def test_loop_records_tool_fact_in_working_summary():
     assert result == "Done."
 
     assert (
-        "Inspected file: app.py."
+        "已检查文件：app.py。"
         in agent.working_summary.items
     )
 
@@ -605,7 +600,7 @@ def test_working_summary_is_visible_to_next_llm_turn():
                 )
 
                 assert (
-                    "Inspected file: app.py."
+                    "已检查文件：app.py。"
                     in combined_text
                 )
 

@@ -823,9 +823,11 @@ def _write_status(
     if failed:
         return "FAILED"
 
+    lowered = content.lower()
     if (
-        "successfully"
-        in content.lower()
+        "successfully" in lowered
+        or "成功" in content
+        or "已完成" in content
     ):
         return "OK"
 

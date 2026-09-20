@@ -80,7 +80,7 @@ def run_interactive(config: WorkspaceConfig, *, output_level="normal") -> None:
         print(f"[MiniCodex workspace] {config.workspace_root}")
     while True:
         try:
-            user_input = input("\nYou > ").strip()
+            user_input = input("\n你 > ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return
@@ -94,9 +94,10 @@ def run_interactive(config: WorkspaceConfig, *, output_level="normal") -> None:
 
 
 def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description="MiniCodex interactive coding agent")
-    parser.add_argument("--workspace", metavar="PATH", help="repository to inspect and edit (default: current directory)")
-    parser.add_argument("--output", choices=("normal", "verbose", "debug"), default="normal")
+    parser = argparse.ArgumentParser(description="MiniCodex 交互式编程助手")
+    parser.add_argument("--workspace", metavar="PATH", help="要检查与编辑的仓库（默认：当前目录）")
+    parser.add_argument("--output", choices=("normal", "verbose", "debug"), default="normal",
+                        help="输出详细程度：normal / verbose / debug")
     args = parser.parse_args(argv)
     try:
         config = WorkspaceConfig.create(args.workspace, application_root=APPLICATION_ROOT)

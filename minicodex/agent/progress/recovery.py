@@ -68,8 +68,8 @@ class RecoveryController:
             if replanned:
                 return (
                     (
-                        "Automatic replanning succeeded. "
-                        "Continue using the revised plan."
+                        "自动重新规划成功。"
+                        "请按修订后的计划继续。"
                     ),
                     True,
                 )
@@ -81,12 +81,12 @@ class RecoveryController:
                 or replan_result.get(
                     "message"
                 )
-                or "Unknown replanning failure."
+                or "未知的重新规划失败。"
             )
 
             return (
                 (
-                    "Automatic replanning failed: "
+                    "自动重新规划失败："
                     f"{failure_reason}"
                 ),
                 False,
@@ -106,8 +106,7 @@ class RecoveryController:
     ) -> str:
 
         return (
-            "The agent remains stalled after "
-            "strategy recovery and replanning."
+            "在策略恢复与重新规划之后，Agent 仍停滞不前。"
         )
 
     def _strategy_warning(
@@ -116,14 +115,13 @@ class RecoveryController:
     ) -> str:
 
         return (
-            "RECOVERY WARNING:\n"
-            "The current approach is not making "
-            "meaningful progress.\n"
-            f"Reason: {reason}\n\n"
-            "Do not repeat the same strategy. "
-            "Choose a materially different next action. "
-            "If sufficient evidence identifies a code defect, "
-            "make a targeted modification. "
-            "If the plan is based on an incorrect assumption, "
-            "call replan."
+            "【恢复策略警告】\n"
+            "当前做法没有带来有意义的进展。\n"
+            f"原因：{reason}\n\n"
+            "不要重复同一策略。"
+            "请选择实质不同的下一步动作。"
+            "若已有足够证据表明存在代码缺陷，"
+            "请做针对性修改。"
+            "若计划建立在错误假设上，"
+            "请调用 replan。"
         )

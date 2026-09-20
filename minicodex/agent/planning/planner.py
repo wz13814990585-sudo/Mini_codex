@@ -37,34 +37,33 @@ class Planner:
             {
                 "role": "system",
                 "content": (
-                    "You are a coding task planner. "
-                    "Break the user's request into a small "
-                    "number of concrete implementation steps. "
-                    "Give each step one independently verifiable "
-                    "outcome; do not bundle several game features "
-                    "or unrelated behaviors into one large step. "
-                    "Do not execute tools. "
-                    "Return valid JSON only."
+                    "你是编码任务规划器。"
+                    "将用户请求拆成少量具体的实现步骤。"
+                    "每一步只对应一个可独立验证的结果；"
+                    "不要把多个游戏功能或不相关行为捆成一步。"
+                    "不要执行工具。"
+                    "只返回合法 JSON。"
+                    "goal 与各 step 的 description 请使用简洁中文。"
                 ),
             },
             {
                 "role": "user",
                 "content": f"""
-Create an implementation plan for this request:
+为以下请求创建实现计划：
 
 {user_request}
 
-The executing agent has only {max_agent_steps} tool-using
-turns. Keep the plan short: at most {max_plan_steps}
-concrete steps. Prefer 4 steps or fewer.
+执行代理只有 {max_agent_steps} 次可使用工具的回合。
+保持计划简短：最多 {max_plan_steps} 个具体步骤。
+优先不超过 4 步。
 
-Return exactly this JSON format:
+严格按以下 JSON 格式返回：
 
 {{
-    "goal": "short goal",
+    "goal": "简短目标",
     "steps": [
         {{
-            "description": "step 1",
+            "description": "步骤 1",
             "expected_targets": ["relative/path"],
             "dependency_ids": [],
             "acceptance_criteria": [
@@ -73,7 +72,7 @@ Return exactly this JSON format:
             ]
         }},
         {{
-            "description": "semantic-only step 2",
+            "description": "仅语义判断的步骤 2",
             "expected_targets": ["relative/path"],
             "dependency_ids": [1],
             "acceptance_criteria": []
@@ -81,10 +80,10 @@ Return exactly this JSON format:
     ]
 }}
 
-Only use machine criteria that are definitely testable. Supported
-criterion types are file_exists, contains_text, contains_all,
-static_web_validation, and metric_at_least. Use an empty list when
-completion requires semantic judgment.
+只使用确实可机器检验的准则。支持的 criterion type 为
+file_exists、contains_text、contains_all、
+static_web_validation 与 metric_at_least。
+当完成需要语义判断时，使用空列表。
 """,
             },
         ]
@@ -98,7 +97,7 @@ completion requires semantic judgment.
 
         if quality.should_regenerate:
             details = "; ".join(
-                f"step {issue.step_id}: {issue.message}"
+                f"步骤 {issue.step_id}：{issue.message}"
                 for issue in quality.issues
             )
             messages.extend(
@@ -107,10 +106,10 @@ completion requires semantic judgment.
                     {
                         "role": "user",
                         "content": (
-                            "Regenerate the plan once. Replace process-only "
-                            "steps with concrete outcomes and split broad "
-                            "semantic steps into smaller independently "
-                            f"verifiable outcomes. Problems: {details}"
+                            "请重新生成一次计划。将仅流程性步骤"
+                            "替换为具体结果，并将过宽的语义步骤"
+                            "拆成更小、可独立验证的结果。"
+                            f"问题：{details}"
                         ),
                     },
                 ]
@@ -138,12 +137,12 @@ completion requires semantic judgment.
                         PlanStep(
                             id=1,
                             description=(
-                                "Requested implementation outcome exists"
+                                "所请求的实现结果已存在"
                             ),
                         ),
                         PlanStep(
                             id=2,
-                            description="Acceptance validation passes",
+                            description="验收验证通过",
                         ),
                     ]
                 for index, step in enumerate(steps, start=1):

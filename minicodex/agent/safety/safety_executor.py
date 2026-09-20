@@ -144,10 +144,8 @@ class SafetyToolExecutor:
                 result=ToolResult(
                     success=False,
                     summary=(
-                        "Tool execution was blocked "
-                        "because the safety policy "
-                        "could not produce a reliable "
-                        "decision."
+                        "工具执行已被拦截，因为安全策略"
+                        "无法给出可靠决策。"
                     ),
                     data={
                         "tool_name": (
@@ -253,9 +251,8 @@ class SafetyToolExecutor:
             result=ToolResult(
                 success=False,
                 summary=(
-                    f"Tool '{prepared.tool_name}' "
-                    "was blocked by the "
-                    "Harness safety policy."
+                    f"工具 '{prepared.tool_name}' "
+                    "已被 Harness 安全策略拦截。"
                 ),
                 data={
                     "tool_name": (
@@ -274,12 +271,12 @@ class SafetyToolExecutor:
                     decision.reason
                 ),
                 llm_content=(
-                    "Safety decision:\n"
-                    f"Level: "
+                    "安全决策：\n"
+                    f"级别："
                     f"{decision.level.value}\n"
-                    f"Rule: "
+                    f"规则："
                     f"{decision.rule}\n"
-                    f"Reason: "
+                    f"原因："
                     f"{decision.reason}"
                 ),
             ),

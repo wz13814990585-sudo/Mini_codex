@@ -464,7 +464,7 @@ class WorkingMemory:
             )
 
             description = (
-                f"Observed {path}"
+                f"已观察 {path}"
             )
 
             if (
@@ -475,9 +475,8 @@ class WorkingMemory:
             ):
 
                 description += (
-                    f" lines "
-                    f"{start_line}-"
-                    f"{end_line}"
+                    f" 第 {start_line}-"
+                    f"{end_line} 行"
                 )
 
             if (
@@ -486,11 +485,10 @@ class WorkingMemory:
             ):
 
                 description += (
-                    f" of "
-                    f"{total_lines}"
+                    f"（共 {total_lines} 行）"
                 )
 
-            description += "."
+            description += "。"
 
             if (
                 has_more
@@ -498,7 +496,7 @@ class WorkingMemory:
             ):
 
                 description += (
-                    " More lines remain unread."
+                    " 仍有更多行未读。"
                 )
 
             self.upsert(
@@ -565,8 +563,7 @@ class WorkingMemory:
                         MemoryKind.SEARCH
                     ),
                     value=(
-                        "Project text search "
-                        f"completed for: {query}."
+                        f"项目文本搜索已完成：{query}。"
                     ),
                     source_tool=(
                         tool_name
@@ -612,8 +609,7 @@ class WorkingMemory:
                         MemoryKind.SEARCH
                     ),
                     value=(
-                        "Symbol search "
-                        f"completed for: {query}."
+                        f"符号搜索已完成：{query}。"
                     ),
                     source_tool=(
                         tool_name
@@ -665,8 +661,7 @@ class WorkingMemory:
                 revision = None
 
             value = (
-                "Latest known successful "
-                f"Agent edit changed {path}"
+                f"最近一次成功的 Agent 编辑已变更 {path}"
             )
 
             if (
@@ -675,11 +670,10 @@ class WorkingMemory:
             ):
 
                 value += (
-                    f" for edit revision "
-                    f"{revision}"
+                    f"（编辑版本 {revision}）"
                 )
 
-            value += "."
+            value += "。"
 
             if (
                 data.get(
@@ -689,7 +683,7 @@ class WorkingMemory:
             ):
 
                 value += (
-                    " Checkpoint safety was degraded."
+                    " 检查点安全保护已降级。"
                 )
 
             self.upsert(
@@ -740,13 +734,13 @@ class WorkingMemory:
             outcome = self._normalize_text(
                 data.get("outcome")
             ) or "inconclusive"
-            validation_path = path or "unknown"
+            validation_path = path or "未知"
             self.upsert(
                 key=f"validation:acceptance:{validation_path}",
                 kind=MemoryKind.VALIDATION,
                 value=(
-                    f"Latest static web acceptance validation "
-                    f"for {validation_path}: {outcome}."
+                    f"{validation_path} 的最新静态 Web 验收验证："
+                    f"{outcome}。"
                 ),
                 source_tool=tool_name,
                 path=path or None,
@@ -811,7 +805,7 @@ class WorkingMemory:
             if not result.success:
 
                 state = (
-                    "execution failed"
+                    "执行失败"
                 )
 
             elif (
@@ -820,7 +814,7 @@ class WorkingMemory:
             ):
 
                 state = (
-                    "passed"
+                    "通过"
                 )
 
             elif (
@@ -829,22 +823,21 @@ class WorkingMemory:
             ):
 
                 state = (
-                    "failed"
+                    "失败"
                 )
 
             else:
 
                 state = (
-                    "inconclusive"
+                    "尚无定论"
                 )
 
             value = (
-                f"Latest {purpose} validation "
-                f"for {test_path}: "
-                f"{state}; "
-                f"{passed} passed, "
-                f"{failed} failed, "
-                f"{errors} errors."
+                f"{test_path} 的最新 {purpose} 验证："
+                f"{state}；"
+                f"{passed} 通过，"
+                f"{failed} 失败，"
+                f"{errors} 错误。"
             )
 
             self.upsert(
@@ -905,20 +898,20 @@ class WorkingMemory:
             if package:
                 if result.success:
                     state = (
-                        "already available"
+                        "已可用"
                         if data.get("already_available")
-                        else "installed and import-verified"
+                        else "已安装并通过导入验证"
                     )
                 else:
-                    state = "installation failed"
+                    state = "安装失败"
 
                 self.upsert(
                     key=f"dependency:{package}",
                     kind=MemoryKind.GENERAL,
                     value=(
-                        f"Python dependency {package} "
-                        f"({import_name or 'unknown import'}) "
-                        f"is {state}."
+                        f"Python 依赖 {package}"
+                        f"（{import_name or '未知导入名'}）"
+                        f"{state}。"
                     ),
                     source_tool=tool_name,
                     metadata={
@@ -963,7 +956,7 @@ class WorkingMemory:
                 ):
 
                     state = (
-                        "succeeded"
+                        "成功"
                     )
 
                 elif (
@@ -973,13 +966,13 @@ class WorkingMemory:
                 ):
 
                     state = (
-                        "completed unsuccessfully"
+                        "未成功完成"
                     )
 
                 else:
 
                     state = (
-                        "failed"
+                        "失败"
                     )
 
                 digest = (
@@ -1002,8 +995,7 @@ class WorkingMemory:
                         MemoryKind.COMMAND
                     ),
                     value=(
-                        f"Command {state}: "
-                        f"{command}."
+                        f"命令{state}：{command}。"
                     ),
                     source_tool=(
                         tool_name
@@ -1060,9 +1052,9 @@ class WorkingMemory:
                         MemoryKind.GIT
                     ),
                     value=(
-                        "Latest observed Git state: "
-                        f"dirty={dirty}; "
-                        "changed files="
+                        "最近观察到的 Git 状态："
+                        f"dirty={dirty}；"
+                        "变更文件="
                         + (
                             ", ".join(
                                 str(
@@ -1072,9 +1064,9 @@ class WorkingMemory:
                                 in changed
                             )
                             if changed
-                            else "(none)"
+                            else "（无）"
                         )
-                        + "."
+                        + "。"
                     ),
                     source_tool=(
                         tool_name
@@ -1103,7 +1095,7 @@ class WorkingMemory:
 
             diff_path = (
                 path
-                or "(all changes)"
+                or "（全部变更）"
             )
 
             staged = bool(
@@ -1123,9 +1115,8 @@ class WorkingMemory:
                     MemoryKind.GIT
                 ),
                 value=(
-                    "Git diff inspected for "
-                    f"{diff_path}; "
-                    f"staged={staged}."
+                    f"已检查 Git 差异：{diff_path}；"
+                    f"staged={staged}。"
                 ),
                 source_tool=(
                     tool_name
@@ -1175,12 +1166,11 @@ class WorkingMemory:
                     MemoryKind.PLAN
                 ),
                 value=(
-                    f"Plan step {step_id} "
-                    "completed"
+                    f"计划步骤 {step_id} 已完成"
                     + (
-                        f": {description}."
+                        f"：{description}。"
                         if description
-                        else "."
+                        else "。"
                     )
                 ),
                 source_tool=(
@@ -1221,10 +1211,9 @@ class WorkingMemory:
                     MemoryKind.PLAN
                 ),
                 value=(
-                    "Implementation plan "
-                    "was revised."
+                    "实现计划已修订。"
                     + (
-                        f" Reason: {reason}"
+                        f" 原因：{reason}"
                         if reason
                         else ""
                     )
@@ -1257,7 +1246,7 @@ class WorkingMemory:
                         "command"
                     )
                 )
-                or "(none)"
+                or "（无）"
             )
 
             error = (
@@ -1268,7 +1257,7 @@ class WorkingMemory:
                         None,
                     )
                 )
-                or "unknown failure"
+                or "未知失败"
             )
 
             self.upsert(
@@ -1281,10 +1270,8 @@ class WorkingMemory:
                     MemoryKind.FAILURE
                 ),
                 value=(
-                    f"Latest failure for "
-                    f"{tool_name} "
-                    f"on {target}: "
-                    f"{error}"
+                    f"{tool_name} 在 {target} 上的"
+                    f"最近失败：{error}"
                 ),
                 source_tool=(
                     tool_name
@@ -1382,7 +1369,7 @@ class WorkingMemory:
                     "reason"
                 )
             )
-            or "No reason supplied."
+            or "未提供原因。"
         )
 
         target = (
@@ -1416,9 +1403,9 @@ class WorkingMemory:
                 MemoryKind.SAFETY
             ),
             value=(
-                f"Safety {level}: "
-                f"{tool_name}; "
-                f"rule={rule}; "
+                f"安全 {level}："
+                f"{tool_name}；"
+                f"rule={rule}；"
                 f"{reason}"
             ),
             source_tool=(
@@ -1450,8 +1437,7 @@ class WorkingMemory:
         if not self.entries:
 
             return (
-                "No structured working-memory "
-                "state is currently available."
+                "当前没有可用的结构化工作记忆状态。"
             )
 
         limit = (

@@ -270,7 +270,7 @@ class MiniCodexAgent:
         )
 
         self.repo_map_text = (
-            "Repository map unavailable."
+            "仓库地图不可用。"
         )
 
         # =====================================================
@@ -688,10 +688,10 @@ class MiniCodexAgent:
             self.execution_policy.max_steps,
         )
         print(
-            f"\n[Execution Mode] {self.execution_policy.mode.value.upper()}"
+            f"\n[执行模式] {self.execution_policy.mode.value.upper()}"
         )
         if self.execution_route is not None:
-            print(f"[Routing] {self.execution_route.reason}")
+            print(f"[路由] {self.execution_route.reason}")
 
         # =====================================================
         # Reset Task State
@@ -807,7 +807,7 @@ class MiniCodexAgent:
         self._repo_map_revision = None
         fast_mode = self.execution_policy.mode == ExecutionMode.FAST
         if fast_mode:
-            self.repo_map_text = "Repository map omitted in FAST mode."
+            self.repo_map_text = "FAST 模式下已省略仓库地图。"
         else:
             self._refresh_repo_map(force=True)
 
@@ -849,9 +849,9 @@ class MiniCodexAgent:
 
                 initial = self.reconcile_plan_progress()
                 if initial["completed"]:
-                    print("\n[Initial Plan Reconciliation]")
+                    print("\n[初始计划核对]")
                     print(
-                        "Already-satisfied steps: "
+                        "已满足的步骤："
                         + ", ".join(
                             str(item["step_id"])
                             for item in initial["completed"]
@@ -861,7 +861,7 @@ class MiniCodexAgent:
             except Exception as e:
 
                 print(
-                    f"\n[Planning Failed] "
+                    f"\n[规划失败] "
                     f"{type(e).__name__}: "
                     f"{e}"
                 )
@@ -920,7 +920,7 @@ class MiniCodexAgent:
             RuntimeEventType.PLAN_ACTIVATED,
             plan_revision=self.plan_version,
         )
-        self.working_summary.add(f"Late planning activated: {reason}")
+        self.working_summary.add(f"已延迟激活规划：{reason}")
         self._print_plan(self.active_plan)
         return True
 
@@ -983,7 +983,7 @@ class MiniCodexAgent:
         ):
 
             self.repo_map_text = (
-                "Repository map unavailable."
+                "仓库地图不可用。"
             )
 
             return
@@ -1016,7 +1016,7 @@ class MiniCodexAgent:
         except Exception as e:
 
             self.repo_map_text = (
-                "Repository map unavailable: "
+                "仓库地图不可用："
                 f"{type(e).__name__}: "
                 f"{e}"
             )
@@ -1097,10 +1097,10 @@ class MiniCodexAgent:
                 False,
             ):
                 return (
-                    "semantic-only; broad step requires "
-                    "explicit completion"
+                    "仅语义完成；宽泛步骤需要"
+                    "显式完成"
                 )
-            return "semantic-only"
+            return "仅语义完成"
 
         return json.dumps(
             criteria,
@@ -1118,7 +1118,7 @@ class MiniCodexAgent:
     ) -> None:
 
         print(
-            f"\n[Plan] "
+            f"\n[计划] "
             f"{plan.goal}"
         )
 
@@ -1140,5 +1140,5 @@ class MiniCodexAgent:
                 [],
             ):
                 print(
-                    f"   [Plan Quality] {warning}"
+                    f"   [计划质量] {warning}"
                 )

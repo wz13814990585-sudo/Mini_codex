@@ -31,47 +31,47 @@ class RelevantPathResolver:
 
         route = getattr(agent, "execution_route", None)
         for path in getattr(route, "target_paths", ()) or ():
-            add(path, "requested target")
+            add(path, "请求的目标")
 
         awareness = getattr(agent, "git_awareness", None)
         if awareness is not None:
             try:
                 for path in awareness.task_state().agent_touched_files:
-                    add(path, "agent edit")
+                    add(path, "Agent 编辑")
             except Exception:
                 pass
 
         state = getattr(getattr(agent, "validation_pipeline", None), "state", None)
         evidence = getattr(state, "latest_evidence", None)
         if evidence is not None:
-            add(getattr(evidence, "path", None), "validation target")
+            add(getattr(evidence, "path", None), "验证目标")
             details = getattr(evidence, "details", {}) or {}
             for path in details.get("failure_paths", ()):
-                add(path, "validation failure")
+                add(path, "验证失败")
             for key in ("manifest", "dependency_manifest", "requirements_path"):
-                add(details.get(key), "dependency failure evidence")
+                add(details.get(key), "依赖失败证据")
 
         plan = getattr(agent, "active_plan", None)
         if plan is not None:
             for step in plan.all_steps():
                 for criterion in getattr(step, "acceptance_criteria", ()) or ():
-                    add(criterion.get("path"), "acceptance criterion")
+                    add(criterion.get("path"), "验收标准")
 
         pending = getattr(getattr(agent, "edit_retry", None), "pending", None)
         if pending is not None:
-            add(getattr(pending, "path", None), "stale edit target")
+            add(getattr(pending, "path", None), "过期编辑目标")
 
         for path in getattr(agent, "latest_symbol_recovery_paths", ()) or ():
-            add(path, "symbol-search recovery")
+            add(path, "符号搜索恢复")
 
         dependency = getattr(agent, "latest_dependency_resolution", None)
         if dependency is not None and getattr(dependency, "action", "") == "update_manifest_first":
-            add(getattr(dependency, "preferred_manifest", None), "requested dependency update")
+            add(getattr(dependency, "preferred_manifest", None), "请求的依赖更新")
 
         if evidence is not None and details.get("failure_type") == "missing_dependency":
             for manifest in ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg"):
                 if (self.workspace / manifest).is_file():
-                    add(manifest, "dependency failure evidence")
+                    add(manifest, "依赖失败证据")
 
         return RelevantPathSet(
             paths=tuple(reasons),

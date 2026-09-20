@@ -24,10 +24,11 @@ metadata is itself part of the requirement.
 
 - Task success requires the independent oracle, the normal completion gate,
   budgets, and an error-free run.
-- First-pass success requires an edit, the first post-edit targeted validation
-  to pass, the independent oracle to pass, and no later edit, repair, or
-  rollback. Explicit already-satisfied cases are excluded from this rate's
-  denominator.
+- First-pass success requires the first post-edit validation whose purpose is
+  `ACCEPTANCE` and scope is `TARGETED` to pass on the final edit revision. The
+  independent oracle must pass, with no repair/recovery or rollback. A
+  regression-only or full-suite pass does not qualify. Explicit
+  already-satisfied cases are excluded from this rate's denominator.
 - Recovery is entered when a failed/inconclusive post-edit validation is
   followed by a corrective edit, or the existing repair path records an
   attempt. Recovery succeeds only when corrective action occurred and the final
@@ -36,6 +37,15 @@ metadata is itself part of the requirement.
   are reported separately.
 - False completion means a successful agent terminal outcome followed by an
   independent oracle failure.
+- Unauthorized edit means an inspect-only or informational task changed a
+  file. Wrong-file edit is separate: a modify task touched only paths outside
+  its fixture's deterministic expected implementation scope. Ambiguous cases
+  leave strict wrong-file detection disabled, and allowed supporting edits do
+  not become false positives.
+- A failed tool call is a canonical tool result with `success == false`, such
+  as malformed arguments, an execution exception, or a policy block. A
+  validator that executes successfully but reports failing tests remains a
+  successful tool call and a failed validation outcome.
 - Agent steps are main loop turns. They are distinct from tool calls and all
   LLM calls.
 - Cost remains `null` unless a provider reports trustworthy pricing data.
@@ -58,6 +68,17 @@ that MiniCodex improves a metric.
 ## Live CLI
 
 Live execution requires explicit provider, model, and credential configuration:
+
+Before any model is constructed or task starts, the CLI checks the environment
+needed by the selected fixtures. Python and pytest are always checked; FastAPI,
+Flask, packaging, node, and npm are checked only when selected cases require
+them. A failed preflight exits with status 2 and emits no benchmark results.
+Successful preflight details are stored under `metadata.environment`. Run the
+same check without credentials or provider calls with:
+
+```bash
+python -m minicodex.evaluation.run_benchmark --profile both --smoke --preflight-only
+```
 
 ```bash
 python -m minicodex.evaluation.run_benchmark \

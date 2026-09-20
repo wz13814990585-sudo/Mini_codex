@@ -22,14 +22,40 @@ def classify_edit_exception(tool_name: str, error: Exception) -> EditFailureType
         return EditFailureType.UNKNOWN
     if isinstance(error, PermissionError):
         return EditFailureType.PERMISSION_DENIED
+    # Prefer structured failure codes when tools attach them.
+    failure_type = getattr(error, "failure_type", None)
+    if isinstance(failure_type, EditFailureType):
+        return failure_type
+    if isinstance(failure_type, str):
+        try:
+            return EditFailureType(failure_type)
+        except ValueError:
+            pass
     text = str(error).casefold()
-    if "would not change" in text:
+    if (
+        "would not change" in text
+        or "不会改变" in text
+        or "未产生任何变更" in text
+        or "没有产生变更" in text
+    ):
         return EditFailureType.NO_CHANGE
-    if "line range" in text or "start_line" in text or "end_line" in text:
+    if (
+        "line range" in text
+        or "start_line" in text
+        or "end_line" in text
+        or "行范围" in text
+    ):
         return EditFailureType.INVALID_RANGE
-    if "ambiguous" in text or "multiple symbol" in text:
+    if (
+        "ambiguous" in text
+        or "multiple symbol" in text
+        or "匹配不唯一" in text
+        or "多个符号" in text
+    ):
         return EditFailureType.AMBIGUOUS_MATCH
-    if "symbol" in text and ("not found" in text or "no exact" in text):
+    if ("symbol" in text or "符号" in text) and (
+        "not found" in text or "no exact" in text or "未找到" in text or "不存在" in text
+    ):
         return EditFailureType.SYMBOL_NOT_FOUND
     return EditFailureType.UNKNOWN
 

@@ -15,6 +15,7 @@ from .benchmark_v1 import BENCHMARK_VERSION, catalog_by_id, fixtures, smoke_fixt
 from .harness import EvaluationHarness
 from .models import EvaluationSummary
 from .profiles import EvaluationProfile, benchmark_policy
+from .preflight import benchmark_preflight
 from .reporting import (
     compare_profiles,
     comparison_markdown,
@@ -39,7 +40,7 @@ def _git_head() -> str | None:
         return None
 
 
-def _metadata(args, *, profile: str, task_count: int, timestamp: str) -> dict:
+def _metadata(args, *, profile: str, task_count: int, timestamp: str, environment=None) -> dict:
     return {
         "benchmark_version": BENCHMARK_VERSION,
         "timestamp": timestamp,
@@ -53,6 +54,7 @@ def _metadata(args, *, profile: str, task_count: int, timestamp: str) -> dict:
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "task_count": task_count,
+        "environment": environment,
     }
 
 
@@ -65,7 +67,7 @@ def _select(args):
         known = catalog_by_id()
         missing = requested - set(known)
         if missing:
-            raise ValueError(f"Unknown case IDs: {', '.join(sorted(missing))}")
+            raise ValueError(f"未知用例 ID：{', '.join(sorted(missing))}")
         selected = [fixture for fixture in selected if fixture.case.case_id in requested]
     return selected
 
@@ -83,7 +85,7 @@ def _cleanup_oracle(root: Path) -> None:
 
 
 def _run_profile(args, *, selected, profile: EvaluationProfile, experiment_root: Path,
-                 timestamp: str, api_key: str) -> EvaluationSummary:
+                 timestamp: str, api_key: str, preflight) -> EvaluationSummary:
     all_results = []
     for run_index in range(1, args.runs + 1):
         run_root = experiment_root / profile.value / f"run_{run_index:03d}"
@@ -132,7 +134,13 @@ def _run_profile(args, *, selected, profile: EvaluationProfile, experiment_root:
         write_jsonl(raw_path, summary.results)
         all_results.extend(summary.results)
 
-    metadata = _metadata(args, profile=profile.value, task_count=len(selected), timestamp=timestamp)
+    metadata = _metadata(
+        args,
+        profile=profile.value,
+        task_count=len(selected),
+        timestamp=timestamp,
+        environment=preflight.to_dict(),
+    )
     return EvaluationSummary(
         run_name=f"{BENCHMARK_VERSION}:{profile.value}",
         results=all_results,
@@ -156,23 +164,30 @@ def _save_profile(summary: EvaluationSummary, experiment_root: Path) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the opt-in MiniCodex Benchmark V1")
-    parser.add_argument("--profile", choices=("baseline", "minicodex", "both"), required=True)
-    parser.add_argument("--provider", required=True,
-                        help="Recorded provider label; live execution is never inferred from .env alone.")
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--base-url")
-    parser.add_argument("--api-key-env", default="DEEPSEEK_API_KEY")
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--max-steps", type=int, default=20)
-    parser.add_argument("--runs", type=int, default=1)
-    parser.add_argument("--smoke", action="store_true")
+    parser = argparse.ArgumentParser(description="运行可选的 MiniCodex Benchmark V1")
+    parser.add_argument("--profile", choices=("baseline", "minicodex", "both"), required=True,
+                        help="评测配置：baseline、minicodex，或同时运行两者。")
+    parser.add_argument("--provider",
+                        help="记录用的提供商标签；不会仅根据 .env 推断并启动在线执行。")
+    parser.add_argument("--model", help="模型名称。")
+    parser.add_argument("--base-url", help="非 DeepSeek 提供商所需的 API Base URL。")
+    parser.add_argument("--api-key-env", default="DEEPSEEK_API_KEY",
+                        help="存放 API 密钥的环境变量名。")
+    parser.add_argument("--temperature", type=float, default=0.0, help="采样温度。")
+    parser.add_argument("--max-steps", type=int, default=20, help="每个任务的最大主循环步数。")
+    parser.add_argument("--runs", type=int, default=1, help="每个配置的重复运行次数。")
+    parser.add_argument("--smoke", action="store_true", help="仅运行冒烟用例子集。")
     parser.add_argument("--category", choices=("create", "modify", "fix", "refactor", "dependency",
-                                                "follow_up", "already_satisfied"))
-    parser.add_argument("--case-id", action="append", default=[])
-    parser.add_argument("--output", type=Path, default=Path("benchmark_results"))
-    parser.add_argument("--experiment-id")
-    parser.add_argument("--output-level", choices=("normal", "verbose", "debug"), default="normal")
+                                                "follow_up", "already_satisfied"),
+                        help="按用例类别过滤。")
+    parser.add_argument("--case-id", action="append", default=[], help="按用例 ID 过滤（可重复指定）。")
+    parser.add_argument("--output", type=Path, default=Path("benchmark_results"),
+                        help="评测结果输出根目录。")
+    parser.add_argument("--experiment-id", help="实验 ID；默认使用 UTC 时间戳。")
+    parser.add_argument("--output-level", choices=("normal", "verbose", "debug"), default="normal",
+                        help="Agent 输出详细程度。")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="仅校验所选用例所需基础设施，不使用凭证、不调用模型。")
     return parser
 
 
@@ -180,24 +195,32 @@ def main(argv=None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.runs < 1 or args.max_steps < 1:
-        parser.error("--runs and --max-steps must be positive")
-    if args.provider.lower() != "deepseek" and not args.base_url:
-        parser.error("non-DeepSeek providers require an explicit --base-url")
-    api_key = os.getenv(args.api_key_env, "").strip()
-    if not api_key:
-        parser.error(f"live benchmark requires API credentials in {args.api_key_env}")
+        parser.error("--runs 与 --max-steps 必须为正数")
     try:
         selected = _select(args)
     except ValueError as exc:
         parser.error(str(exc))
     if not selected:
-        parser.error("no benchmark cases matched the selection")
+        parser.error("没有匹配当前筛选条件的基准用例")
+    preflight = benchmark_preflight(selected)
+    print(preflight.render())
+    if not preflight.ready:
+        raise SystemExit(2)
+    if args.preflight_only:
+        return
+    if not args.provider or not args.model:
+        parser.error("在线基准评测需要显式指定 --provider 与 --model")
+    if args.provider.lower() != "deepseek" and not args.base_url:
+        parser.error("非 DeepSeek 提供商需要显式指定 --base-url")
+    api_key = os.getenv(args.api_key_env, "").strip()
+    if not api_key:
+        parser.error(f"在线基准评测需要在环境变量 {args.api_key_env} 中提供 API 凭证")
 
     timestamp = datetime.now(timezone.utc).isoformat()
     experiment_id = args.experiment_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     experiment_root = args.output / BENCHMARK_VERSION / experiment_id
     if experiment_root.exists():
-        parser.error(f"experiment output already exists: {experiment_root}")
+        parser.error(f"实验输出目录已存在：{experiment_root}")
     (experiment_root / "summaries").mkdir(parents=True)
 
     profiles = ([EvaluationProfile.BASELINE, EvaluationProfile.MINICODEX]
@@ -205,7 +228,8 @@ def main(argv=None) -> None:
     summaries = {}
     for profile in profiles:
         summary = _run_profile(args, selected=selected, profile=profile,
-                               experiment_root=experiment_root, timestamp=timestamp, api_key=api_key)
+                               experiment_root=experiment_root, timestamp=timestamp, api_key=api_key,
+                               preflight=preflight)
         _save_profile(summary, experiment_root)
         summaries[profile.value] = summary
 

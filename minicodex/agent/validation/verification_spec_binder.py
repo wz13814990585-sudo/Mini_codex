@@ -24,7 +24,7 @@ class VerificationSpecBinder:
 
     def bind(self, check, requirement, *, session, impact=None):
         if check.spec is not None and (check.spec_source in {"explicit", "requirement"} or check.spec_bound_revision == session.revision):
-            return BindingResult(check, "already bound")
+            return BindingResult(check, "已绑定")
         impact_tests = getattr(impact, "tests", ()) if impact else ()
         paths = tuple(dict.fromkeys((*getattr(requirement, "paths", ()), *getattr(session, "recent_paths", ()),
                                      *impact_tests)))
@@ -38,8 +38,8 @@ class VerificationSpecBinder:
                 return BindingResult(replace(check, spec=TestVerificationSpec(
                     source_path=(getattr(requirement, "paths", ()) or ("",))[0], test_target=selected),
                     spec_source="test_index", spec_bound_revision=session.revision),
-                    f"bound ranked focused existing test {selected}")
-        return BindingResult(check, "no reliable repository-derived spec")
+                    f"已绑定排序后的聚焦已有测试 {selected}")
+        return BindingResult(check, "没有可靠的仓库派生规格")
 
     def _rank_test_target(self, requirement, session, impact):
         """Select one focused test only when the deterministic winner is clear."""
@@ -72,7 +72,7 @@ class VerificationSpecBinder:
         html_candidates = tuple(dict.fromkeys(path for path in (*paths, *session.recent_paths, *session.paths) if path.endswith(".html")))
         html = next((path for path in html_candidates if path in paths or path in session.recent_paths), "")
         if not html:
-            return BindingResult(check, "no HTML target discovered")
+            return BindingResult(check, "未发现 HTML 目标")
         content = self._read(session, html)
         state_candidates = re.findall(r"(?:id|data-testid|aria-label)=[\"']([^\"']+)[\"']", content, re.I)
         terms = set(re.findall(r"[a-z][a-z0-9_-]+", f"{requirement.description} {requirement.observable}".casefold()))
@@ -84,12 +84,12 @@ class VerificationSpecBinder:
         expected = (re.search(r"(?:to|text to|state to)\s+[\"']?([\w-]+)", requirement.observable, re.I)
                     or re.search(r"\b(?:moves?|changes?)\b.*?\b(left|right|up|down|moved)\b", requirement.observable, re.I))
         if not (state and (key or click) and expected):
-            return BindingResult(check, "browser post-action selector or expected state was not discovered")
+            return BindingResult(check, "未发现浏览器操作后选择器或期望状态")
         action, value, selector = ("keypress", key.group(0), f"#{state}") if key else ("click", "", f"#{click.group(1)}")
         return BindingResult(replace(check, spec=BrowserVerificationSpec(
             html, selector, action, value, expected.group(1), "text", f"#{state}", expected.group(1)),
             spec_source="repository", spec_bound_revision=session.revision),
-            "bound browser state transition from inspected DOM")
+            "已根据检查到的 DOM 绑定浏览器状态转换")
 
     def _bind_http(self, check, requirement, session, paths):
         candidates = []
@@ -110,8 +110,8 @@ class VerificationSpecBinder:
             if best[0] > 0 and (len(candidates) == 1 or best[0] > candidates[1][0]):
                 return BindingResult(replace(check, spec=HttpVerificationSpec(best[1], best[2], int(requested_status.group(1))),
                                              spec_source="repository", spec_bound_revision=session.revision),
-                                     f"bound ranked HTTP route {best[1]} {best[2]} from {best[3]}")
-        return BindingResult(check, "no unambiguous route and status contract discovered")
+                                     f"已从 {best[3]} 绑定排序后的 HTTP 路由 {best[1]} {best[2]}")
+        return BindingResult(check, "未发现明确的路由与状态契约")
 
     @staticmethod
     def _read(session, path):

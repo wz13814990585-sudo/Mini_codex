@@ -60,7 +60,7 @@ class ToolExecutor:
 
             if len(raw_arguments) > self.MAX_TOOL_ARGUMENT_CHARS:
                 return PreparedToolCall(tool_name=tool_name, arguments={}, error=ToolResult(
-                    success=False, summary=f"Arguments for tool '{tool_name}' exceed the size limit.",
+                    success=False, summary=f"工具 '{tool_name}' 的参数超过大小限制。",
                     data={"tool_name": tool_name, "failure_type": "argument_too_large", "max_chars": self.MAX_TOOL_ARGUMENT_CHARS}))
 
             arguments = json.loads(
@@ -74,8 +74,7 @@ class ToolExecutor:
                 error=ToolResult(
                     success=False,
                     summary=(
-                        f"Could not parse arguments "
-                        f"for tool '{tool_name}'."
+                        f"无法解析工具 '{tool_name}' 的参数。"
                     ),
                     data={
                         "tool_name": tool_name,
@@ -106,9 +105,8 @@ class ToolExecutor:
                 error=ToolResult(
                     success=False,
                     summary=(
-                        f"Arguments for tool "
-                        f"'{tool_name}' must be "
-                        "a JSON object."
+                        f"工具 '{tool_name}' 的参数"
+                        "必须是 JSON 对象。"
                     ),
                     data={
                         "tool_name": tool_name,
@@ -120,8 +118,7 @@ class ToolExecutor:
                         ),
                     },
                     error=(
-                        "Tool arguments must decode "
-                        "to a dictionary."
+                        "工具参数必须解码为字典。"
                     ),
                 ),
             )
@@ -129,7 +126,7 @@ class ToolExecutor:
         schema_error = self._schema_error(tool_name, arguments)
         if schema_error:
             return PreparedToolCall(tool_name=tool_name, arguments={}, error=ToolResult(
-                success=False, summary=f"Arguments for tool '{tool_name}' failed schema validation.",
+                success=False, summary=f"工具 '{tool_name}' 的参数未通过 schema 校验。",
                 data={"tool_name": tool_name, "failure_type": "schema_validation"}, error=schema_error))
 
         return PreparedToolCall(
@@ -205,8 +202,8 @@ class ToolExecutor:
             result = ToolResult(
                 success=False,
                 summary=(
-                    f"Tool '{prepared.tool_name}' "
-                    "failed during execution."
+                    f"工具 '{prepared.tool_name}' "
+                    "执行失败。"
                 ),
                 data={
                     "tool_name": (
@@ -237,8 +234,8 @@ class ToolExecutor:
             result = ToolResult(
                 success=False,
                 summary=(
-                    f"Tool '{prepared.tool_name}' "
-                    "returned an invalid result type."
+                    f"工具 '{prepared.tool_name}' "
+                    "返回了无效的结果类型。"
                 ),
                 data={
                     "tool_name": (
@@ -254,8 +251,7 @@ class ToolExecutor:
                     ),
                 },
                 error=(
-                    "Every tool must return "
-                    "ToolResult."
+                    "每个工具都必须返回 ToolResult。"
                 ),
             )
 

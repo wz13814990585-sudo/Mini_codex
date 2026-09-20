@@ -206,7 +206,7 @@ def test_replace_lines_rejects_range_past_eof(
 
     with pytest.raises(
         ValueError,
-        match="exceeds",
+        match="超出",
     ):
 
         tool.execute(

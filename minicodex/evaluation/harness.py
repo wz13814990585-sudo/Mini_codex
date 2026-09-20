@@ -6,6 +6,7 @@ from collections.abc import (
     Callable,
     Iterable,
 )
+import fnmatch
 import time
 
 from ..agent.validation import (
@@ -504,21 +505,36 @@ class EvaluationHarness:
                               for item in failed_evidence)
         recovery_entered = bool(failed_evidence and (repair_attempts > 0 or corrective_edit))
         recovery_success = bool(recovery_entered and (repair_attempts > 0 or corrective_edit) and oracle_passed)
-        first_targeted = next((
+        first_targeted_acceptance = next((
             item for item in evidence_history
             if int(getattr(item, "edit_revision", 0) or 0) > 0
+            and getattr(getattr(item, "purpose", None), "value", getattr(item, "purpose", None)) == "acceptance"
             and getattr(getattr(item, "scope", None), "value", getattr(item, "scope", None))
-            in {"targeted", "full"}
+            == "targeted"
         ), None)
         first_pass_success = bool(
             edit_count > 0
-            and first_targeted is not None
-            and getattr(getattr(first_targeted, "outcome", None), "value",
-                        getattr(first_targeted, "outcome", None)) == "passed"
-            and edit_revision == int(getattr(first_targeted, "edit_revision", -1))
+            and first_targeted_acceptance is not None
+            and getattr(getattr(first_targeted_acceptance, "outcome", None), "value",
+                        getattr(first_targeted_acceptance, "outcome", None)) == "passed"
+            and edit_revision == int(getattr(first_targeted_acceptance, "edit_revision", -1))
             and not recovery_entered
+            and repair_attempts == 0
             and int(metric("rollback_count", 0) or 0) == 0
             and oracle_passed
+        )
+        unauthorized_edit = bool(intent != TaskIntent.MODIFY and edit_count > 0)
+        edited_paths = tuple(metric("edited_paths", ()) or ())
+        wrong_file_edit = bool(
+            intent == TaskIntent.MODIFY
+            and edit_count > 0
+            and edited_paths
+            and case.expected_edit_paths
+            and not any(
+                self._path_matches(path, expected)
+                for path in edited_paths
+                for expected in case.expected_edit_paths
+            )
         )
         failure_category = self._failure_category(
             passed=passed, error=error, checks_passed=checks_passed,
@@ -526,6 +542,11 @@ class EvaluationHarness:
             validation_state=validation_state, metrics=execution_metrics,
             false_completion=false_completion,
             oracle_infrastructure_failed=oracle_infrastructure_failed,
+            unauthorized_edit=unauthorized_edit,
+            wrong_file_edit=wrong_file_edit,
+            evidence_history=evidence_history,
+            plan=plan,
+            blockers=tuple(getattr(agent, "concrete_blockers", ()) or ()),
         )
         failure_reason = self._failure_reason(
             category=failure_category,
@@ -533,6 +554,7 @@ class EvaluationHarness:
             check_results=check_results,
             completion_ready=completion_ready,
             metrics=execution_metrics,
+            blockers=tuple(getattr(agent, "concrete_blockers", ()) or ()),
         )
 
         return EvaluationResult(
@@ -593,7 +615,8 @@ class EvaluationHarness:
             final_completion_reason=metric("final_completion_reason"),
             final_reason_code=metric("final_reason_code"),
             false_completion=false_completion,
-            wrong_edit=bool(intent != TaskIntent.MODIFY and edit_count > 0),
+            unauthorized_edit=unauthorized_edit,
+            wrong_file_edit=wrong_file_edit,
             routing_llm_calls=int(metric("routing_llm_calls", 0) or 0),
             requirements_llm_calls=int(metric("requirements_llm_calls", 0) or 0),
             semantic_judge_llm_calls=int(metric("semantic_judge_llm_calls", 0) or 0),
@@ -654,6 +677,8 @@ class EvaluationHarness:
                                      + int(metric("requirements_llm_calls", 0) or 0)
                                      + int(metric("semantic_judge_llm_calls", 0) or 0)),
             other_control_llm_calls=max(0, llm_calls - int(metric("agent_steps", 0) or 0)),
+            failed_tool_call_count=int(metric("failed_tool_call_count", 0) or 0),
+            failed_tool_call_rate=float(metric("failed_tool_call_rate", 0.0) or 0.0),
             failure_reason=failure_reason,
             trace_path=getattr(agent, "_benchmark_trace_path", None),
         )
@@ -661,7 +686,8 @@ class EvaluationHarness:
     @staticmethod
     def _failure_category(*, passed, error, checks_passed, completion_ready, edit_count,
                           validation_state, metrics, false_completion=False,
-                          oracle_infrastructure_failed=False):
+                          oracle_infrastructure_failed=False, unauthorized_edit=False,
+                          wrong_file_edit=False, evidence_history=(), plan=None, blockers=()):
         if passed:
             return None
         if error:
@@ -670,41 +696,74 @@ class EvaluationHarness:
             return "environment_failure"
         if false_completion:
             return "false_completion"
+        if unauthorized_edit:
+            return "unauthorized_edit"
+        if wrong_file_edit:
+            return "wrong_file_edit"
         reason = str(getattr(metrics, "final_reason_code", "") or "")
-        if bool(getattr(metrics, "wrong_edit", False)):
-            return "wrong_file"
         if "routing" in reason:
             return "routing_failure"
-        if "requirement" in reason:
+        if "requirement" in reason or reason == "dependency_manifest_required":
             return "requirement_failure"
+        if "plan" in reason:
+            return "planning_failure"
+        if any(value in reason for value in ("symbol_not_found", "ambiguous_match", "invalid_range")):
+            return "target_location_failure"
+        blocker_text = " ".join(str(item) for item in blockers).lower()
+        if "capability" in reason or "capability" in blocker_text:
+            return "capability_missing"
+        if any(value in blocker_text for value in ("environment", "missing_credential", "permission_denied")):
+            return "environment_failure"
         if "spec" in reason or "binding" in reason:
             return "spec_binding_failure"
-        if "capability" in reason:
-            return "capability_missing"
-        if "edit" in reason and "fail" in reason:
-            return "edit_failure"
-        if getattr(metrics, "max_steps_exhausted", False):
-            return "max_steps"
         if int(getattr(metrics, "wrong_validation_target_count", 0) or 0) > 0:
             return "wrong_validation_target"
-        if not edit_count:
-            return "no_tool_loop" if int(getattr(metrics, "tool_call_count", 0) or 0) == 0 else "no_edit"
+        if int(getattr(metrics, "failed_edit_tool_count", 0) or 0) > 0 or ("edit" in reason and "fail" in reason):
+            return "edit_failure"
+        if int(getattr(metrics, "failed_tool_call_count", 0) or 0) > 0:
+            return "tool_error"
+        if getattr(metrics, "max_steps_exhausted", False):
+            return "max_steps_exhausted"
+        if int(getattr(metrics, "tool_call_count", 0) or 0) == 0:
+            return "no_tool_loop"
+        if reason == "inspection_limit" or (
+            int(getattr(metrics, "redundant_reads", 0) or 0)
+            + int(getattr(metrics, "redundant_searches", 0) or 0) > 0
+        ):
+            return "repeated_reconnaissance"
+        if int(getattr(metrics, "no_progress_detections", 0) or 0) > 0:
+            return "no_progress"
         if int(getattr(metrics, "repair_attempts", 0) or 0) > 0:
             return "recovery_failure"
-        if int(getattr(metrics, "redundant_reads", 0) or 0) + int(getattr(metrics, "redundant_searches", 0) or 0) > 0:
-            return "repeated_inspection"
-        if not completion_ready:
-            return "wrong_validation_target"
+        if reason in {"regression_missing", "full_regression_missing"}:
+            return "regression_failure"
+        if reason == "acceptance_missing":
+            return "validation_failure"
+        failed_purposes = {
+            getattr(getattr(item, "purpose", None), "value", getattr(item, "purpose", None))
+            for item in evidence_history
+            if getattr(getattr(item, "outcome", None), "value", getattr(item, "outcome", None)) == "failed"
+        }
+        if "regression" in failed_purposes:
+            return "regression_failure"
+        if "acceptance" in failed_purposes:
+            return "validation_failure"
         if not checks_passed:
             return "oracle_failure"
         return "unknown"
 
     @staticmethod
-    def _failure_reason(*, category, error, check_results, completion_ready, metrics):
+    def _failure_reason(*, category, error, check_results, completion_ready, metrics,
+                        blockers=()):
         if category is None:
             return None
         if error:
             return error
+        reason_code = getattr(metrics, "final_reason_code", None)
+        if reason_code:
+            return str(reason_code)
+        if blockers:
+            return "; ".join(str(blocker) for blocker in blockers)
         failed = [result for result in check_results if not result.passed]
         if failed:
             item = failed[0]
@@ -713,8 +772,20 @@ class EvaluationHarness:
         if reason:
             return str(reason)
         if not completion_ready:
-            return "Agent completion evidence was incomplete."
+            return "Agent 完成证据不完整。"
         return category.replace("_", " ")
+
+    @staticmethod
+    def _path_matches(path: str, contract: str) -> bool:
+        normalized = str(path).strip().replace("\\", "/")
+        expected = str(contract).strip().replace("\\", "/")
+        if normalized.startswith("./"):
+            normalized = normalized[2:]
+        if expected.startswith("./"):
+            expected = expected[2:]
+        if ".." in normalized.split("/") or ".." in expected.split("/"):
+            return False
+        return normalized == expected or fnmatch.fnmatchcase(normalized, expected)
 
 
 # =============================================================
