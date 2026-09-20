@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from html.parser import HTMLParser
 import json
+import os
 from pathlib import Path
 import shlex
 import sys
@@ -263,9 +264,22 @@ class ValidatorResolver:
     def _unresolved(check, status, reason):
         return ValidatorResolution(check.id, status, reason=reason)
 
-    @staticmethod
-    def _python_command(code: str) -> str:
-        return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+    def _python_command(self, code: str) -> str:
+        # Align with oracle pytest env so src-layout packages import at workspace root.
+        pythonpath = os.pathsep.join(
+            filter(
+                None,
+                (
+                    str(self.workspace / "src"),
+                    str(self.workspace),
+                    os.environ.get("PYTHONPATH", ""),
+                ),
+            )
+        )
+        return (
+            f"PYTHONPATH={shlex.quote(pythonpath)} "
+            f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+        )
 
     @staticmethod
     def _service_arguments(contract: HttpContract, profile):

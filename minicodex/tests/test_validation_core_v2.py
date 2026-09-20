@@ -670,3 +670,37 @@ def test_first_pass_cannot_be_true_when_acceptance_is_false():
         recovery_entered=False, corrective_edit=False, repair_attempts=0,
         rollback_count=0, oracle_passed=True,
     )
+
+
+def test_python_behavior_command_sets_src_layout_pythonpath(tmp_path):
+    contract = PythonBehaviorContract("from calculator import add; assert add(1, 2) == 3")
+    check = ValidationPlanner().build(requirements(contract)).checks[0]
+    registry = ToolRegistry()
+    registry.register(CommandTool())
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolution.status == ResolutionStatus.RESOLVED
+    command = resolution.arguments["command"]
+    assert "PYTHONPATH=" in command
+    assert str((tmp_path / "src").resolve()) in command
+    assert str(tmp_path.resolve()) in command
+
+
+def test_python_behavior_resolves_src_layout_without_cd(tmp_path):
+    src_pkg = tmp_path / "src" / "calculator"
+    src_pkg.mkdir(parents=True)
+    (src_pkg / "__init__.py").write_text("from .service import add\n", encoding="utf-8")
+    (src_pkg / "service.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    contract = PythonBehaviorContract(
+        "from calculator import add; assert add(1, 2) == 3"
+    )
+    check = ValidationPlanner().build(requirements(contract)).checks[0]
+    registry = ToolRegistry()
+    registry.register(RunCommandTool(tmp_path))
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolution.status == ResolutionStatus.RESOLVED
+    assert "cd " not in resolution.arguments["command"]
+    result = RunCommandTool(tmp_path).execute(
+        resolution.arguments["command"], purpose="acceptance",
+    )
+    assert result.data["command_succeeded"] is True
+    assert result.data["exit_code"] == 0
