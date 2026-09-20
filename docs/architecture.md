@@ -103,4 +103,4 @@ CLI 级别为 `normal`、`verbose`、`debug`。`normal` 隐藏 Harness / 提供�
 
 依赖方向是刻意的：`utils` 不依赖 agent 领域；tools 不依赖 orchestration；领域包避免导入 `MiniCodexAgent` 门面；orchestration 协调领域 API；`agent.py` 作为组合根。包 `__init__.py` 暴露有意设计的稳定 API。少数导入为惰性加载，仅用于防止包初始化循环，同时保持规范类 / 枚举的身份。每个概念只有一个规范模块路径；源码树中没有旧模块包装或兼容导入路径。
 
-`ExecutionMetrics` 与确定性评估 Harness 会区分主代理、路由、需求与语义裁判的调用 / token / 延迟。也会记录模式升级、晚期规划、修复、验证 / 不稳定复验、被阻止的过早回滚、结果、误完成、错误编辑、工具计数、重规划、回滚、动作压力与预算耗尽。提示词版本与配置的模型名可观测。评估包同时包含 30 任务端到端目录，以及平衡的中英 / 混合路由语料。
+`ExecutionMetrics` 与确定性评估 Harness 会区分主代理、路由、需求与语义裁判的调用 / token / 延迟。也会记录模式升级、晚期规划、修复、验证 / 不稳定复验、被阻止的过早回滚、结果、误完成、错误编辑、工具计数、主循环 step、重规划、回滚、动作压力与预算耗尽。提示词版本与配置的模型名可观测。`minicodex-bench-v1` 复用同一 Harness，提供 30 个固定仓库任务、Agent 结束后才物化的独立隐藏 oracle、baseline / MiniCodex profile、多次运行、失败聚类和版本化结果；详细定义见 `docs/benchmark-v1.md`。

@@ -11,6 +11,7 @@ class ExecutionMetrics:
     execution_mode: str | None = None
     intent: str | None = None
     llm_call_count: int = 0
+    agent_steps: int = 0
     tool_call_count: int = 0
     inspection_tool_count: int = 0
     edit_tool_count: int = 0
@@ -72,6 +73,7 @@ class ExecutionMetrics:
         self.execution_mode = execution_mode
         self.intent = intent
         self.llm_call_count = 0
+        self.agent_steps = 0
         self.tool_call_count = 0
         self.inspection_tool_count = 0
         self.edit_tool_count = 0

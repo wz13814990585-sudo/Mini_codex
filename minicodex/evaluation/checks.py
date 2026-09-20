@@ -31,6 +31,7 @@ class EvaluationCheckRunner:
         "command_succeeds",
         "python_assertion",
         "pytest_passes",
+        "python_oracle",
     }
 
     def run(
@@ -77,7 +78,7 @@ class EvaluationCheckRunner:
             .resolve()
         )
 
-        if check.kind in {"command_succeeds", "python_assertion", "pytest_passes"}:
+        if check.kind in {"command_succeeds", "python_assertion", "pytest_passes", "python_oracle"}:
             return self._run_process_check(check, workspace_path, oracle_root=oracle_root)
 
         # =====================================================
@@ -413,10 +414,29 @@ class EvaluationCheckRunner:
             # Avoid benchmark results being contaminated by a stale timestamp-
             # based bytecode cache after an agent edits a fixture rapidly.
             argv = [*environment.python_argv("-B", "-c", check.command or check.expected or "")]
+        elif check.kind == "python_oracle":
+            target = check.path or ""
+            if oracle_root is not None and target:
+                root = Path(oracle_root).resolve()
+                resolved = (root / target).resolve()
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    return CheckResult(check.kind, False, check.description or "Oracle path escaped its root.", error="oracle_escape")
+                target = str(resolved)
+            if not target:
+                return CheckResult(check.kind, False, check.description or "Hidden Python oracle target is missing.", error="missing_oracle_target")
+            argv = [*environment.python_argv("-B", target)]
         elif check.kind == "pytest_passes":
             target = check.path or check.command or ""
             if oracle_root is not None and target:
-                target = str((Path(oracle_root) / target).resolve())
+                root = Path(oracle_root).resolve()
+                resolved = (root / target).resolve()
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    return CheckResult(check.kind, False, check.description or "Oracle path escaped its root.", error="oracle_escape")
+                target = str(resolved)
             if not target:
                 return CheckResult(check.kind, False, check.description or "Hidden pytest oracle target is missing.", error="missing_oracle_target")
             argv = [*environment.pytest_argv("-p", "no:debugging", "-q", target)]

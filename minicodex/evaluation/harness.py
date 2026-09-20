@@ -49,6 +49,9 @@ class EvaluationHarness:
             EvaluationCheckRunner
             | None
         ) = None,
+        profile: str = "",
+        model: str = "",
+        run_index: int = 1,
     ):
 
         self.agent_factory = (
@@ -63,6 +66,9 @@ class EvaluationHarness:
         self.completion_gate = (
             CompletionGate()
         )
+        self.profile = profile
+        self.model = model
+        self.run_index = int(run_index)
 
     # =========================================================
     # Run Suite
@@ -125,11 +131,23 @@ class EvaluationHarness:
                 )
             )
 
-            output = str(
-                agent.run(
-                    case.prompt
-                )
-            )
+            run_kwargs = {}
+            benchmark_policy = getattr(agent, "_benchmark_policy", None)
+            if benchmark_policy is not None:
+                run_kwargs["policy"] = benchmark_policy
+            output = str(agent.run(case.prompt, **run_kwargs))
+
+            recorder = getattr(agent, "_benchmark_recorder", None)
+            trace_path = getattr(agent, "_benchmark_trace_path", None)
+            if recorder is not None and trace_path:
+                recorder.save_jsonl(trace_path)
+
+            # Hidden oracle files are intentionally materialized only after
+            # the agent has stopped, so no workspace tool can inspect them
+            # during task execution.
+            materialize_oracle = getattr(agent, "_benchmark_materialize_oracle", None)
+            if callable(materialize_oracle):
+                materialize_oracle()
 
         except Exception as e:
 
@@ -169,6 +187,13 @@ class EvaluationHarness:
                 tags=(
                     case.tags
                 ),
+                run_index=self.run_index,
+                category=case.category,
+                profile=self.profile,
+                model=self.model,
+                benchmark_version=case.benchmark_version,
+                failure_category="environment_failure",
+                failure_reason=error,
             )
 
         workspace = getattr(
@@ -198,6 +223,19 @@ class EvaluationHarness:
                 )
             )
 
+        cleanup_oracle = getattr(agent, "_benchmark_cleanup_oracle", None)
+        if callable(cleanup_oracle):
+            try:
+                cleanup_oracle()
+            except Exception as exc:
+                from .models import CheckResult
+                check_results.append(CheckResult(
+                    kind="oracle_cleanup",
+                    passed=False,
+                    description="Hidden oracle cleanup must succeed.",
+                    error=f"{type(exc).__name__}: {exc}",
+                ))
+
         checks_passed = all(
             result.passed
             for result
@@ -210,6 +248,9 @@ class EvaluationHarness:
         ):
 
             checks_passed = True
+
+        oracle_checks = len(check_results)
+        oracle_passed = checks_passed
 
         # =====================================================
         # Validation State
@@ -367,6 +408,22 @@ class EvaluationHarness:
         def metric(name, default=None):
             return getattr(execution_metrics, name, default)
 
+        evidence_history = list(getattr(validation_state, "evidence_history", ()) or ())
+        validation_passes = sum(
+            getattr(getattr(item, "outcome", None), "value", getattr(item, "outcome", None)) == "passed"
+            for item in evidence_history
+        )
+        validation_failures = sum(
+            getattr(getattr(item, "outcome", None), "value", getattr(item, "outcome", None)) == "failed"
+            for item in evidence_history
+        )
+        validation_inconclusive = sum(
+            getattr(getattr(item, "outcome", None), "value", getattr(item, "outcome", None)) == "inconclusive"
+            for item in evidence_history
+        )
+        validation_runs = max(len(evidence_history), int(metric("validation_runs", 0) or 0))
+        validation_inconclusive += max(0, validation_runs - len(evidence_history))
+
         # =====================================================
         # Constraints
         # =====================================================
@@ -424,10 +481,58 @@ class EvaluationHarness:
             and token_budget_passed
             and duration_budget_passed
         )
+        terminal_success = (
+            final_outcome in {"edited_and_validated", "already_satisfied"}
+            or (final_outcome is None and completion_ready and error is None)
+        )
+        oracle_infrastructure_failed = any(
+            bool(result.error) and not str(result.error).startswith("exit_code=")
+            for result in check_results
+        )
+        false_completion = bool(
+            intent == TaskIntent.MODIFY and terminal_success and not oracle_passed
+            and not oracle_infrastructure_failed
+        )
+        repair_attempts = int(metric("repair_attempts", 0) or 0)
+        failed_evidence = [
+            item for item in evidence_history
+            if getattr(getattr(item, "outcome", None), "value", getattr(item, "outcome", None))
+            in {"failed", "inconclusive"}
+            and int(getattr(item, "edit_revision", 0) or 0) > 0
+        ]
+        corrective_edit = any(edit_revision > int(getattr(item, "edit_revision", 0) or 0)
+                              for item in failed_evidence)
+        recovery_entered = bool(failed_evidence and (repair_attempts > 0 or corrective_edit))
+        recovery_success = bool(recovery_entered and (repair_attempts > 0 or corrective_edit) and oracle_passed)
+        first_targeted = next((
+            item for item in evidence_history
+            if int(getattr(item, "edit_revision", 0) or 0) > 0
+            and getattr(getattr(item, "scope", None), "value", getattr(item, "scope", None))
+            in {"targeted", "full"}
+        ), None)
+        first_pass_success = bool(
+            edit_count > 0
+            and first_targeted is not None
+            and getattr(getattr(first_targeted, "outcome", None), "value",
+                        getattr(first_targeted, "outcome", None)) == "passed"
+            and edit_revision == int(getattr(first_targeted, "edit_revision", -1))
+            and not recovery_entered
+            and int(metric("rollback_count", 0) or 0) == 0
+            and oracle_passed
+        )
         failure_category = self._failure_category(
             passed=passed, error=error, checks_passed=checks_passed,
             completion_ready=completion_ready, edit_count=edit_count,
             validation_state=validation_state, metrics=execution_metrics,
+            false_completion=false_completion,
+            oracle_infrastructure_failed=oracle_infrastructure_failed,
+        )
+        failure_reason = self._failure_reason(
+            category=failure_category,
+            error=error,
+            check_results=check_results,
+            completion_ready=completion_ready,
+            metrics=execution_metrics,
         )
 
         return EvaluationResult(
@@ -487,11 +592,7 @@ class EvaluationHarness:
             final_outcome=final_outcome,
             final_completion_reason=metric("final_completion_reason"),
             final_reason_code=metric("final_reason_code"),
-            false_completion=bool(
-                intent == TaskIntent.MODIFY
-                and final_outcome in {"edited_and_validated", "already_satisfied"}
-                and (not completion.can_complete or not checks_passed)
-            ),
+            false_completion=false_completion,
             wrong_edit=bool(intent != TaskIntent.MODIFY and edit_count > 0),
             routing_llm_calls=int(metric("routing_llm_calls", 0) or 0),
             requirements_llm_calls=int(metric("requirements_llm_calls", 0) or 0),
@@ -503,7 +604,7 @@ class EvaluationHarness:
             ),
             mode_escalations=int(metric("mode_escalations", 0) or 0),
             late_plan_activations=int(metric("late_plan_activations", 0) or 0),
-            repair_attempts=int(metric("repair_attempts", 0) or 0),
+            repair_attempts=repair_attempts,
             flaky_reruns=int(metric("flaky_reruns", 0) or 0),
             premature_rollbacks_prevented=int(
                 metric("premature_rollbacks_prevented", 0) or 0
@@ -529,28 +630,91 @@ class EvaluationHarness:
             tags=(
                 case.tags
             ),
+            run_index=self.run_index,
+            category=case.category,
+            profile=self.profile,
+            model=self.model,
+            benchmark_version=case.benchmark_version,
+            first_pass_success=first_pass_success,
+            oracle_checks=oracle_checks,
+            oracle_passed=oracle_passed,
+            agent_steps=int(metric("agent_steps", 0) or 0),
+            llm_call_count=(llm_calls + int(metric("routing_llm_calls", 0) or 0)
+                            + int(metric("requirements_llm_calls", 0) or 0)
+                            + int(metric("semantic_judge_llm_calls", 0) or 0)),
+            main_agent_llm_calls=int(metric("agent_steps", 0) or 0),
+            validation_runs=validation_runs,
+            validation_passes=validation_passes,
+            validation_failures=validation_failures,
+            validation_inconclusive=validation_inconclusive,
+            recovery_entered=recovery_entered,
+            recovery_success=recovery_success,
+            total_control_llm_calls=(max(0, llm_calls - int(metric("agent_steps", 0) or 0))
+                                     + int(metric("routing_llm_calls", 0) or 0)
+                                     + int(metric("requirements_llm_calls", 0) or 0)
+                                     + int(metric("semantic_judge_llm_calls", 0) or 0)),
+            other_control_llm_calls=max(0, llm_calls - int(metric("agent_steps", 0) or 0)),
+            failure_reason=failure_reason,
+            trace_path=getattr(agent, "_benchmark_trace_path", None),
         )
 
     @staticmethod
-    def _failure_category(*, passed, error, checks_passed, completion_ready, edit_count, validation_state, metrics):
+    def _failure_category(*, passed, error, checks_passed, completion_ready, edit_count,
+                          validation_state, metrics, false_completion=False,
+                          oracle_infrastructure_failed=False):
         if passed:
             return None
         if error:
             return "environment_failure"
-        if not checks_passed and completion_ready:
+        if oracle_infrastructure_failed:
+            return "environment_failure"
+        if false_completion:
             return "false_completion"
-        if not edit_count:
-            return "no_edit"
         reason = str(getattr(metrics, "final_reason_code", "") or "")
+        if bool(getattr(metrics, "wrong_edit", False)):
+            return "wrong_file"
+        if "routing" in reason:
+            return "routing_failure"
+        if "requirement" in reason:
+            return "requirement_failure"
+        if "spec" in reason or "binding" in reason:
+            return "spec_binding_failure"
         if "capability" in reason:
             return "capability_missing"
+        if "edit" in reason and "fail" in reason:
+            return "edit_failure"
         if getattr(metrics, "max_steps_exhausted", False):
             return "max_steps"
+        if int(getattr(metrics, "wrong_validation_target_count", 0) or 0) > 0:
+            return "wrong_validation_target"
+        if not edit_count:
+            return "no_tool_loop" if int(getattr(metrics, "tool_call_count", 0) or 0) == 0 else "no_edit"
+        if int(getattr(metrics, "repair_attempts", 0) or 0) > 0:
+            return "recovery_failure"
         if int(getattr(metrics, "redundant_reads", 0) or 0) + int(getattr(metrics, "redundant_searches", 0) or 0) > 0:
             return "repeated_inspection"
         if not completion_ready:
-            return "validation_target_failure"
-        return "oracle_failure"
+            return "wrong_validation_target"
+        if not checks_passed:
+            return "oracle_failure"
+        return "unknown"
+
+    @staticmethod
+    def _failure_reason(*, category, error, check_results, completion_ready, metrics):
+        if category is None:
+            return None
+        if error:
+            return error
+        failed = [result for result in check_results if not result.passed]
+        if failed:
+            item = failed[0]
+            return item.error or item.description
+        reason = getattr(metrics, "final_completion_reason", None)
+        if reason:
+            return str(reason)
+        if not completion_ready:
+            return "Agent completion evidence was incomplete."
+        return category.replace("_", " ")
 
 
 # =============================================================

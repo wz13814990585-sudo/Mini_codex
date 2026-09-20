@@ -9,6 +9,27 @@ from dataclasses import (
 )
 from pathlib import Path
 import json
+import statistics
+
+
+FAILURE_CATEGORIES = (
+    "routing_failure",
+    "requirement_failure",
+    "wrong_file",
+    "no_edit",
+    "edit_failure",
+    "spec_binding_failure",
+    "wrong_validation_target",
+    "capability_missing",
+    "environment_failure",
+    "repeated_inspection",
+    "no_tool_loop",
+    "max_steps",
+    "recovery_failure",
+    "false_completion",
+    "oracle_failure",
+    "unknown",
+)
 
 
 # =============================================================
@@ -85,6 +106,10 @@ class EvaluationCase:
         str,
         ...,
     ] = ()
+
+    category: str = "modify"
+
+    benchmark_version: str = ""
 
 
 # =============================================================
@@ -189,6 +214,31 @@ class EvaluationResult:
         ...,
     ] = ()
 
+    # Benchmark identity and repeatability.
+    run_index: int = 1
+    category: str = ""
+    profile: str = ""
+    model: str = ""
+    benchmark_version: str = ""
+
+    # Independent-oracle and execution semantics.
+    first_pass_success: bool = False
+    oracle_checks: int = 0
+    oracle_passed: bool = False
+    agent_steps: int = 0
+    llm_call_count: int = 0
+    main_agent_llm_calls: int = 0
+    validation_runs: int = 0
+    validation_passes: int = 0
+    validation_failures: int = 0
+    validation_inconclusive: int = 0
+    recovery_entered: bool = False
+    recovery_success: bool = False
+    total_control_llm_calls: int = 0
+    other_control_llm_calls: int = 0
+    failure_reason: str | None = None
+    trace_path: str | None = None
+
     def to_dict(
         self,
     ) -> dict:
@@ -196,6 +246,10 @@ class EvaluationResult:
         data = asdict(
             self
         )
+
+        # ``passed`` is the long-standing EvaluationHarness field.  Raw
+        # Benchmark V1 rows also expose the domain term used by reports.
+        data["success"] = self.passed
 
         return data
 
@@ -215,6 +269,8 @@ class EvaluationSummary:
     ] = field(
         default_factory=list
     )
+
+    metadata: dict = field(default_factory=dict)
 
     @property
     def total_cases(
@@ -373,28 +429,92 @@ class EvaluationSummary:
         )
 
     def vibe_metrics(self) -> dict:
-        from statistics import median
         successes = [r for r in self.results if r.passed]
-        total = max(1, len(self.results))
-        successful = max(1, len(successes))
+        recovery = [r for r in self.results if r.recovery_entered]
+        first_pass_applicable = [r for r in self.results if r.category != "already_satisfied"]
+        completed_validation = sum(r.validation_passes + r.validation_failures for r in self.results)
+        total = len(self.results)
+        successful = len(successes)
+
+        def rate(count: int, denominator: int) -> float:
+            return count / denominator if denominator else 0.0
+
+        def average(values) -> float:
+            values = list(values)
+            return statistics.fmean(values) if values else 0.0
+
+        def median(values):
+            values = list(values)
+            return statistics.median(values) if values else None
+
+        known_costs = [r.cost_usd for r in self.results if r.cost_usd is not None]
+        by_run: dict[int, list[bool]] = {}
+        for result in self.results:
+            by_run.setdefault(result.run_index, []).append(result.passed)
+        run_success_rates = [statistics.fmean(values) for values in by_run.values()]
         return {
             "task_success_rate": self.success_rate,
-            "false_completion_rate": sum(r.false_completion for r in self.results) / total,
+            "task_success_rate_stddev": (
+                statistics.pstdev(run_success_rates) if len(run_success_rates) > 1 else 0.0
+            ),
+            "first_pass_success_rate": rate(
+                sum(r.first_pass_success for r in first_pass_applicable), len(first_pass_applicable)
+            ),
+            "false_completion_rate": rate(sum(r.false_completion for r in self.results), total),
+            "recovery_success_rate": rate(sum(r.recovery_success for r in recovery), len(recovery)),
+            "validation_pass_rate": rate(sum(r.validation_passes for r in self.results), completed_validation),
+            "validation_inconclusive": sum(r.validation_inconclusive for r in self.results),
+            "max_step_exhaustion_rate": rate(sum(r.max_steps_exhausted for r in self.results), total),
+            "wrong_validation_target_rate": rate(sum(r.wrong_validation_target for r in self.results), total),
+            "wrong_edit_rate": rate(sum(r.wrong_edit for r in self.results), total),
+            "average_tool_calls": average(r.tool_call_count for r in self.results),
+            "median_tool_calls": median(r.tool_call_count for r in self.results),
+            "tool_calls_per_success": rate(sum(r.tool_call_count for r in self.results), successful),
+            "average_steps": average(r.agent_steps for r in self.results),
+            "median_steps": median(r.agent_steps for r in self.results),
+            "average_llm_calls": average(r.llm_call_count for r in self.results),
+            "llm_calls_per_success": rate(sum(r.llm_call_count for r in self.results), successful),
             "median_time_to_success": median([r.duration_seconds for r in successes]) if successes else None,
             "median_tokens_per_success": median([r.total_tokens for r in successes]) if successes else None,
             "median_cost_per_success_usd": median([r.cost_usd for r in successes if r.cost_usd is not None])
                 if any(r.cost_usd is not None for r in successes) else None,
-            "main_llm_calls_per_success": sum(r.llm_calls for r in self.results) / successful,
-            "control_llm_calls_per_success": sum(r.control_llm_calls for r in self.results) / successful,
-            "tool_calls_per_success": sum(r.tool_call_count for r in self.results) / successful,
-            "median_time_to_first_edit": median([r.time_to_first_edit for r in successes if r.time_to_first_edit is not None])
-                if any(r.time_to_first_edit is not None for r in successes) else None,
-            "wrong_file_edit_rate": sum(r.wrong_edit for r in self.results) / total,
-            "wrong_validation_target_rate": sum(r.wrong_validation_target for r in self.results) / total,
-            "repeated_tool_rate": sum(r.repeated_action_count for r in self.results) / max(1, sum(r.tool_call_count for r in self.results)),
-            "max_step_exhaustion_rate": sum(r.max_steps_exhausted for r in self.results) / total,
-            "rollback_rate": sum(r.rollback_count > 0 for r in self.results) / total,
-            "recovery_success_rate": sum(r.recovery_successes > 0 for r in self.results) / max(1, sum(r.repair_attempts > 0 for r in self.results)),
+            "main_llm_calls_per_success": rate(sum(r.main_agent_llm_calls for r in self.results), successful),
+            "control_llm_calls_per_success": rate(sum(r.total_control_llm_calls for r in self.results), successful),
+            "median_time_to_first_edit": median(
+                r.time_to_first_edit for r in self.results if r.time_to_first_edit is not None
+            ),
+            "average_inspections_before_first_edit": average(
+                r.inspections_before_first_edit for r in self.results if r.inspections_before_first_edit is not None
+            ),
+            "wrong_file_edit_rate": rate(sum(r.wrong_edit for r in self.results), total),
+            "repeated_tool_rate": rate(sum(r.repeated_action_count for r in self.results),
+                                       sum(r.tool_call_count for r in self.results)),
+            "rollback_rate": rate(sum(r.rollback_count > 0 for r in self.results), total),
+            "average_tokens": average(r.total_tokens for r in self.results),
+            "total_tokens": sum(r.total_tokens for r in self.results),
+            "average_latency_seconds": average(r.duration_seconds for r in self.results),
+            "median_latency_per_success_seconds": median(r.duration_seconds for r in successes),
+            "cost_per_success_usd": (sum(known_costs) / successful
+                                     if known_costs and successful else None),
+        }
+
+    def metrics_by_category(self) -> dict:
+        categories = sorted({result.category for result in self.results if result.category})
+        return {
+            category: EvaluationSummary(
+                run_name=f"{self.run_name}:{category}",
+                results=[result for result in self.results if result.category == category],
+            ).vibe_metrics()
+            for category in categories
+        }
+
+    def case_success_probabilities(self) -> dict[str, float]:
+        by_case: dict[str, list[bool]] = {}
+        for result in self.results:
+            by_case.setdefault(result.case_id, []).append(result.passed)
+        return {
+            case_id: statistics.fmean(outcomes)
+            for case_id, outcomes in sorted(by_case.items())
         }
 
     def to_dict(
@@ -403,6 +523,10 @@ class EvaluationSummary:
 
         return {
             "vibebench": self.vibe_metrics(),
+            "metrics": self.vibe_metrics(),
+            "metrics_by_category": self.metrics_by_category(),
+            "case_success_probabilities": self.case_success_probabilities(),
+            "metadata": self.metadata,
             "run_name": (
                 self.run_name
             ),

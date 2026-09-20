@@ -198,6 +198,9 @@ def run_agent_loop(agent, user_input: str) -> str:
             current_plan_step=prepared.current_plan_step,
             remaining_agent_steps=prepared.remaining_steps,
         )
+        metrics = getattr(agent, "execution_metrics", None)
+        if metrics is not None:
+            metrics.agent_steps = step + 1
         llm_response = _chat_with_heartbeat(
             agent, messages=turn.messages, tools=turn.tools
         )

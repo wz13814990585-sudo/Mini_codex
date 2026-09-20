@@ -236,6 +236,8 @@ python -m compileall -q minicodex
 
 HarnessBench 是确定性的 CI 安全工具序列测试。`RealVibeBench` 是 provider-neutral、必须显式传入模型工厂的真实模型入口；CI 不调用它，也不调用任何付费 API。
 
+`MiniCodex Benchmark V1` 提供固定的 30 个仓库级任务、Agent 工作区外的隐藏行为 oracle、8 个 smoke cases、baseline / MiniCodex 公平对照、多次运行、原始 JSONL、汇总指标、对比报告与确定性失败聚类。实时 benchmark 必须显式指定 profile、provider、model 和凭据；普通 pytest 不会调用模型。使用方法和指标定义见 [docs/benchmark-v1.md](docs/benchmark-v1.md)。
+
 ### 当前限制
 
 - CLI 目前仍是单进程交互式会话；任务中断后不会续跑
