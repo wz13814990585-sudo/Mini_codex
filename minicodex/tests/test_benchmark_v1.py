@@ -23,6 +23,8 @@ from ..evaluation.reporting import (
     summary_markdown,
     write_jsonl,
 )
+from ..evaluation.run_benchmark import benchmark_workspace_is_isolated
+from ..agent.runtime.git_awareness import GitRepositoryInspector
 from ..llm.types import TokenUsage
 from ..tools.filesystem import ReadFileTool
 
@@ -36,6 +38,13 @@ EXPECTED_CATEGORIES = {
     "follow_up": 2,
     "already_satisfied": 2,
 }
+
+
+def test_live_benchmark_workspace_is_outside_repository(tmp_path):
+    workspace = tmp_path / "minicodex-bench-case"
+    workspace.mkdir()
+    assert benchmark_workspace_is_isolated(workspace)
+    assert GitRepositoryInspector(workspace).snapshot().is_repo is False
 
 
 def test_catalog_is_fixed_diverse_and_versioned():
@@ -188,9 +197,9 @@ def _metric_case(tmp_path, agent, *, expected_edit_paths=(), allowed_edit_paths=
                              model="test", run_index=2).run_case(case)
 
 
-def test_first_pass_success_and_agent_step_metrics(tmp_path):
+def test_unbound_acceptance_is_not_first_pass_success_but_metrics_remain(tmp_path):
     result = _metric_case(tmp_path, MetricAgent(tmp_path, [_evidence(ValidationOutcome.PASSED, 1)]))
-    assert result.first_pass_success is True
+    assert result.first_pass_success is False
     assert result.agent_steps == 3
     assert result.validation_runs == result.validation_passes == 1
     assert result.validation_failures == result.validation_inconclusive == 0
@@ -309,10 +318,12 @@ def test_false_completion_uses_oracle_not_agent_claim(tmp_path):
 
 def test_max_steps_and_failure_category_are_recorded(tmp_path):
     agent = MetricAgent(tmp_path, [_evidence(ValidationOutcome.FAILED, 1)], outcome="incomplete", max_steps=True)
+    agent.execution_metrics.wrong_validation_target_count = 1
     case = EvaluationCase("max", "fix", checks=(EvaluationCheck("file_exists", path="missing.py"),))
     result = EvaluationHarness(agent_factory=lambda case: agent).run_case(case)
     assert result.max_steps_exhausted is True
     assert result.failure_category == "max_steps_exhausted"
+    assert result.terminal_failure_category == "max_steps_exhausted"
     assert result.failure_reason
 
 

@@ -14,7 +14,9 @@ from ..agent.progress import ActionController, RecoveryController
 from ..agent.reason_codes import ReasonCode, display_label
 from ..agent.routing import ExecutionMode, TaskIntent, TaskRouter
 from ..agent.safety import SafetyPolicy
-from ..agent.validation import TaskOutcome, TestVerificationSpec, ValidationPurpose
+from ..agent.validation import (
+    SemanticContract, TaskOutcome, TestTargetContract, ValidationPurpose,
+)
 from ..agent.validation.plan import ValidationCheck
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolver
 from ..evaluation.benchmark_v1 import BENCHMARK_VERSION, catalog_by_id
@@ -74,7 +76,7 @@ def test_requirements_chinese_description_english_category():
         "R1",
         "登录失败应返回 401",
         category=RequirementCategory.BEHAVIOR,
-        observable="无效密码返回 401",
+        contract=SemanticContract("auth.py", "无效密码返回 401"),
     )
     assert manual.category.value == "behavior"
     assert _has_cjk(manual.description)
@@ -173,7 +175,7 @@ def test_validator_resolver_human_reason_chinese(tmp_path):
         "V1",
         ("R1",),
         ValidationPurpose.ACCEPTANCE,
-        spec=TestVerificationSpec("app.py", "tests/missing.py::test_x"),
+        TestTargetContract("tests/missing.py::test_x"),
     )
     resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
     assert resolution.status == ResolutionStatus.TARGET_UNRESOLVED

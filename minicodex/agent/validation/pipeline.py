@@ -1,10 +1,7 @@
 from dataclasses import replace
-import ast
-from pathlib import Path
-import shlex
 
 from ...tools.results import ToolResult
-from .evidence import (ValidationOutcome, ValidationScope, ValidationPurpose,
+from .evidence import (ExecutionStatus, ValidationOutcome, ValidationScope, ValidationPurpose,
                        ValidationEvidence, FailureDelta, FailureComparison)
 from .ledger import ValidationLedger
 
@@ -50,9 +47,19 @@ class ValidationPipeline:
         arguments: dict,
         result: ToolResult,
         capabilities: frozenset[str] | None = None,
+        resolution=None,
     ) -> ValidationEvidence | None:
 
         original_name = tool_name
+        if not result.success:
+            self.state.observe_execution(
+                check_id=getattr(resolution, "check_id", ""),
+                tool_name=tool_name,
+                execution_status=self._execution_status(result).value,
+                reason=result.error or result.summary,
+                proof_accepted=False,
+            )
+            return None
         if capabilities:
             if "test.run" in capabilities:
                 tool_name = "run_tests"
@@ -102,40 +109,29 @@ class ValidationPipeline:
             return None
 
         if result.data.get("workspace_changed_during_validation"):
-            evidence = replace(evidence, outcome=ValidationOutcome.INCONCLUSIVE, failed_count=None,
-                               summary="验证期间工作区已变更；请针对当前版本重新运行。")
-        check_id = str(arguments.get("validation_check", ""))
-        candidates = [c for c in self.state.plan.checks if c.purpose == evidence.purpose]
-        # Only a genuinely single-outcome task can omit the explicit binding.
-        if not check_id and len(candidates) == 1:
-            check_id = candidates[0].id
-        check = next((c for c in candidates if c.id == check_id), None)
-        strength = 2
-        if tool_name == "run_tests" and evidence.purpose == ValidationPurpose.REGRESSION:
-            strength = 6 if evidence.scope == ValidationScope.FULL else 3
-        if tool_name == "validate_static_web":
-            strength = int(result.data.get("evidence_strength", 0))
-        elif tool_name == "validate_browser_app":
-            strength = int(result.data.get("evidence_strength", 5))
-        elif tool_name == "validate_semantic":
-            strength = int(result.data.get("evidence_strength", 0))
-        if tool_name in {"validate_static_web", "validate_browser_app", "validate_semantic"}:
-            import hashlib
-            import json
-            specification = {k: v for k, v in arguments.items()
-                             if k not in {"path", "validation_check", "purpose", "timeout", "port"}}
-            if specification:
-                digest = hashlib.sha256(json.dumps(specification, sort_keys=True).encode()).hexdigest()[:16]
-                evidence = replace(evidence, details={**evidence.details, "target_identity": f"{evidence.path}#{digest}"})
-        if tool_name == "run_command":
-            strength = self._command_strength(str(arguments.get("command", "")))
-            if check and check.capability == "process.run" and check.target == evidence.path:
-                strength = int(check.strength)
+            self.state.observe_execution(
+                check_id=getattr(resolution, "check_id", ""),
+                tool_name=original_name,
+                execution_status=ExecutionStatus.EXECUTED.value,
+                outcome=ValidationOutcome.INCONCLUSIVE.value,
+                reason="workspace_changed_during_validation",
+                proof_accepted=False,
+            )
+            return None
+        check = next((
+            item for item in self.state.plan.checks
+            if resolution is not None and item.id == resolution.check_id
+        ), None)
+        target_identity = getattr(resolution, "target", "") if check else evidence.target
+        strength = int(check.strength) if check else -1
         evidence = replace(evidence, tool_name=original_name, check_id=check.id if check else "",
                            requirement_ids=check.requirement_ids if check else (), strength=strength,
+                           details={**evidence.details, "target_identity": target_identity},
                            capability="service.validate" if "service.validate" in (capabilities or ()) else {"run_tests": "test.run", "run_command": "process.run", "validate_static_web": "validation.static_web", "validate_browser_app": "validation.browser", "validate_semantic": "validation.semantic"}.get(tool_name, ""),
                            agent_test_only=bool(result.data.get("agent_test_only", False)))
         evidence = self.state.record(evidence)
+        if evidence is None:
+            return None
 
         # Expose one normalized validation result shape to downstream traces,
         # summaries, and evaluation code regardless of the concrete tool.
@@ -159,39 +155,17 @@ class ValidationPipeline:
         return evidence
 
     @staticmethod
-    def _command_strength(command: str) -> int:
-        """Recognize assertions/runners, not success-shaped words in stdout commands."""
-        try:
-            argv = shlex.split(command)
-        except ValueError:
-            return -1
-        if not argv or any(part in {";", "&&", "||", "|", "&"} for part in argv):
-            return -1
-        executable = Path(argv[0]).name
-        if executable.startswith("python"):
-            if any(flag.startswith("-O") for flag in argv[1:]):
-                return -1  # optimized Python removes assertions
-            if "-c" in argv:
-                try:
-                    tree = ast.parse(argv[argv.index("-c") + 1])
-                except (SyntaxError, IndexError):
-                    return -1
-                assertions = [node.test for node in ast.walk(tree) if isinstance(node, ast.Assert)]
-                return 2 if any(not isinstance(node, ast.Constant) and any(
-                    isinstance(child, (ast.Call, ast.Name, ast.Attribute, ast.Subscript))
-                    for child in ast.walk(node)) for node in assertions) else -1
-            if len(argv) > 2 and argv[1] == "-m" and argv[2] in {"pytest", "unittest"}:
-                return 2
-            if len(argv) > 1 and argv[1].endswith(".py") and any(word in Path(argv[1]).stem for word in ("test", "check", "validate")):
-                return 2
-        if executable in {"pytest", "jest", "vitest"}:
-            return 2
-        if executable in {"npm", "pnpm", "yarn"} and argv[1:] and argv[1] in {"test", "run"}:
-            script = argv[2] if argv[1] == "run" and len(argv) > 2 else argv[1]
-            return 2 if script in {"test", "check", "validate"} else -1
-        if executable in {"test", "[", "grep"}:
-            return 0
-        return -1
+    def _execution_status(result: ToolResult) -> ExecutionStatus:
+        failure = str(result.data.get("failure_type", "")).casefold()
+        if failure in {"safety_blocked", "permission_denied", "action_required_restriction", "duplicate_call"}:
+            return ExecutionStatus.BLOCKED
+        if failure in {"argument_parsing", "invalid_argument_shape", "schema_validation", "argument_too_large"}:
+            return ExecutionStatus.INVALID_ARGUMENTS
+        if failure in {"sandbox_timeout", "timeout"}:
+            return ExecutionStatus.TIMEOUT
+        if failure in {"tool_unavailable", "missing_dependency"}:
+            return ExecutionStatus.UNAVAILABLE
+        return ExecutionStatus.CRASHED
 
     def _from_static_web(
         self,

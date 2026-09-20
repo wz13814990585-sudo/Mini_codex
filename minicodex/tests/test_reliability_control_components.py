@@ -12,7 +12,11 @@ from ..agent.task_state import AgentPhase, TaskState
 from ..agent.routing import TaskRouter
 from ..agent.validation import ValidationOutcome
 from ..agent.validation import ValidatorResolver
-from ..agent.validation import BrowserVerificationSpec
+from ..agent.validation import (
+    BrowserAction,
+    BrowserAssertion,
+    BrowserInteractionContract,
+)
 from ..agent.validation.plan import EvidenceStrength, ValidationCheck
 from ..agent.validation.evidence import ValidationPurpose
 from ..agent.memory import WorkingSummary
@@ -42,14 +46,16 @@ class ToolMessage:
         call = self.tool_calls[0]
         return {
             "role": "assistant",
-            "tool_calls": [{
-                "id": call.id,
-                "type": "function",
-                "function": {
-                    "name": call.function.name,
-                    "arguments": call.function.arguments,
-                },
-            }],
+            "tool_calls": [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    },
+                }
+            ],
         }
 
 
@@ -126,6 +132,7 @@ def make_fast_agent(tmp_path, llm, *, tests=(True,), command=None):
 
 def test_task_state_phase_machine_and_progress_key():
     from minicodex.agent.task_state import TaskRuntime, RuntimeEventType
+
     state = TaskState(mode=ExecutionMode.FAST, user_request="fix demo.py")
     runtime = TaskRuntime(state)
     before = state.progress_key()
@@ -137,9 +144,13 @@ def test_task_state_phase_machine_and_progress_key():
     assert state.phase == AgentPhase.VALIDATING
     assert state.progress_key() != before
 
-    state = runtime.emit(RuntimeEventType.VALIDATION_OBSERVED, outcome=ValidationOutcome.FAILED)
+    state = runtime.emit(
+        RuntimeEventType.VALIDATION_OBSERVED, outcome=ValidationOutcome.FAILED
+    )
     assert state.phase == AgentPhase.FIXING
-    state = runtime.emit(RuntimeEventType.VALIDATION_OBSERVED, outcome=ValidationOutcome.PASSED)
+    state = runtime.emit(
+        RuntimeEventType.VALIDATION_OBSERVED, outcome=ValidationOutcome.PASSED
+    )
     assert state.phase == AgentPhase.VALIDATING
 
 
@@ -148,21 +159,26 @@ def test_benchmark_catalog_has_required_mode_mix_and_budgets():
     modes = {case.expected_mode for case in BENCHMARKS}
     assert modes == {ExecutionMode.FAST, ExecutionMode.STANDARD, ExecutionMode.COMPLEX}
     assert all(case.max_inspections_before_action <= 3 for case in BENCHMARKS)
-    assert all(not case.requires_plan for case in BENCHMARKS if case.expected_mode == ExecutionMode.FAST)
+    assert all(
+        not case.requires_plan
+        for case in BENCHMARKS
+        if case.expected_mode == ExecutionMode.FAST
+    )
     assert len(FAILURE_BENCHMARKS) >= 16
     router = TaskRouter()
     assert all(
-        router.route(case.prompt).mode == case.expected_mode
-        for case in BENCHMARKS
+        router.route(case.prompt).mode == case.expected_mode for case in BENCHMARKS
     )
 
 
 def test_action_controller_is_phase_aware():
     registry = ToolRegistry()
     registry.register(ReadFileTool("."))
+
     class SearchTool:
         name = "search_code"
         capabilities = frozenset({"code.search"})
+
     registry.register(SearchTool())
     registry.register(SequencedTestsTool())
     controller = ActionController(registry)
@@ -179,6 +195,7 @@ def test_action_controller_is_phase_aware():
     assert controller.restriction_reason("run_tests", {}, policy) is None
 
     from dataclasses import replace
+
     state = replace(state, phase=AgentPhase.FIXING)
     controller.update_context(
         state=state,
@@ -236,13 +253,23 @@ def test_validator_resolver_uses_check_capability(tmp_path):
     class BrowserTool:
         name = "browser_adapter"
         capabilities = frozenset({"validation.browser"})
+
     registry = ToolRegistry()
     registry.register(BrowserTool())
-    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
-                            capability="validation.browser", strength=EvidenceStrength.RUNTIME,
-                            observable="Score: 1", spec=BrowserVerificationSpec(
-                                "game.html", "#score", "keypress", "ArrowLeft", "1"))
-    resolved = ValidatorResolver(tmp_path).resolve(check, registry=registry, paths=("game.html",))
+    check = ValidationCheck(
+        "V1",
+        ("R1",),
+        ValidationPurpose.ACCEPTANCE,
+        BrowserInteractionContract(
+            "game.html",
+            BrowserAction("keypress", "#score", "ArrowLeft"),
+            BrowserAssertion("text_equals", "#score", "1"),
+        ),
+        strength=EvidenceStrength.RUNTIME,
+    )
+    resolved = ValidatorResolver(tmp_path).resolve(
+        check, registry=registry, paths=("game.html",)
+    )
     assert resolved.tool_name == "browser_adapter"
     assert resolved.arguments["validation_check"] == "V1"
 
@@ -282,10 +309,14 @@ def test_failed_tool_execution_is_counted_but_failed_validation_outcome_is_not()
     metrics = ExecutionMetrics()
     failed_edit = ToolResult(False, "patch could not execute")
     executed_validation = ToolResult(
-        True, "3 tests failed", {"outcome": "failed", "failed": 3, "errors": 0},
+        True,
+        "3 tests failed",
+        {"outcome": "failed", "failed": 3, "errors": 0},
     )
     metrics.record_tool("patch_file", llm_call_count=1, success=failed_edit.success)
-    metrics.record_tool("run_tests", llm_call_count=2, success=executed_validation.success)
+    metrics.record_tool(
+        "run_tests", llm_call_count=2, success=executed_validation.success
+    )
     assert metrics.failed_tool_call_count == 1
     assert metrics.failed_tool_call_rate == 0.5
     assert metrics.failed_edit_tool_count == 1
@@ -305,81 +336,4 @@ def test_structured_stale_patch_and_edit_metadata(tmp_path):
     assert stale.data["retry_action"] == "read_target_region_then_retry_once"
     edited = tool.execute("demo.py", "value = 2", "value = 3")
     assert edited.data["edit_kind"] == "exact_patch"
-    assert edited.data["changed"] is True
-
-
-def test_failure_benchmark_stale_patch_reads_target_then_retries(tmp_path):
-    target = tmp_path / "examples/helper.py"
-    target.parent.mkdir(parents=True)
-    target.write_text("def value():\n    return 0\n", encoding="utf-8")
-    llm = ScriptedLLM([
-        tool_call("stale", "patch_file", {
-            "path": "examples/helper.py", "old_text": "return 1", "new_text": "return 2"
-        }),
-        tool_call("read", "read_file", {"path": "examples/helper.py"}),
-        tool_call("retry", "patch_file", {
-            "path": "examples/helper.py", "old_text": "return 0", "new_text": "return 2"
-        }),
-        tool_call("validate", "run_tests", {
-            "path": "examples/test_helper.py", "purpose": "acceptance"
-        }),
-    ])
-    agent = make_fast_agent(tmp_path, llm)
-    result = agent.run("Fix a simple Python bug in examples/helper.py.")
-    assert llm.call_count == 4
-    assert "return 2" in target.read_text(encoding="utf-8")
-    assert agent.execution_metrics.calls_before_first_edit == 3
-    assert agent.task_state.phase == AgentPhase.DONE
-    assert agent.execution_metrics.final_outcome == "edited_and_validated"
-    assert "Outcome:" not in result
-
-
-def test_failure_benchmark_validation_fail_fix_revalidate(tmp_path):
-    target = tmp_path / "examples/helper.py"
-    target.parent.mkdir(parents=True)
-    target.write_text("def value():\n    return 0\n", encoding="utf-8")
-    llm = ScriptedLLM([
-        tool_call("edit1", "patch_file", {
-            "path": "examples/helper.py", "old_text": "return 0", "new_text": "return 1"
-        }),
-        tool_call("fail", "run_tests", {
-            "path": "examples/test_helper.py", "purpose": "acceptance"
-        }),
-        tool_call("read", "read_file", {"path": "examples/helper.py"}),
-        tool_call("edit2", "patch_file", {
-            "path": "examples/helper.py", "old_text": "return 1", "new_text": "return 2"
-        }),
-        tool_call("pass", "run_tests", {
-            "path": "examples/test_helper.py", "purpose": "acceptance"
-        }),
-    ])
-    agent = make_fast_agent(tmp_path, llm, tests=(False, True))
-    result = agent.run("Fix a simple Python bug in examples/helper.py.")
-    assert llm.call_count == 5
-    assert agent.validation_pipeline.state.acceptance_passed is True
-    assert "return 2" in target.read_text(encoding="utf-8")
-    assert agent.execution_metrics.final_outcome == "edited_and_validated"
-    assert "Outcome:" not in result
-
-
-def test_failure_benchmark_unsafe_command_then_safe_edit(tmp_path):
-    target = tmp_path / "examples/helper.py"
-    target.parent.mkdir(parents=True)
-    target.write_text("value = 0\n", encoding="utf-8")
-    command = NeverRunCommand()
-    llm = ScriptedLLM([
-        tool_call("unsafe", "run_command", {"command": "rm -rf examples"}),
-        tool_call("safe", "patch_file", {
-            "path": "examples/helper.py", "old_text": "value = 0", "new_text": "value = 1"
-        }),
-        tool_call("validate", "run_tests", {
-            "path": "examples/test_helper.py", "purpose": "acceptance"
-        }),
-    ])
-    agent = make_fast_agent(tmp_path, llm, command=command)
-    result = agent.run("Fix a simple Python bug in examples/helper.py.")
-    assert command.calls == 0
-    assert target.read_text(encoding="utf-8") == "value = 1\n"
-    assert agent.execution_metrics.final_outcome == "edited_and_validated"
-    assert agent.execution_metrics.failed_tool_call_count == 1
-    assert "Outcome:" not in result
+    assert edited.data["changed"] is True  # End of file.

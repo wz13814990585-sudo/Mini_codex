@@ -1,7 +1,16 @@
-"""Canonical validation history. Green projections are derived, never assigned."""
+"""Canonical current-revision proof ledger."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass, field, replace
 
-from .evidence import ValidationEvidence, ValidationOutcome, ValidationPurpose, ValidationScope
+from .evidence import (
+    ExecutionStatus,
+    ValidationEvidence,
+    ValidationOutcome,
+    ValidationPurpose,
+    ValidationScope,
+)
 from .plan import ValidationPlan
 
 
@@ -11,48 +20,86 @@ class ValidationLedger:
     has_edit: bool = False
     evidence_sequence: int = 0
     evidence_history: list[ValidationEvidence] = field(default_factory=list)
+    execution_observations: list[dict] = field(default_factory=list)
+    blocked_checks: dict[str, str] = field(default_factory=dict)
     baseline_by_key: dict[str, ValidationEvidence] = field(default_factory=dict)
     plan: ValidationPlan = field(default_factory=ValidationPlan)
 
-    def reset(self):
+    def reset(self) -> None:
         self.edit_revision = 0
         self.has_edit = False
         self.evidence_sequence = 0
         self.evidence_history.clear()
+        self.execution_observations.clear()
+        self.blocked_checks.clear()
         self.baseline_by_key.clear()
         self.plan = ValidationPlan()
 
-    def record_edit(self, *, owned=True):
+    def record_edit(self, *, owned: bool = True) -> int:
         self.edit_revision += 1
         self.has_edit = self.has_edit or owned
         self.plan = self.plan.at_revision(self.edit_revision)
+        self.blocked_checks.clear()
         return self.edit_revision
 
     @property
-    def latest_evidence(self):
-        return next((e for e in reversed(self.evidence_history)
-                     if e.edit_revision == self.edit_revision), None)
+    def latest_evidence(self) -> ValidationEvidence | None:
+        return next((
+            evidence for evidence in reversed(self.evidence_history)
+            if evidence.edit_revision == self.edit_revision
+        ), None)
 
-    def record(self, evidence):
-        check = next((c for c in self.plan.checks if c.id == evidence.check_id), None)
-        eligible = (evidence.execution_succeeded and evidence.outcome != ValidationOutcome.INCONCLUSIVE
-                    and not evidence.agent_test_only and check is not None and evidence.strength >= check.strength)
-        if check and not check.target and eligible:
-            already_bound = any(c.id != check.id and c.target == evidence.target and c.purpose == check.purpose
-                                for c in self.plan.checks)
-            if already_bound or not evidence.target:
-                evidence = replace(evidence, check_id="", requirement_ids=())
-            else:
-                self.plan = replace(self.plan, checks=tuple(
-                    replace(c, target=evidence.target) if c.id == check.id else c for c in self.plan.checks))
-        comparable = [e for e in self.evidence_history
-                      if e.edit_revision == evidence.edit_revision
-                      and e.validation_key == evidence.validation_key]
-        # A contradiction needs two subsequent identical outcomes to stabilize.
-        unstable = bool(comparable and comparable[-1].outcome != evidence.outcome)
-        if comparable and comparable[-1].unstable:
-            unstable = len(comparable) < 2 or any(
-                e.outcome != evidence.outcome for e in comparable[-2:])
+    @property
+    def required_checks(self):
+        return tuple(check for check in self.plan.checks if check.required)
+
+    def observe_execution(self, **observation) -> None:
+        self.execution_observations.append({
+            "edit_revision": self.edit_revision,
+            **observation,
+        })
+
+    def mark_blocked(self, check_id: str, reason: str) -> None:
+        self.blocked_checks[check_id] = reason
+
+    def record(self, evidence: ValidationEvidence) -> ValidationEvidence | None:
+        """Record only actual validator executions with explicit check identity."""
+
+        if evidence.execution_status != ExecutionStatus.EXECUTED:
+            self.observe_execution(
+                check_id=evidence.check_id,
+                execution_status=evidence.execution_status.value,
+                reason=evidence.summary,
+            )
+            return None
+        check = next((item for item in self.plan.checks if item.id == evidence.check_id), None)
+        if check is None or evidence.edit_revision != self.edit_revision:
+            self.observe_execution(
+                check_id=evidence.check_id,
+                execution_status=ExecutionStatus.EXECUTED.value,
+                outcome=evidence.outcome.value,
+                proof_accepted=False,
+                reason="unbound_or_stale",
+            )
+            evidence = replace(evidence, check_id="", requirement_ids=())
+        else:
+            evidence = replace(evidence, requirement_ids=check.requirement_ids)
+
+        comparable = [
+            item for item in self.evidence_history
+            if item.edit_revision == evidence.edit_revision
+            and item.check_id == evidence.check_id
+            and item.validation_key == evidence.validation_key
+            and item.execution_status == ExecutionStatus.EXECUTED
+            and item.outcome in {ValidationOutcome.PASSED, ValidationOutcome.FAILED}
+        ]
+        decisive = evidence.outcome in {ValidationOutcome.PASSED, ValidationOutcome.FAILED}
+        unstable = bool(
+            evidence.check_id and decisive and comparable
+            and any(item.outcome != evidence.outcome for item in comparable)
+        )
+        if comparable and any(item.unstable for item in comparable):
+            unstable = True
         evidence = replace(evidence, unstable=unstable)
         self.evidence_history.append(evidence)
         self.evidence_sequence += 1
@@ -60,54 +107,56 @@ class ValidationLedger:
             self.baseline_by_key.setdefault(evidence.validation_key, evidence)
         return evidence
 
-    def proof(self, check_id):
-        check = next((c for c in self.plan.checks if c.id == check_id), None)
+    def proof(self, check_id: str) -> ValidationEvidence | None:
+        check = next((item for item in self.plan.checks if item.id == check_id), None)
         if check is None or check.revision != self.edit_revision:
             return None
-        current = [e for e in self.evidence_history
-                   if e.edit_revision == self.edit_revision and e.check_id == check_id]
-        if not current:
+        current = [
+            item for item in self.evidence_history
+            if item.edit_revision == self.edit_revision and item.check_id == check_id
+            and item.execution_status == ExecutionStatus.EXECUTED
+        ]
+        decisive = [
+            item for item in current
+            if item.outcome in {ValidationOutcome.PASSED, ValidationOutcome.FAILED}
+        ]
+        if not decisive or any(item.unstable for item in decisive):
             return None
-        latest = current[-1]
-        # Even unbound contradictory observations invalidate the same executed check.
-        same_target = [e for e in self.evidence_history
-                       if e.edit_revision == self.edit_revision
-                       and e.validation_key == latest.validation_key]
-        if same_target[-1].outcome != ValidationOutcome.PASSED or same_target[-1].unstable:
+        outcomes = {item.outcome for item in decisive}
+        if outcomes != {ValidationOutcome.PASSED}:
             return None
-        if (latest.outcome != ValidationOutcome.PASSED or latest.unstable
-                or not latest.execution_succeeded or latest.strength < check.strength
-                or latest.purpose != check.purpose or latest.agent_test_only
-                or not set(check.requirement_ids).issubset(latest.requirement_ids)):
-            return None
-        if not check.target or check.target != latest.target:
-            return None
-        if check.capability not in {"validation.structure", "validation.behavior"} and latest.capability != check.capability:
+        latest = decisive[-1]
+        if (
+            latest.strength < check.strength
+            or latest.purpose != check.purpose
+            or latest.agent_test_only
+            or not set(check.requirement_ids).issubset(latest.requirement_ids)
+        ):
             return None
         return latest
 
-    def _passed(self, purpose, scope=None):
-        latest = {}
-        for e in self.evidence_history:
-            if e.edit_revision == self.edit_revision and e.purpose == purpose:
-                latest[e.validation_key] = e
-        selected = [e for e in latest.values() if scope is None or e.scope == scope]
-        if scope == ValidationScope.TARGETED:
-            selected = [e for e in selected if e.strength >= 2 and not (e.capability == "process.run" and e.strength != 2)]
-        return bool(selected) and all(e.outcome == ValidationOutcome.PASSED and not e.unstable and not e.agent_test_only
-                                      for e in selected)
+    @property
+    def acceptance_passed(self) -> bool:
+        checks = [
+            check for check in self.required_checks
+            if check.purpose == ValidationPurpose.ACCEPTANCE
+        ]
+        return bool(checks) and all(self.proof(check.id) is not None for check in checks)
 
     @property
-    def acceptance_passed(self):
-        checks = [c for c in self.plan.checks if c.required and c.purpose == ValidationPurpose.ACCEPTANCE]
-        if checks:
-            return all(self.proof(c.id) is not None for c in checks)
-        return self._passed(ValidationPurpose.ACCEPTANCE)
+    def targeted_passed(self) -> bool:
+        checks = [
+            check for check in self.required_checks
+            if check.purpose == ValidationPurpose.REGRESSION
+            and check.strength.value < 6
+        ]
+        return bool(checks) and all(self.proof(check.id) is not None for check in checks)
 
     @property
-    def targeted_passed(self):
-        return self._passed(ValidationPurpose.REGRESSION, ValidationScope.TARGETED)
-
-    @property
-    def full_passed(self):
-        return self._passed(ValidationPurpose.REGRESSION, ValidationScope.FULL) and self._passed(ValidationPurpose.REGRESSION)
+    def full_passed(self) -> bool:
+        checks = [
+            check for check in self.required_checks
+            if check.purpose == ValidationPurpose.REGRESSION
+            and check.strength.value >= 6
+        ]
+        return bool(checks) and all(self.proof(check.id) is not None for check in checks)

@@ -92,9 +92,8 @@ class ContextBuilder:
                 else:
                     action = "只做足以解析该检查的探查；不要换成其他检查。"
                 sections.append(
-                    f"下一项必做检查 {next_check.id}：{next_check.observable or next_check.reason}；"
-                    f"强度={next_check.strength.name}；能力={next_check.capability}；"
-                    f"绑定={next_check.spec_source or 'unbound'}@{next_check.spec_bound_revision}。{action}"
+                    f"下一项必做检查 {next_check.id}：{next_check.reason}；"
+                    f"契约={next_check.contract_type}；强度={next_check.strength.name}。{action}"
                 )
         elif state.phase == AgentPhase.FIXING:
             evidence = ledger.latest_evidence
@@ -124,8 +123,8 @@ class ContextBuilder:
                 else:
                     action = "创建确定性阻塞项；不要继续探查或编造其他验证器。"
                 sections.append(
-                    f"下一项必做检查 {next_check.id}：{next_check.observable or next_check.reason}；"
-                    f"绑定={next_check.spec_source or 'unbound'}@{next_check.spec_bound_revision}；"
+                    f"下一项必做检查 {next_check.id}：{next_check.reason}；"
+                    f"契约={next_check.contract_type}；"
                     f"解析={status or 'unprepared'}：{getattr(resolution, 'reason', '')}。{action}"
                 )
         if current_plan_step is not None and state.phase in {AgentPhase.ACTING, AgentPhase.FIXING}:

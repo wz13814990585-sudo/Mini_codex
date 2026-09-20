@@ -66,12 +66,9 @@ class RollbackCoordinator:
         session = getattr(agent, "workspace_session", None)
         if session is not None:
             session.invalidate(checkpoint.snapshot.path)
-        requirements = getattr(agent, "task_requirements", None)
-        if requirements is not None:
-            requirements.invalidate_revision(rollback_revision)
-            sync_requirements = getattr(agent, "sync_requirements_state", None)
-            if callable(sync_requirements):
-                sync_requirements()
+        sync_requirements = getattr(agent, "sync_requirements_state", None)
+        if callable(sync_requirements):
+            sync_requirements()
         if hasattr(agent, "_repo_map_initialized"):
             agent._repo_map_initialized = False
             agent._repo_map_revision = None

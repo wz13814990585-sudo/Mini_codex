@@ -1,0 +1,426 @@
+from types import SimpleNamespace
+
+import pytest
+
+from ..agent.planning.requirements import (
+    RequirementCategory,
+    TaskRequirement,
+    TaskRequirements,
+)
+from ..agent.runtime.tool_executor import ToolExecutor
+from ..agent.validation import (
+    BrowserAction,
+    BrowserAssertion,
+    BrowserInteractionContract,
+    CompletionStatus,
+    FileExistsContract,
+    HttpContract,
+    NodeBehaviorContract,
+    PythonBehaviorContract,
+    TaskCompletionPolicy,
+    TaskOutcome,
+    TestTargetContract,
+    ValidationEvidence,
+    ValidationExecutor,
+    ValidationOutcome,
+    ValidationPipeline,
+    ValidationPurpose,
+    ValidationScope,
+    ValidatorResolver,
+)
+from ..evaluation.harness import EvaluationHarness
+from ..agent.observability.trace import TraceEventType, TraceRecorder
+from ..agent.observability.metrics import ExecutionMetrics
+from ..agent.orchestration.tool_result_handlers import ValidationResultHandler
+from ..agent.validation.executor import ValidationExecutionState
+from ..agent.validation.plan import ValidationPlanner
+from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolution
+from ..tools.registry import ToolRegistry
+from ..tools.results import ToolResult
+
+
+class _TestsTool:
+    name = "run_tests"
+    capabilities = frozenset({"test.run"})
+    parameters = {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
+
+    def __init__(self, results=None):
+        self.results = list(results or [True])
+        self.calls = 0
+
+    def execute(self, path, purpose="regression"):
+        self.calls += 1
+        passed = self.results.pop(0)
+        return ToolResult(True, "executed", {
+            "tests_passed": passed,
+            "passed": int(passed),
+            "failed": int(not passed),
+            "errors": 0,
+            "skipped": 0,
+        })
+
+
+class CommandTool:
+    name = "run_command"
+    capabilities = frozenset({"process.run"})
+    parameters = {
+        "type": "object",
+        "properties": {"command": {"type": "string"}, "purpose": {"type": "string"}},
+        "required": ["command"],
+    }
+
+    def __init__(self):
+        self.calls = 0
+
+    def execute(self, command, purpose="diagnostic"):
+        self.calls += 1
+        return ToolResult(True, "executed", {"command_succeeded": True, "exit_code": 0})
+
+
+def requirements(*contracts):
+    return TaskRequirements([
+        TaskRequirement(f"R{i}", f"需求 {i}", contract=contract)
+        for i, contract in enumerate(contracts, 1)
+    ])
+
+
+def planned(*contracts):
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(requirements(*contracts))
+    return pipeline
+
+
+def test_identical_contract_is_one_multi_requirement_check():
+    contract = PythonBehaviorContract("from pkg import add; assert add(2, 3) == 5")
+    pipeline = planned(contract, contract)
+    assert len(pipeline.state.plan.checks) == 1
+    assert pipeline.state.plan.checks[0].requirement_ids == ("R1", "R2")
+
+
+def test_unbound_acceptance_cannot_prove_required_check():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                     ToolResult(True, "pass", {"tests_passed": True, "passed": 1}))
+    assert pipeline.state.proof("V1") is None
+
+
+@pytest.mark.parametrize("failure_type", [
+    "duplicate_call", "action_required_restriction", "schema_validation",
+    "safety_blocked", "tool_unavailable",
+])
+def test_non_executed_validator_never_creates_evidence(failure_type):
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    result = ToolResult(False, "not executed", {"failure_type": failure_type})
+    assert pipeline.observe("run_tests", {
+        "path": "tests/test_x.py", "purpose": "acceptance", "validation_check": "V1",
+    }, result) is None
+    assert pipeline.state.evidence_history == []
+
+
+def test_pass_then_non_execution_remains_stable_pass():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    passed = pipeline.observe("run_tests", {
+        "path": "tests/test_x.py", "purpose": "acceptance",
+    }, ToolResult(True, "pass", {"tests_passed": True, "passed": 1}), resolution=resolution)
+    pipeline.observe("run_tests", {
+        "path": "tests/test_x.py", "purpose": "acceptance",
+    }, ToolResult(False, "duplicate", {"failure_type": "duplicate_call"}), resolution=resolution)
+    assert passed.unstable is False
+    assert pipeline.state.proof("V1") is passed
+
+
+def test_pass_then_executed_fail_is_contradictory():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                     ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+                     resolution=resolution)
+    failed = pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                              ToolResult(True, "fail", {"tests_passed": False, "failed": 1}),
+                              resolution=resolution)
+    assert failed.unstable is True
+    assert pipeline.state.proof("V1") is None
+
+
+def test_inconclusive_does_not_erase_prior_pass():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    proof = pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                             ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+                             resolution=resolution)
+    pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                     ToolResult(True, "no tests", {"tests_passed": False, "failed": 0, "errors": 0}),
+                     resolution=resolution)
+    assert pipeline.state.proof("V1") is proof
+
+
+def test_chinese_file_description_uses_typed_path_not_description(tmp_path):
+    (tmp_path / "index.html").write_text("nothing from description")
+    requirement = TaskRequirement(
+        "R1", "仓库根目录下存在 index.html 文件",
+        RequirementCategory.FILE, ("index.html",), FileExistsContract("index.html"),
+    )
+    check = ValidationPlanner().build(TaskRequirements([requirement])).checks[0]
+    registry = ToolRegistry()
+    registry.register(CommandTool())
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolution.status == ResolutionStatus.RESOLVED
+    assert "仓库根目录" not in resolution.arguments["command"]
+
+
+def test_browser_contract_does_not_parse_description_and_has_node_fallback(tmp_path):
+    (tmp_path / "index.html").write_text("<script type='module' src='./app.js'></script>")
+    (tmp_path / "app.js").write_text("document.querySelector('#increment').onclick=()=>{}")
+    contract = BrowserInteractionContract(
+        "index.html", BrowserAction("click", "#increment"),
+        BrowserAssertion("text_equals", "#count", "1"),
+    )
+    check = ValidationPlanner().build(requirements(contract)).checks[0]
+    registry = ToolRegistry()
+    registry.register(CommandTool())
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolution.status == ResolutionStatus.RESOLVED
+    assert resolution.capability == "process.run"
+    assert "#increment" in resolution.arguments["command"]
+
+
+def test_unavailable_browser_without_fallback_is_blocked(tmp_path):
+    contract = BrowserInteractionContract(
+        "index.html", BrowserAction("click", "#x"),
+        BrowserAssertion("text_equals", "", ""),
+    )
+    check = ValidationPlanner().build(requirements(contract)).checks[0]
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=ToolRegistry())
+    assert resolution.status == ResolutionStatus.TARGET_UNRESOLVED
+
+
+def test_node_contract_resolves_to_targeted_command(tmp_path):
+    check = ValidationPlanner().build(requirements(
+        NodeBehaviorContract("if (2 + 3 !== 5) process.exit(1)")
+    )).checks[0]
+    registry = ToolRegistry()
+    registry.register(CommandTool())
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolution.status == ResolutionStatus.RESOLVED
+    assert "node --input-type=module" in resolution.arguments["command"]
+
+
+def test_manual_node_command_cannot_prove_contract():
+    pipeline = planned(NodeBehaviorContract("if (sum([]) !== 0) process.exit(1)"))
+    pipeline.observe("run_command", {
+        "command": "node -e 'process.exit(0)'", "purpose": "acceptance",
+    }, ToolResult(True, "ok", {"command_succeeded": True}))
+    assert pipeline.state.proof("V1") is None
+
+
+def test_wrong_validation_target_counts_only_explicit_proof_attempts():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    metrics = ExecutionMetrics()
+    agent = SimpleNamespace(
+        validation_pipeline=pipeline,
+        checkpoint_manager=SimpleNamespace(all_checkpoints=lambda: ()),
+        task_state=SimpleNamespace(work_unit=None, recovery_level=0),
+        workspace=".",
+        sync_requirements_state=lambda: None,
+        plan_orchestrator=SimpleNamespace(reconcile=lambda _agent: (None, False)),
+        validation_orchestrator=SimpleNamespace(apply=lambda **_kwargs: None),
+        latest_progress_signal=None,
+    )
+    handler = ValidationResultHandler()
+    result = ToolResult(
+        True, "diagnostic pass",
+        {"command_succeeded": True, "outcome": "passed"},
+    )
+
+    handler.apply(
+        agent, tool_name="run_command",
+        arguments={"command": "python -c 'print(1)'", "purpose": "acceptance"},
+        result=result, capabilities=frozenset({"process.run"}), metrics=metrics,
+        emit=lambda *_args, **_kwargs: None,
+    )
+    assert metrics.wrong_validation_target_count == 0
+
+    handler.apply(
+        agent, tool_name="run_command",
+        arguments={
+            "command": "python -c 'print(1)'",
+            "purpose": "acceptance",
+            "validation_check": "V999",
+        },
+        result=ToolResult(
+            True, "wrong target pass",
+            {"command_succeeded": True, "outcome": "passed"},
+        ),
+        capabilities=frozenset({"process.run"}), metrics=metrics,
+        emit=lambda *_args, **_kwargs: None,
+    )
+    assert metrics.wrong_validation_target_count == 1
+
+
+def test_resolved_executor_runs_without_llm_decision(tmp_path):
+    tool = _TestsTool([True])
+    registry = ToolRegistry()
+    registry.register(tool)
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_x.py").write_text("def test_x(): pass")
+    check = pipeline.state.plan.checks[0]
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    agent = SimpleNamespace(
+        registry=registry,
+        tool_executor=ToolExecutor(registry),
+        validation_pipeline=pipeline,
+        token_metrics=SimpleNamespace(call_count=0),
+        execution_metrics=None,
+        refresh_workspace_facts=lambda: None,
+        trace_recorder=TraceRecorder(),
+    )
+    result = ValidationExecutor().execute(agent, check, resolution)
+    assert result.state == ValidationExecutionState.PROVEN
+    assert tool.calls == 1
+    assert pipeline.state.proof("V1")
+    event = agent.trace_recorder.events[-1]
+    assert event.event_type == TraceEventType.VALIDATION_EVIDENCE
+    assert event.data["check_ids"] == ["V1"]
+    assert event.data["proof_accepted"] is True
+
+
+def test_proven_check_is_cached_and_not_reexecuted(tmp_path):
+    tool = _TestsTool([True])
+    registry = ToolRegistry()
+    registry.register(tool)
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_x.py").write_text("def test_x(): pass")
+    check = pipeline.state.plan.checks[0]
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    agent = SimpleNamespace(
+        registry=registry, tool_executor=ToolExecutor(registry),
+        validation_pipeline=pipeline, token_metrics=SimpleNamespace(call_count=0),
+        execution_metrics=None, refresh_workspace_facts=lambda: None,
+    )
+    executor = ValidationExecutor()
+    assert executor.execute(agent, check, resolution).state == ValidationExecutionState.PROVEN
+    assert executor.execute(agent, check, resolution).state == ValidationExecutionState.SKIPPED
+    assert tool.calls == 1
+
+
+def test_completion_reads_ledger_not_requirement_mutation():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    agent = SimpleNamespace(validation_pipeline=pipeline)
+    assert TaskCompletionPolicy().evaluate(agent).status == CompletionStatus.NEEDS_ACCEPTANCE
+
+
+def test_no_edit_acceptance_pass_is_already_satisfied():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                     ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+                     resolution=resolution)
+    decision = TaskCompletionPolicy().evaluate(SimpleNamespace(validation_pipeline=pipeline))
+    assert decision.status == CompletionStatus.READY
+    assert decision.outcome == TaskOutcome.ALREADY_SATISFIED
+
+
+def test_edit_invalidates_previous_proof():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    pipeline.observe("run_tests", {"path": "tests/test_x.py", "purpose": "acceptance"},
+                     ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+                     resolution=resolution)
+    assert pipeline.state.proof("V1")
+    pipeline.record_edit()
+    assert pipeline.state.proof("V1") is None
+
+
+def test_http_environment_failure_then_pass_closes_check():
+    pipeline = planned(HttpContract("POST", "/login", 401))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "validate_service", {},
+        "service.validate", "POST /login", "http|POST /login",
+    )
+    assert pipeline.observe("validate_service", {"path": "/login", "purpose": "acceptance"},
+                            ToolResult(False, "port conflict", {"failure_type": "environment_failure"}),
+                            frozenset({"service.validate"}), resolution=resolution) is None
+    pipeline.observe("validate_service", {"path": "/login", "purpose": "acceptance"},
+                     ToolResult(True, "401", {"outcome": "passed", "errors": []}),
+                     frozenset({"service.validate"}), resolution=resolution)
+    assert pipeline.state.proof("V1")
+
+
+def test_pytest_no_tests_collected_is_inconclusive_not_failure():
+    pipeline = planned(TestTargetContract("health.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "health.py", "pytest|health.py",
+    )
+    evidence = pipeline.observe("run_tests", {"path": "health.py", "purpose": "acceptance"},
+                                ToolResult(True, "exit 5", {
+                                    "tests_passed": False, "passed": 0, "failed": 0,
+                                    "errors": 0, "exit_code": 5,
+                                }), resolution=resolution)
+    assert evidence.outcome == ValidationOutcome.INCONCLUSIVE
+    assert pipeline.state.proof("V1") is None
+
+
+def _metric_evidence(check_id, outcome):
+    return ValidationEvidence(
+        "run_tests", True, outcome, ValidationScope.TARGETED,
+        ValidationPurpose.ACCEPTANCE, 1, check_id=check_id,
+        requirement_ids=(check_id.replace("V", "R"),),
+    )
+
+
+def test_first_pass_requires_all_acceptance_checks_first_executions_to_pass():
+    plan = SimpleNamespace(checks=(
+        SimpleNamespace(id="V1", required=True, purpose=ValidationPurpose.ACCEPTANCE),
+        SimpleNamespace(id="V2", required=True, purpose=ValidationPurpose.ACCEPTANCE),
+    ))
+    common = dict(
+        edit_count=1, edit_revision=1, acceptance_passed=True, plan=plan,
+        recovery_entered=False, corrective_edit=False, repair_attempts=0,
+        rollback_count=0, oracle_passed=True,
+    )
+    assert EvaluationHarness._first_pass_success(
+        **common,
+        evidence_history=[
+            _metric_evidence("V1", ValidationOutcome.PASSED),
+            _metric_evidence("V2", ValidationOutcome.PASSED),
+        ],
+    )
+    assert not EvaluationHarness._first_pass_success(
+        **common,
+        evidence_history=[
+            _metric_evidence("V1", ValidationOutcome.PASSED),
+            _metric_evidence("V2", ValidationOutcome.FAILED),
+            _metric_evidence("V2", ValidationOutcome.PASSED),
+        ],
+    )
+
+
+def test_first_pass_cannot_be_true_when_acceptance_is_false():
+    plan = SimpleNamespace(checks=(
+        SimpleNamespace(id="V1", required=True, purpose=ValidationPurpose.ACCEPTANCE),
+    ))
+    assert not EvaluationHarness._first_pass_success(
+        edit_count=1, edit_revision=1, acceptance_passed=False, plan=plan,
+        evidence_history=[_metric_evidence("V1", ValidationOutcome.PASSED)],
+        recovery_entered=False, corrective_edit=False, repair_attempts=0,
+        rollback_count=0, oracle_passed=True,
+    )

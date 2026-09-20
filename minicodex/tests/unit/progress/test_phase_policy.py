@@ -38,13 +38,13 @@ def test_fast_acceptance_pass_can_transition_ready_to_done():
     assert decision.outcome == TaskOutcome.EDITED_AND_VALIDATED
 
 
-def test_standard_acceptance_pass_stays_validating_until_relevant_regression():
+def test_standard_acceptance_is_ready_when_plan_has_no_regression_check():
     agent = policy_agent(ExecutionMode.STANDARD)
     record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
     missing = TaskCompletionPolicy().evaluate(agent)
 
-    assert missing.status == CompletionStatus.NEEDS_RELEVANT_VALIDATION
+    assert missing.status == CompletionStatus.READY
     assert agent.task_state.phase == AgentPhase.VALIDATING
 
     record_evidence(agent.validation_pipeline.state, "targeted_passed", True)
@@ -52,13 +52,13 @@ def test_standard_acceptance_pass_stays_validating_until_relevant_regression():
     assert ready.status == CompletionStatus.READY
 
 
-def test_complex_acceptance_pass_stays_validating_until_full_regression():
+def test_complex_acceptance_is_ready_when_plan_has_no_regression_check():
     agent = policy_agent(ExecutionMode.COMPLEX)
     record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
 
     missing = TaskCompletionPolicy().evaluate(agent)
 
-    assert missing.status == CompletionStatus.NEEDS_FULL_VALIDATION
+    assert missing.status == CompletionStatus.READY
     assert agent.task_state.phase == AgentPhase.VALIDATING
 
     record_evidence(agent.validation_pipeline.state, "full_passed", True)

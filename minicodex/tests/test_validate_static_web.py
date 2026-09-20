@@ -86,7 +86,7 @@ def test_missing_data_markers_are_reported(tmp_path):
     )
 
 
-def test_static_web_result_creates_current_acceptance_evidence():
+def test_unbound_static_web_result_is_diagnostic_only():
     pipeline = ValidationPipeline()
     pipeline.record_edit()
     result = type("Result", (), {
@@ -108,7 +108,8 @@ def test_static_web_result_creates_current_acceptance_evidence():
     assert evidence.outcome == ValidationOutcome.PASSED
     assert evidence.edit_revision == 1
     assert evidence.details["button_count"] == 36
-    assert ValidationDecisionPolicy(pipeline.state).current_acceptance_passed() is True
+    assert evidence.check_id == ""
+    assert ValidationDecisionPolicy(pipeline.state).current_acceptance_passed() is False
 
     pipeline.record_edit()
 

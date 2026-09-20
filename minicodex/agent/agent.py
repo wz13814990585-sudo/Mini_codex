@@ -21,9 +21,9 @@ from .validation import (
     RegressionRecoveryPolicy,
     RelevantPathResolver,
     TaskCompletionPolicy,
+    ValidationExecutor,
     ValidationPipeline,
     ValidatorResolver,
-    VerificationSpecBinder,
     SemanticRegressionJudge,
 )
 from .dependency import DependencyResolver
@@ -61,7 +61,9 @@ from .safety import (
     SafetyToolExecutor,
 )
 from .task_state import AgentPhase, RuntimeEventType, TaskRuntime, TaskState
-from .validation.plan import ValidationPlanner
+from .validation.contracts import TestTargetContract
+from .validation.plan import EvidenceStrength, ValidationCheck, ValidationPlan, ValidationPlanner
+from .validation.evidence import ValidationPurpose
 from .validation.decision_policy import ValidationDecisionPolicy
 from .context.workspace_session import ChangeImpactResolver, WorkspaceSession
 from .memory import (
@@ -350,7 +352,7 @@ class MiniCodexAgent:
         self.latest_symbol_recovery_paths: tuple[str, ...] = ()
         self.relevant_path_resolver = RelevantPathResolver(self.workspace)
         self.validator_resolver = ValidatorResolver(self.workspace, test_index=self.workspace_session.test_index)
-        self.verification_spec_binder = VerificationSpecBinder()
+        self.validation_executor = ValidationExecutor()
         for tool in getattr(self.registry, "_tools", {}).values():
             if hasattr(tool, "symbol_index"):
                 tool.symbol_index = self.workspace_session.symbol_index
@@ -420,22 +422,8 @@ class MiniCodexAgent:
         return "."
 
     def ensure_bound_check(self, check):
-        """Bind/rebind only the check about to be validated for this revision."""
-        # A typed spec is a contract for exactly one requirement.  Task-level
-        # checks can still aggregate evidence, but may not borrow the first
-        # requirement's spec and claim it proves all of them.
-        if check is None or len(check.requirement_ids) != 1:
-            return check
-        requirement = next((item for item in self.task_requirements.items if item.id == check.requirement_ids[0]), None)
-        if requirement is None:
-            return check
-        impact = ChangeImpactResolver().resolve(self.workspace_session, getattr(self.execution_route, "target_paths", ()))
-        result = self.verification_spec_binder.bind(check, requirement, session=self.workspace_session, impact=impact)
-        if result.check is not check:
-            plan = self.validation_pipeline.state.plan
-            self.validation_pipeline.state.plan = type(plan)(tuple(
-                result.check if item.id == check.id else item for item in plan.checks))
-        return result.check
+        """Typed contracts are already bound; repository facts only resolve targets."""
+        return check
 
     def validation_paths_for(self, check) -> tuple[str, ...]:
         """Small, deterministic inspection scope for one unresolved check."""
@@ -444,8 +432,11 @@ class MiniCodexAgent:
             for requirement_id in getattr(check, "requirement_ids", ()):
                 requirement = next((item for item in self.task_requirements.items if item.id == requirement_id), None)
                 paths.extend(getattr(requirement, "paths", ()) if requirement else ())
-            spec = getattr(check, "spec", None)
-            paths.extend(filter(None, (getattr(spec, "path", ""), getattr(spec, "source_path", ""))))
+            contract = getattr(check, "contract", None)
+            paths.extend(filter(None, (
+                getattr(contract, "path", ""),
+                getattr(contract, "target", "").split("::", 1)[0],
+            )))
         return tuple(dict.fromkeys(str(path) for path in paths if str(path).strip()))
 
     def prepare_next_validation_check(self):
@@ -472,6 +463,48 @@ class MiniCodexAgent:
         self.current_validation_check = check
         self.current_validator_resolution = resolution
         return check, resolution
+
+    def execute_resolved_validations(self):
+        """Run consecutive resolved checks without spending provider turns."""
+        results = []
+        while True:
+            check, resolution = self.prepare_next_validation_check()
+            if check is None:
+                break
+            result = self.validation_executor.execute(self, check, resolution)
+            results.append(result)
+            if result.state.value != "proven":
+                break
+        return tuple(results)
+
+    def materialize_regression_checks(self, changed_path: str = "") -> None:
+        """Add real edit-induced regression obligations exactly once."""
+        ledger = self.validation_pipeline.state
+        if not ledger.has_edit or any(
+            check.required and check.purpose == ValidationPurpose.REGRESSION
+            for check in ledger.plan.checks
+        ):
+            return
+        targets = tuple(dict.fromkeys((
+            changed_path,
+            *getattr(self.execution_route, "target_paths", ()),
+        )))
+        impact = ChangeImpactResolver().resolve(self.workspace_session, targets)
+        tests = tuple(test for test in impact.tests if test)
+        if not tests:
+            return
+        checks = list(ledger.plan.checks)
+        for target in tests:
+            checks.append(ValidationCheck(
+                id=f"V{len(checks) + 1}",
+                requirement_ids=(),
+                purpose=ValidationPurpose.REGRESSION,
+                contract=TestTargetContract(target),
+                strength=EvidenceStrength.REGRESSION,
+                revision=ledger.edit_revision,
+                reason=f"编辑影响了聚焦测试 {target}",
+            ))
+        ledger.plan = ValidationPlan(tuple(checks))
 
     # =========================================================
     # Next Edit Revision
@@ -514,9 +547,7 @@ class MiniCodexAgent:
             needs_plan=bool(getattr(route, "needs_plan", False)),
             planning_activated=self.active_plan is not None,
             requirement_ids=tuple(item.id for item in self.task_requirements.items),
-            satisfied_requirement_ids=tuple(
-                item.id for item in self.task_requirements.items if item.satisfied
-            ),
+            satisfied_requirement_ids=self.satisfied_requirement_ids(),
             remaining_steps=self.task_max_steps,
             edit_revision=validation.edit_revision,
             validation_revision=getattr(validation, "evidence_sequence", 0),
@@ -549,9 +580,17 @@ class MiniCodexAgent:
         return self.apply_runtime_event(
             RuntimeEventType.REQUIREMENTS_UPDATED,
             requirement_ids=tuple(item.id for item in self.task_requirements.items),
-            satisfied_requirement_ids=tuple(
-                item.id for item in self.task_requirements.items if item.satisfied
-            ),
+            satisfied_requirement_ids=self.satisfied_requirement_ids(),
+        )
+
+    def satisfied_requirement_ids(self) -> tuple[str, ...]:
+        ledger = self.validation_pipeline.state
+        return tuple(
+            requirement.id
+            for requirement in self.task_requirements.items
+            if ledger.plan.for_requirement(requirement.id)
+            and all(ledger.proof(check.id) is not None
+                    for check in ledger.plan.for_requirement(requirement.id))
         )
 
     def sync_plan_state(self, *, superseded_steps: tuple[int, ...] = ()) -> TaskState:
@@ -627,7 +666,6 @@ class MiniCodexAgent:
         owned_dirty = bool(getattr(session, "_dirty_paths", ()))
         if session.refresh(periodic=True) and external_candidate and not owned_dirty and self.task_state.run_id:
             revision = self.validation_pipeline.record_edit(owned=False)
-            self.task_requirements.invalidate_revision(revision)
             self.working_summary.advance_revision(revision)
             self.apply_runtime_event(RuntimeEventType.WORKSPACE_CHANGED, edit_revision=revision,
                                      paths=session.changed_paths)
@@ -640,7 +678,6 @@ class MiniCodexAgent:
         result = self.rollback_engine.undo_task()
         if result.data.get("restored_paths"):
             revision = self.validation_pipeline.record_edit()
-            self.task_requirements.invalidate_revision(revision)
             self.apply_runtime_event(RuntimeEventType.ROLLBACK_APPLIED, edit_revision=revision,
                                      restored_paths=tuple(result.data["restored_paths"]))
             self.sync_requirements_state()
@@ -747,12 +784,6 @@ class MiniCodexAgent:
             paths=getattr(self.execution_route, "target_paths", ()), request=user_input,
             mode=self.execution_policy.mode, impact=change_impact,
             available_capabilities=getattr(self.registry, "available_capabilities", ()))
-        requirements_by_id = {item.id: item for item in self.task_requirements.items}
-        self.validation_pipeline.state.plan = type(self.validation_pipeline.state.plan)(tuple(
-            self.verification_spec_binder.bind(check, requirements_by_id.get(check.requirement_ids[0]),
-                session=self.workspace_session, impact=change_impact).check
-            if len(check.requirement_ids) == 1 and requirements_by_id.get(check.requirement_ids[0]) else check
-            for check in self.validation_pipeline.state.plan.checks))
         self.runtime_control.reset(planning_active=False)
         self.runtime_control.control_llm_calls = (
             self.execution_metrics.routing_llm_calls
@@ -783,9 +814,7 @@ class MiniCodexAgent:
             needs_plan=bool(getattr(self.execution_route, "needs_plan", False)),
             planning_activated=planning_enabled,
             requirement_ids=tuple(item.id for item in self.task_requirements.items),
-            satisfied_requirement_ids=tuple(
-                item.id for item in self.task_requirements.items if item.satisfied
-            ),
+            satisfied_requirement_ids=(),
             remaining_steps=self.task_max_steps,
         )
 

@@ -135,17 +135,13 @@ def test_local_step_completion_does_not_bypass_global_gate(tmp_path):
 
     assert completed["completed"] is True
     assert agent.active_plan.is_completed() is True
-    assert completion.status == CompletionStatus.NEEDS_ACCEPTANCE
+    assert completion.status == CompletionStatus.NOT_READY
     assert completion.can_complete is False
 
     record_evidence(agent.validation_pipeline.state, "acceptance_passed", True)
     still_blocked = evaluate_completion(agent)
-    assert still_blocked.status == CompletionStatus.NEEDS_FULL_VALIDATION
-
-    record_evidence(agent.validation_pipeline.state, "full_passed", True)
-    ready = evaluate_completion(agent)
-    assert ready.status == CompletionStatus.READY
-    assert ready.can_complete is True
+    assert still_blocked.status == CompletionStatus.READY
+    assert still_blocked.can_complete is True
 
 
 def test_large_write_advances_machine_checkable_plan_in_loop(tmp_path):

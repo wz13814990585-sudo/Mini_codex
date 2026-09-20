@@ -1,4 +1,4 @@
-from ....agent.validation import TestIndex
+from ....agent.validation import TestIndex, TestTargetContract
 from ....agent.validation import TestTargetResolver
 from ....agent.validation import ValidatorResolver
 from ....agent.validation.plan import EvidenceStrength, ValidationCheck
@@ -50,7 +50,8 @@ def test_resolver_uses_import_link_only_as_regression(tmp_path):
     registry = ToolRegistry()
     registry.register(TestTool())
     check = ValidationCheck("V1", (), ValidationPurpose.REGRESSION,
-                            capability="test.run", strength=EvidenceStrength.REGRESSION)
+                            TestTargetContract("tests/test_behavior.py"),
+                            strength=EvidenceStrength.REGRESSION)
     resolved = ValidatorResolver(tmp_path).resolve(check, registry=registry, paths=("pkg/worker.py",))
     assert resolved.tool_name == "remote_test_backend"
     assert resolved.arguments["path"] == "tests/test_behavior.py"

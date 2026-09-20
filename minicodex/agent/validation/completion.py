@@ -1,26 +1,14 @@
+"""Public completion result types."""
+
 from dataclasses import dataclass
 from enum import Enum
 
-from .regression_policy import RegressionRequirement
 
-
-class CompletionStatus(
-    str,
-    Enum,
-):
-
+class CompletionStatus(str, Enum):
     NOT_READY = "not_ready"
-
-    NEEDS_ACCEPTANCE = (
-        "needs_acceptance"
-    )
-
-    NEEDS_FULL_VALIDATION = (
-        "needs_full_validation"
-    )
-
+    NEEDS_ACCEPTANCE = "needs_acceptance"
+    NEEDS_FULL_VALIDATION = "needs_full_validation"
     NEEDS_RELEVANT_VALIDATION = "needs_relevant_validation"
-
     READY = "ready"
 
 
@@ -36,220 +24,14 @@ class TaskOutcome(str, Enum):
 
 @dataclass(frozen=True)
 class CompletionDecision:
-    """
-    Deterministic task-completion decision.
-
-    The CompletionGate does not decide whether code
-    is semantically good by itself.
-
-    It only checks whether the required independent
-    pieces of evidence exist for the CURRENT edit
-    revision.
-    """
-
     status: CompletionStatus
-
     edit_revision: int
-
     has_edit: bool
-
     acceptance_passed: bool
-
     full_validation_passed: bool
-
     reason: str
-
     outcome: TaskOutcome = TaskOutcome.INCOMPLETE
 
     @property
-    def can_complete(
-        self,
-    ) -> bool:
-
-        return (
-            self.status
-            == CompletionStatus.READY
-        )
-
-
-class CompletionGate:
-    """
-    Final deterministic gate before an editing task may
-    be considered complete.
-
-    Baseline evidence:
-
-    1. Acceptance proves the requested state for the current revision.
-    2. Regression evidence is proportional to the active policy.
-    3. An edit distinguishes edited completion from already-satisfied
-       completion; it is not itself mandatory.
-
-    Full regression tests alone are intentionally insufficient because
-    acceptance remains an independent requirement by default.
-    """
-
-    def evaluate(
-        self,
-        *,
-        edit_revision: int,
-        has_edit: bool,
-        acceptance_passed: bool,
-        full_validation_passed: bool,
-        relevant_validation_passed: bool = False,
-        require_acceptance: bool = True,
-        regression_requirement: RegressionRequirement = (
-            RegressionRequirement.REQUIRED
-        ),
-        allow_already_satisfied: bool = True,
-    ) -> CompletionDecision:
-
-        # =====================================================
-        # No Edit
-        # =====================================================
-
-        if not has_edit and not (
-            allow_already_satisfied
-            and (acceptance_passed or not require_acceptance)
-        ):
-
-            return CompletionDecision(
-                status=(
-                    CompletionStatus
-                    .NOT_READY
-                ),
-                edit_revision=(
-                    edit_revision
-                ),
-                has_edit=False,
-                acceptance_passed=acceptance_passed,
-                full_validation_passed=(
-                    full_validation_passed
-                ),
-                reason=(
-                    "尚未记录成功编辑，且验收证据尚未证明"
-                    "请求状态已存在。"
-                ),
-            )
-
-        # =====================================================
-        # Missing Acceptance Evidence
-        # =====================================================
-
-        if require_acceptance and not acceptance_passed:
-
-            return CompletionDecision(
-                status=(
-                    CompletionStatus
-                    .NEEDS_ACCEPTANCE
-                ),
-                edit_revision=(
-                    edit_revision
-                ),
-                has_edit=has_edit,
-                acceptance_passed=False,
-                full_validation_passed=(
-                    full_validation_passed
-                ),
-                reason=(
-                    "当前编辑版本尚无验收证据表明"
-                    "请求行为可用。"
-                ),
-            )
-
-        if regression_requirement == RegressionRequirement.NOT_APPLICABLE:
-            return CompletionDecision(
-                status=CompletionStatus.READY,
-                edit_revision=edit_revision,
-                has_edit=has_edit,
-                acceptance_passed=acceptance_passed,
-                full_validation_passed=full_validation_passed,
-                reason=(
-                    "验收已通过，且全仓库回归不适用于"
-                    "本次变更范围。"
-                ),
-                outcome=(
-                    TaskOutcome.EDITED_AND_VALIDATED
-                    if has_edit
-                    else TaskOutcome.ALREADY_SATISFIED
-                ),
-            )
-
-        if regression_requirement in {
-            RegressionRequirement.RELEVANT_ONLY,
-            RegressionRequirement.UNKNOWN,
-        }:
-            if not (relevant_validation_passed or full_validation_passed):
-                return CompletionDecision(
-                    status=CompletionStatus.NEEDS_RELEVANT_VALIDATION,
-                    edit_revision=edit_revision,
-                    has_edit=has_edit,
-                    acceptance_passed=acceptance_passed,
-                    full_validation_passed=full_validation_passed,
-                    reason=(
-                        "验收已通过，但本次变更范围仍需"
-                        "相关回归证据。"
-                    ),
-                )
-            return CompletionDecision(
-                status=CompletionStatus.READY,
-                edit_revision=edit_revision,
-                has_edit=has_edit,
-                acceptance_passed=acceptance_passed,
-                full_validation_passed=full_validation_passed,
-                reason=(
-                    "当前编辑版本已具备验收与相关回归证据。"
-                ),
-                outcome=(
-                    TaskOutcome.EDITED_AND_VALIDATED
-                    if has_edit
-                    else TaskOutcome.ALREADY_SATISFIED
-                ),
-            )
-
-        # =====================================================
-        # Acceptance Passed But Regression Not Complete
-        # =====================================================
-
-        if not full_validation_passed:
-
-            return CompletionDecision(
-                status=(
-                    CompletionStatus
-                    .NEEDS_FULL_VALIDATION
-                ),
-                edit_revision=(
-                    edit_revision
-                ),
-                has_edit=has_edit,
-                acceptance_passed=True,
-                full_validation_passed=False,
-                reason=(
-                    "验收验证已通过，但当前编辑版本仍需"
-                    "完整回归验证。"
-                ),
-            )
-
-        # =====================================================
-        # Complete
-        # =====================================================
-
-        return CompletionDecision(
-            status=(
-                CompletionStatus.READY
-            ),
-            edit_revision=(
-                edit_revision
-            ),
-            has_edit=has_edit,
-            acceptance_passed=True,
-            full_validation_passed=True,
-            reason=(
-                "当前编辑版本已同时具备验收证据与"
-                "成功的完整回归验证。"
-            ),
-            outcome=(
-                TaskOutcome.EDITED_AND_VALIDATED
-                if has_edit
-                else TaskOutcome.ALREADY_SATISFIED
-            ),
-        )
+    def can_complete(self) -> bool:
+        return self.status == CompletionStatus.READY

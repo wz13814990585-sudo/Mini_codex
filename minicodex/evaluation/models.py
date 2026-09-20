@@ -215,6 +215,8 @@ class EvaluationResult:
     redundant_searches: int = 0
     wrong_validation_target: bool = False
     failure_category: str | None = None
+    terminal_failure_category: str | None = None
+    contributing_signals: tuple[str, ...] = ()
     cost_usd: float | None = None
 
     duration_seconds: float = 0.0

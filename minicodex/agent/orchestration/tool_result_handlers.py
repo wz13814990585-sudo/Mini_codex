@@ -8,21 +8,18 @@ from pathlib import Path
 from ..editing.edit_verifier import EditVerifier
 from ..progress import ProgressKind, ProgressSignal
 from ..task_state import RuntimeEventType
-from ..validation.plan import RequirementEvidenceResolver
-
-
 class EditResultHandler:
     def apply(self, agent, *, tool_name, arguments, result, current_plan_step, emit):
         revision = agent.validation_pipeline.record_edit()
-        requirements = getattr(agent, "task_requirements", None)
-        if requirements is not None:
-            requirements.invalidate_revision(revision)
-            agent.sync_requirements_state()
+        agent.sync_requirements_state()
         agent.working_summary.advance_revision(revision)
         agent._repo_map_initialized = False
         agent._repo_map_revision = None
         path = str(arguments.get("path", ""))
         agent.workspace_session.invalidate(path)
+        materialize_regression = getattr(agent, "materialize_regression_checks", None)
+        if callable(materialize_regression):
+            materialize_regression(path)
         memory = getattr(getattr(agent, "working_summary", None), "memory", None)
         if memory is not None:
             try:
@@ -32,7 +29,7 @@ class EditResultHandler:
         emit(agent, RuntimeEventType.EDIT_APPLIED,
              edit_revision=revision, path=path,
              milestone_check_ids=tuple(check.id for check in agent.validation_pipeline.state.plan.checks
-                                      if check.required and check.milestone == "work_unit"),
+                                      if check.required),
              diff_quality_issues=result.data.get("diff_quality_issues", ()))
         if hasattr(agent, "step_evidence"):
             agent.step_evidence.record(step_id=current_plan_step.id if current_plan_step else None,
@@ -80,14 +77,15 @@ class ValidationResultHandler:
             return ValidationHandled(None, ProgressSignal(ProgressKind.NONE, "未产生验证证据。"), None, False)
         checks = agent.validation_pipeline.state.plan.checks
         contract = next((check for check in checks if check.id == evidence.check_id), None)
-        if metrics is not None and checks and evidence.purpose.value == "acceptance" and (
-            contract is None or (contract.target and contract.target != evidence.target)
+        attempted_check = str(arguments.get("validation_check", "")).strip()
+        if (
+            metrics is not None
+            and attempted_check
+            and evidence.purpose.value == "acceptance"
+            and contract is None
         ):
             metrics.wrong_validation_target_count += 1
-        requirements = getattr(agent, "task_requirements", None)
-        if requirements is not None:
-            RequirementEvidenceResolver().resolve(requirements, agent.validation_pipeline.state)
-            agent.sync_requirements_state()
+        agent.sync_requirements_state()
         ledger = agent.validation_pipeline.state
         milestones = (all(ledger.proof(check_id) is not None for check_id in unit.milestone_check_ids)
                       if unit and evidence.check_id in unit.milestone_check_ids else None)

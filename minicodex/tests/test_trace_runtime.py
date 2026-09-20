@@ -372,30 +372,7 @@ def test_validation_trace():
         )
     ]
 
-    assert (
-        len(
-            events
-        )
-        == 1
-    )
-
-    assert (
-        events[
-            0
-        ].data[
-            "purpose"
-        ]
-        == "regression"
-    )
-
-    assert (
-        events[
-            0
-        ].data[
-            "failed"
-        ]
-        == 0
-    )
+    assert events == []
 
 
 # =============================================================

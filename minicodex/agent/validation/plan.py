@@ -1,10 +1,20 @@
-"""Requirement-bound verification contracts, independent of tool names."""
+"""Small deterministic proof obligations derived from typed contracts."""
+
+from __future__ import annotations
+
 from dataclasses import dataclass, replace
 from enum import IntEnum
 
+from .contracts import (
+    BrowserInteractionContract,
+    FileContainsContract,
+    FileExistsContract,
+    HttpContract,
+    SemanticContract,
+    VerificationContract,
+    contract_key,
+)
 from .evidence import ValidationPurpose
-from .verification_spec import (CommandVerificationSpec, FileVerificationSpec,
-                                SemanticVerificationSpec, VerificationSpec, derive_http_spec)
 
 
 class EvidenceStrength(IntEnum):
@@ -22,106 +32,75 @@ class ValidationCheck:
     id: str
     requirement_ids: tuple[str, ...]
     purpose: ValidationPurpose
-    target: str = ""
-    capability: str = "validation.behavior"
+    contract: VerificationContract
     required: bool = True
     strength: EvidenceStrength = EvidenceStrength.TARGETED
     revision: int = 0
-    milestone: str = "task"
     reason: str = "独立证明请求结果。"
-    observable: str = ""
-    spec: VerificationSpec | None = None
-    spec_source: str = ""
-    spec_bound_revision: int | None = None
+
+    @property
+    def contract_type(self) -> str:
+        return self.contract.contract_type
 
 
 @dataclass(frozen=True)
 class ValidationPlan:
     checks: tuple[ValidationCheck, ...] = ()
 
-    def at_revision(self, revision: int):
-        return replace(self, checks=tuple(replace(c, revision=revision) for c in self.checks))
+    def at_revision(self, revision: int) -> "ValidationPlan":
+        return replace(self, checks=tuple(replace(check, revision=revision) for check in self.checks))
 
-    def for_requirement(self, requirement_id: str):
-        return tuple(c for c in self.checks if requirement_id in c.requirement_ids and c.required)
+    def for_requirement(self, requirement_id: str) -> tuple[ValidationCheck, ...]:
+        return tuple(
+            check for check in self.checks
+            if check.required and requirement_id in check.requirement_ids
+        )
 
 
 class ValidationPlanner:
-    def build(self, requirements, *, revision=0, profile=None, paths=(), request="", mode=None,
-              impact=None, available_capabilities=None):
-        checks = []
-        from .ladder import VerificationLadder
-        rungs = VerificationLadder().select(profile, paths, request, mode=mode, impact=impact) if profile is not None else ()
-        # A browser/service check is itself the acceptance proof when this
-        # workspace has no focused test target.  Do not manufacture a second,
-        # generic behaviour check that the same runtime observation cannot prove.
-        runtime_rung = next((rung for rung in rungs if rung.strength == EvidenceStrength.RUNTIME), None)
-        commands = dict(getattr(profile, "commands", ()) or ())
-        has_focused_test = bool(commands.get("test") or getattr(impact, "tests", ()))
-        for item in requirements.items:
-            structural = item.kind.value == "structural"
-            semantic = item.kind.value == "semantic"
-            runtime_acceptance = runtime_rung if not (structural or semantic or has_focused_test) else None
-            spec = self._requirement_spec(item, runtime_acceptance)
+    """Materialize each typed contract once; identical contracts share proof."""
+
+    def build(
+        self,
+        requirements,
+        *,
+        revision: int = 0,
+        profile=None,
+        paths=(),
+        request="",
+        mode=None,
+        impact=None,
+        available_capabilities=None,
+    ) -> ValidationPlan:
+        del profile, paths, request, mode, impact, available_capabilities
+        grouped: dict[tuple, list] = {}
+        for requirement in requirements.items:
+            grouped.setdefault(contract_key(requirement.contract), []).append(requirement)
+
+        checks: list[ValidationCheck] = []
+        for items in grouped.values():
+            contract = items[0].contract
             checks.append(ValidationCheck(
-                id=f"V{len(checks) + 1}", requirement_ids=(item.id,),
-                purpose=(ValidationPurpose.REGRESSION if item.category.value == "regression"
-                         else ValidationPurpose.ACCEPTANCE),
-                capability=("validation.structure" if structural
-                            else "validation.semantic" if semantic
-                            else runtime_acceptance.capability if runtime_acceptance else "validation.behavior"),
-                strength=(EvidenceStrength.STRUCTURE if structural
-                          else EvidenceStrength.TARGETED if semantic
-                          else runtime_acceptance.strength if runtime_acceptance else EvidenceStrength.TARGETED),
-                revision=revision, milestone="work_unit" if len(paths) > 1 else "task",
-                reason=runtime_acceptance.reason if runtime_acceptance else item.description,
-                observable=item.observable,
-                spec=spec,
-                # Planner-derived contracts are stable requirement contracts,
-                # not repository observations. Their provenance must never
-                # render as an ambiguous unbound@None state.
-                spec_source="requirement" if spec is not None else "",
-            ))
-        for rung in rungs:
-            if rung.strength in {EvidenceStrength.STRUCTURE, EvidenceStrength.TARGETED} and rung.purpose == ValidationPurpose.ACCEPTANCE:
-                continue
-            if rung.strength == EvidenceStrength.RUNTIME and not has_focused_test:
-                continue
-            if rung.strength == EvidenceStrength.REGRESSION and not (rung.command or getattr(impact, "tests", ())):
-                continue
-            # Runtime/regression ladder checks are broad task evidence. They
-            # must not borrow one requirement's typed spec and accidentally
-            # satisfy every unrelated behavioral requirement.
-            requirement_ids = ()
-            checks.append(ValidationCheck(
-                f"V{len(checks) + 1}", requirement_ids, rung.purpose,
-                target=rung.command if rung.capability == "process.run" else "",
-                capability=rung.capability, strength=rung.strength, revision=revision,
-                milestone="task", reason=rung.reason,
-                spec=CommandVerificationSpec(rung.command) if rung.capability == "process.run" and rung.command else None,
+                id=f"V{len(checks) + 1}",
+                requirement_ids=tuple(item.id for item in items),
+                purpose=(
+                    ValidationPurpose.REGRESSION
+                    if any(item.category.value == "regression" for item in items)
+                    else ValidationPurpose.ACCEPTANCE
+                ),
+                contract=contract,
+                strength=self._strength(contract),
+                revision=revision,
+                reason="；".join(item.description for item in items),
             ))
         return ValidationPlan(tuple(checks))
 
     @staticmethod
-    def _requirement_spec(item, runtime_rung):
-        paths = tuple(item.paths)
-        path = paths[0] if paths else ""
-        if item.kind.value == "semantic":
-            return SemanticVerificationSpec(path, item.observable)
-        if runtime_rung and runtime_rung.capability == "service.validate":
-            return derive_http_spec(item.observable)
-        if item.kind.value == "structural":
-            return FileVerificationSpec(path, contains="" if "exists" in item.observable.casefold() else item.observable)
-        return None
-
-
-class RequirementEvidenceResolver:
-    """No edits, global green flags, or another requirement's checks count."""
-
-    def resolve(self, requirements, ledger):
-        for item in requirements.items:
-            checks = ledger.plan.for_requirement(item.id)
-            proofs = [ledger.proof(c.id) for c in checks]
-            item.satisfied = bool(checks) and all(proofs)
-            item.evidence_revision = ledger.edit_revision if item.satisfied else None
-            item.evidence = [p.validation_key for p in proofs if p is not None]
+    def _strength(contract: VerificationContract) -> EvidenceStrength:
+        if isinstance(contract, (FileExistsContract, FileContainsContract)):
+            return EvidenceStrength.STRUCTURE
+        if isinstance(contract, SemanticContract):
+            return EvidenceStrength.TARGETED
+        if isinstance(contract, (HttpContract, BrowserInteractionContract)):
+            return EvidenceStrength.RUNTIME
+        return EvidenceStrength.TARGETED

@@ -8,6 +8,7 @@ import time
 
 from .message_protocol import validate_tool_message_protocol
 from ..task_state import AgentPhase, RuntimeEventType
+from ..reason_codes import ReasonCode
 
 
 def _chat_with_heartbeat(agent, *, messages: list, tools: list):
@@ -176,8 +177,57 @@ def run_agent_loop(agent, user_input: str) -> str:
         ensure_runtime(user_input)
     messages = [{"role": "user", "content": user_input}]
     task_max_steps = int(getattr(agent, "task_max_steps", agent.max_steps))
+    reported_validation_attempts: set[tuple] = set()
 
     for step in range(int(getattr(agent, "configured_max_steps", task_max_steps))):
+        execute_validations = getattr(agent, "execute_resolved_validations", None)
+        executions = execute_validations() if callable(execute_validations) else ()
+        if executions:
+            agent.sync_requirements_state()
+            agent.plan_orchestrator.reconcile(agent)
+        for execution in executions:
+            key = (
+                execution.check_id,
+                agent.validation_pipeline.state.edit_revision,
+                execution.state.value,
+                execution.reason,
+            )
+            if key in reported_validation_attempts:
+                continue
+            reported_validation_attempts.add(key)
+            if execution.state.value == "failed":
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Harness 已执行必需检查 {execution.check_id}，验证失败。"
+                        f"请根据以下实际结果做针对性修复：{execution.reason}"
+                    ),
+                })
+            elif execution.state.value == "inconclusive":
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Harness 执行检查 {execution.check_id} 时环境/执行无定论："
+                        f"{execution.reason}。仅检查该执行问题，不要改写验证目标。"
+                    ),
+                })
+            elif execution.state.value == "unresolved":
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"检查 {execution.check_id} 的目标尚未解析：{execution.reason}"
+                        "。只允许一次最小仓库探查；Harness 将随后重新解析。"
+                    ),
+                })
+        blocked = next((item for item in executions if item.state.value == "blocked"), None)
+        if (
+            blocked is not None
+            and (agent.validation_pipeline.state.has_edit or step > 0)
+        ):
+            handled = agent.completion_handler.handle_control_stop(
+                agent, reason=blocked.reason, reason_code=ReasonCode.BLOCKED
+            )
+            return handled.output or "任务被验证能力阻塞。"
         ready = agent.completion_handler.check_after_batch(agent)
         if ready.finished:
             return ready.output or ""

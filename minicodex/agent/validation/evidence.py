@@ -11,6 +11,15 @@ class ValidationOutcome(
     INCONCLUSIVE = "inconclusive"
 
 
+class ExecutionStatus(str, Enum):
+    EXECUTED = "executed"
+    BLOCKED = "blocked"
+    INVALID_ARGUMENTS = "invalid_arguments"
+    UNAVAILABLE = "unavailable"
+    TIMEOUT = "timeout"
+    CRASHED = "crashed"
+
+
 # =============================================================
 # Validation Scope
 # =============================================================
@@ -147,6 +156,11 @@ class ValidationEvidence:
     unstable: bool = False
 
     environment_failure: bool = False
+    execution_status: ExecutionStatus = ExecutionStatus.EXECUTED
+
+    def __post_init__(self) -> None:
+        if not self.execution_succeeded and self.execution_status == ExecutionStatus.EXECUTED:
+            object.__setattr__(self, "execution_status", ExecutionStatus.CRASHED)
 
     @property
     def target(self) -> str:

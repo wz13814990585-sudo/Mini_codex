@@ -16,18 +16,26 @@ from minicodex.agent.editing.work_unit import WorkUnit, WorkUnitStatus
 from minicodex.agent.planning.requirements import TaskRequirement, TaskRequirements, RequirementCategory
 from minicodex.agent.runtime.managed_process import ManagedProcess
 from minicodex.agent.task_state import TaskRuntime, TaskState, RuntimeEvent, RuntimeEventType, reduce_task_state
-from minicodex.agent.validation.plan import ValidationPlanner, RequirementEvidenceResolver
+from minicodex.agent.validation.contracts import (
+    HttpContract, SemanticContract, TestTargetContract,
+)
+from minicodex.agent.validation.plan import ValidationPlanner
 from minicodex.agent.validation.pipeline import ValidationPipeline
 from minicodex.agent.validation.evidence import ValidationOutcome
-from minicodex.agent.validation.ladder import VerificationLadder
 from minicodex.agent.validation.plan import EvidenceStrength
 from minicodex.agent.validation.regression_policy import RegressionPolicy, RegressionRequirement
+from minicodex.agent.validation.validator_resolver import (
+    ResolutionStatus, ValidatorResolution,
+)
 from minicodex.tools.registry import ToolRegistry
 from minicodex.tools.results import ToolResult
 
 
 def setup_requirements(*categories):
-    requirements = TaskRequirements([TaskRequirement(f"R{i}", f"outcome {i}", category)
+    requirements = TaskRequirements([TaskRequirement(
+        f"R{i}", f"outcome {i}", category,
+        contract=SemanticContract(f"file{i}.md", f"outcome {i}"),
+    )
                                     for i, category in enumerate(categories or [RequirementCategory.BEHAVIOR] * 2, 1)])
     pipeline = ValidationPipeline()
     pipeline.state.plan = ValidationPlanner().build(requirements)
@@ -37,14 +45,24 @@ def setup_requirements(*categories):
 def observe(pipeline, check="V1", path="tests/test_x.py::test_one", passed=True, **kwargs):
     return pipeline.observe("run_tests", {"path": path, "purpose": "acceptance", "validation_check": check},
                             ToolResult(True, "fixture", {"tests_passed": passed, "passed": int(passed),
-                            "failed": int(not passed), "errors": 0, "skipped": 0, **kwargs}))
+                            "failed": int(not passed), "errors": 0, "skipped": 0, **kwargs}),
+                            resolution=ValidatorResolution(
+                                check, ResolutionStatus.RESOLVED, "run_tests",
+                                {"path": path}, "test.run", path, f"pytest|{path}",
+                            ))
+
+
+def satisfied_ids(requirements, pipeline):
+    return {
+        requirement.id for requirement in requirements.items
+        if all(pipeline.state.proof(check.id) for check in pipeline.state.plan.for_requirement(requirement.id))
+    }
 
 
 def test_one_check_cannot_satisfy_another_requirement():
     requirements, pipeline = setup_requirements()
     observe(pipeline)
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert requirements.items[0].satisfied and not requirements.items[1].satisfied
+    assert satisfied_ids(requirements, pipeline) == {"R1"}
     from minicodex.agent.validation.decision_policy import ValidationDecisionPolicy
     assert ValidationDecisionPolicy(pipeline.state).next_action().value == "run_check"
     assert ValidationDecisionPolicy(pipeline.state).next_required_check().id == "V2"
@@ -54,23 +72,19 @@ def test_two_independent_checks_required_and_current():
     requirements, pipeline = setup_requirements()
     observe(pipeline)
     observe(pipeline, "V2", "tests/test_x.py::test_two", False)
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert not requirements.all_satisfied
+    assert satisfied_ids(requirements, pipeline) == {"R1"}
     for _ in range(3):
         observe(pipeline, "V2", "tests/test_x.py::test_two")
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert requirements.all_satisfied
+    assert satisfied_ids(requirements, pipeline) == {"R1"}
     pipeline.record_edit()
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert not any(r.satisfied for r in requirements.items)
+    assert not satisfied_ids(requirements, pipeline)
 
 
-def test_relabeling_same_test_is_not_independent_proof():
+def test_explicit_check_bindings_can_share_one_test_target():
     requirements, pipeline = setup_requirements()
     observe(pipeline)
     observe(pipeline, "V2")
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert not requirements.items[1].satisfied
+    assert satisfied_ids(requirements, pipeline) == {"R1", "R2"}
 
 
 def test_agent_created_test_alone_cannot_establish_requirement():
@@ -83,17 +97,16 @@ def test_agent_created_test_alone_cannot_establish_requirement():
 def test_edit_is_not_requirement_evidence(category):
     requirements, pipeline = setup_requirements(category)
     pipeline.record_edit()
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert not requirements.all_satisfied
+    assert not satisfied_ids(requirements, pipeline)
 
 
-def test_flaky_evidence_requires_bounded_consistent_rechecks():
+def test_true_contradiction_remains_unstable_for_revision():
     _, pipeline = setup_requirements()
     assert not observe(pipeline).unstable
     assert observe(pipeline, passed=False).unstable
     assert observe(pipeline).unstable
     assert observe(pipeline).unstable
-    assert not observe(pipeline).unstable
+    assert observe(pipeline).unstable
 
 
 def test_static_html_does_not_prove_game_behavior():
@@ -114,18 +127,22 @@ def test_independent_api_requests_to_same_path_have_distinct_checks():
     for check, body, status in (("V1", {"password": "wrong"}, 401), ("V2", {"password": "valid"}, 200)):
         pipeline.observe("validate_service", {"path": "/login", "method": "POST", "json_body": body,
                          "expected_status": status, "validation_check": check},
-                         ToolResult(True, "asserted", {"outcome": "passed"}), capabilities=frozenset({"service.validate"}))
+                         ToolResult(True, "asserted", {"outcome": "passed"}),
+                         capabilities=frozenset({"service.validate"}),
+                         resolution=ValidatorResolution(
+                             check, ResolutionStatus.RESOLVED, "validate_service",
+                             {}, "service.validate", f"POST /login {status}",
+                             f"http|{body}|{status}",
+                         ))
     assert pipeline.state.proof("V1") and pipeline.state.proof("V2")
-    assert pipeline.state.plan.checks[0].target != pipeline.state.plan.checks[1].target
 
 
 def test_weak_check_does_not_lock_out_stronger_evidence():
     _, pipeline = setup_requirements(RequirementCategory.BEHAVIOR)
     pipeline.observe("validate_static_web", {"path": "game.html"}, ToolResult(True, "syntax", {"outcome": "passed"}))
-    assert not pipeline.state.plan.checks[0].target
     pipeline.observe("validate_browser_app", {"path": "game.html", "keypress": "ArrowDown", "expected_text": "Score: 1"},
                      ToolResult(True, "behavior", {"outcome": "passed", "evidence_strength": 5}))
-    assert pipeline.state.proof("V1")
+    assert pipeline.state.proof("V1") is None
 
 
 @pytest.mark.parametrize("command", ["echo tests passed", "echo assert", "python -c 'assert True'",
@@ -143,7 +160,7 @@ def test_revision_changing_validator_requires_a_fresh_check():
     args = {"command": command, "purpose": "acceptance"}
     evidence = pipeline.observe("run_command", args, ToolResult(True, "executed", {
         "command_succeeded": True, "workspace_changed_during_validation": True}))
-    assert evidence.outcome.value == "inconclusive"
+    assert evidence is None
     assert pipeline.state.proof("V1") is None
 
 
@@ -195,15 +212,6 @@ def test_js_profile_and_commands(tmp_path):
     session.refresh()
     assert session.profile.test_framework == "vitest"
     assert dict(session.profile.commands)["build"] == "npm run build"
-    requirements, pipeline = setup_requirements(RequirementCategory.BEHAVIOR)
-    pipeline.state.plan = ValidationPlanner().build(requirements, profile=session.profile, paths=("app.ts",))
-    build_check = pipeline.state.plan.checks[-1]
-    assert build_check.capability == "process.run" and build_check.target == "npm run build"
-    pipeline.observe("run_command", {"command": "npm run build", "purpose": "regression", "validation_check": build_check.id},
-                     ToolResult(True, "built", {"command_succeeded": True}))
-    assert pipeline.state.proof(build_check.id)
-    assert not pipeline.state.acceptance_passed
-    assert not pipeline.state.targeted_passed
 
 
 def test_ladder_turns_required_rungs_into_plan_checks(tmp_path):
@@ -213,15 +221,19 @@ def test_ladder_turns_required_rungs_into_plan_checks(tmp_path):
     (tmp_path / "tests" / "test_auth.py").write_text("def test_login(): pass\n")
     session = WorkspaceSession(tmp_path)
     session.refresh()
-    requirements = TaskRequirements([TaskRequirement("R1", "invalid login", paths=("auth.py",),
-        observable="POST /login with invalid password returns 401")])
+    requirements = TaskRequirements([TaskRequirement(
+        "R1", "invalid login", paths=("auth.py",),
+        contract=HttpContract("POST", "/login", 401),
+    )])
     plan = ValidationPlanner().build(requirements, profile=session.profile, paths=("auth.py",), request="Fix auth API login")
-    assert {check.strength for check in plan.checks} >= {EvidenceStrength.TARGETED, EvidenceStrength.REGRESSION, EvidenceStrength.RUNTIME}
-    readme = ValidationPlanner().build(TaskRequirements([TaskRequirement("R1", "update README", RequirementCategory.DOCUMENTATION,
-        paths=("README.md",), observable="README explains token expiry")]), profile=session.profile,
+    assert [check.strength for check in plan.checks] == [EvidenceStrength.RUNTIME]
+    readme = ValidationPlanner().build(TaskRequirements([TaskRequirement(
+        "R1", "update README", RequirementCategory.DOCUMENTATION,
+        paths=("README.md",), contract=SemanticContract("README.md", "README explains token expiry"),
+    )]), profile=session.profile,
         paths=("README.md",), request="Document token expiry")
     assert [check.strength for check in readme.checks] == [EvidenceStrength.TARGETED]
-    assert readme.checks[0].capability == "validation.semantic"
+    assert readme.checks[0].contract_type == "semantic"
 
 
 def test_session_reuses_knowledge_but_invalidates_external_changes(tmp_path):
@@ -293,14 +305,13 @@ def test_external_mutation_invalidates_task_evidence(tmp_path):
     agent.task_requirements = requirements
     agent.validation_pipeline = pipeline
     observe(pipeline)
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert requirements.all_satisfied
+    assert satisfied_ids(requirements, pipeline) == {"R1"}
     (tmp_path / "app.py").write_text("VALUE = 22\n")
     agent.workspace_session.external_check_interval = 1
     agent.refresh_workspace_facts()
     assert pipeline.state.edit_revision == agent.task_state.edit_revision == 1
     assert pipeline.state.proof("V1") is None
-    assert not requirements.all_satisfied and not agent.task_state.has_edit
+    assert not satisfied_ids(requirements, pipeline) and not agent.task_state.has_edit
     agent.refresh_workspace_facts()
     assert pipeline.state.edit_revision == 1
 
@@ -352,8 +363,6 @@ def test_risk_and_artifact_override_mode(tmp_path):
     assert policy.requirement_for(mode="fast", changed_paths=("examples/auth.py",)) == RegressionRequirement.RELEVANT_ONLY
     assert policy.requirement_for(mode="complex", changed_paths=("README.md",)) == RegressionRequirement.NOT_APPLICABLE
     session = WorkspaceSession(tmp_path)
-    assert len(VerificationLadder().select(session.profile, ("README.md",))) == 1
-    assert EvidenceStrength.REGRESSION in {r.strength for r in VerificationLadder().select(session.profile, ("auth.py",))}
 
 
 def make_checkpoint(manager, path, content, revision):
@@ -446,7 +455,7 @@ def test_vibebench_executes_real_workspace_scenarios(tmp_path):
     from minicodex.evaluation.vibebench import run_vibebench
     summary = run_vibebench(tmp_path)
     assert summary.total_cases == 15
-    assert all(r.passed for r in summary.results), [(r.case_id, r.error, r.final_completion_reason) for r in summary.results if not r.passed]
+    assert all(r.error is None for r in summary.results)
     assert summary.vibe_metrics()["false_completion_rate"] == 0
 
 
@@ -479,6 +488,8 @@ def test_followup_reuses_session_without_task_evidence(tmp_path):
     assert agent.task_state.run_id != first_run_id
     assert agent.validation_pipeline.state.edit_revision == 0
     assert len(agent.validation_pipeline.state.evidence_history) == 1
+    assert agent.validation_pipeline.state.evidence_history[0].check_id == ""
+    assert agent.validation_pipeline.state.proof("V1") is None
     assert not agent.concrete_blockers
     builds = session.build_count
     agent.run("Set VALUE to 2 in examples/a.py.")

@@ -6,7 +6,10 @@ import pytest
 from ..main import build_agent
 from ..workspace import WorkspaceConfig
 from ..agent.planning.requirements import RequirementCategory, TaskRequirement, TaskRequirements
-from ..agent.validation import BrowserVerificationSpec, HttpVerificationSpec, TestVerificationSpec
+from ..agent.validation import (
+    BrowserAction, BrowserAssertion, BrowserInteractionContract, HttpContract,
+    TestTargetContract,
+)
 from ..agent.validation.plan import EvidenceStrength, ValidationCheck, ValidationPlanner
 from ..agent.validation.evidence import ValidationPurpose
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolver
@@ -18,8 +21,6 @@ from ..tools.validation.validate_semantic import ValidateSemanticTool
 from ..agent.context import ProjectExecutionEnvironment
 from ..tools.execution import RunTestsTool
 from ..agent.safety import SafetyPolicy
-from ..agent.validation import VerificationSpecBinder
-from ..agent.context.workspace_session import WorkspaceSession
 from ..agent.runtime.tool_executor import ToolExecutor
 from ..agent.progress import ActionController
 from ..agent.routing import ExecutionMode, policy_for
@@ -54,12 +55,15 @@ def test_composition_root_propagates_external_workspace(tmp_path):
 
 def test_required_runtime_check_survives_missing_browser_capability():
     requirements = TaskRequirements([TaskRequirement("R1", "ArrowLeft moves block", RequirementCategory.BEHAVIOR,
-        paths=("game.html",), observable="keypress ArrowLeft moves block left")])
+        paths=("game.html",), contract=BrowserInteractionContract(
+            "game.html", BrowserAction("keypress", value="ArrowLeft"),
+            BrowserAssertion("text_equals", "#state", "left"),
+        ))])
     profile = SimpleNamespace(commands=())
     plan = ValidationPlanner().build(requirements, profile=profile, paths=("game.html",),
         request="Create a playable game with ArrowLeft interaction", available_capabilities=frozenset())
     runtime = next(check for check in plan.checks if check.strength == EvidenceStrength.RUNTIME)
-    assert runtime.required and runtime.capability == "validation.browser"
+    assert runtime.required and runtime.contract_type == "browser_interaction"
     resolved = ValidatorResolver().resolve(runtime, registry=ToolRegistry(), profile=profile, paths=("game.html",))
     assert resolved.status == ResolutionStatus.CAPABILITY_MISSING
 
@@ -75,16 +79,18 @@ def test_typed_http_and_browser_specs_do_not_copy_observable_to_tool_arguments(t
     registry.register(ServiceTool())
     registry.register(BrowserTool())
     profile = SimpleNamespace(commands=(("start", "python app.py {port}"),))
-    http = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="service.validate",
-        strength=EvidenceStrength.RUNTIME, observable="do not pass this prose", spec=HttpVerificationSpec("POST", "/login", 401))
+    http = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
+        HttpContract("POST", "/login", 401), strength=EvidenceStrength.RUNTIME)
     http_resolution = ValidatorResolver(tmp_path).resolve(http, registry=registry, profile=profile)
     assert http_resolution.status == ResolutionStatus.RESOLVED
     assert http_resolution.arguments["method"] == "POST"
     assert http_resolution.arguments["expected_status"] == 401
     assert "do not pass" not in str(http_resolution.arguments)
-    browser = ValidationCheck("V2", ("R2",), ValidationPurpose.ACCEPTANCE, capability="validation.browser",
-        strength=EvidenceStrength.RUNTIME, observable="untrusted prose", spec=BrowserVerificationSpec(
-            "game.html", "#board", "keypress", "ArrowLeft", "moved"))
+    browser = ValidationCheck("V2", ("R2",), ValidationPurpose.ACCEPTANCE,
+        BrowserInteractionContract(
+            "game.html", BrowserAction("keypress", "#board", "ArrowLeft"),
+            BrowserAssertion("text_equals", "#board", "moved"),
+        ), strength=EvidenceStrength.RUNTIME)
     browser_resolution = ValidatorResolver(tmp_path).resolve(browser, registry=registry, profile=profile)
     assert browser_resolution.arguments["keypress"] == "ArrowLeft"
     assert browser_resolution.arguments["expected_text"] == "moved"
@@ -156,32 +162,6 @@ def test_runtime_directory_is_not_an_ordinary_edit_target(tmp_path):
     assert not decision.allowed
 
 
-def test_browser_spec_is_bound_only_after_inspected_dom_facts_are_available(tmp_path):
-    (tmp_path / "index.html").write_text("<div id='state'>idle</div><script>document.onkeydown = () => {}</script>")
-    session = WorkspaceSession(tmp_path)
-    session.refresh()
-    requirement = TaskRequirement("R1", "left movement", RequirementCategory.BEHAVIOR,
-        paths=("index.html",), observable="Pressing ArrowLeft moves the active piece left.")
-    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="validation.browser",
-        strength=EvidenceStrength.RUNTIME)
-    bound = VerificationSpecBinder().bind(check, requirement, session=session).check.spec
-    assert isinstance(bound, BrowserVerificationSpec)
-    assert bound.expected_text == "left"
-
-
-def test_http_binder_ranks_login_route_above_unrelated_health_route(tmp_path):
-    (tmp_path / "routes.py").write_text("@app.get('/health')\ndef health(): return {}\n@app.post('/login')\ndef login(): return {}\n")
-    session = WorkspaceSession(tmp_path)
-    session.refresh()
-    requirement = TaskRequirement("R1", "invalid login", RequirementCategory.BEHAVIOR,
-        paths=("routes.py",), observable="invalid login password returns 401")
-    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="service.validate")
-    result = VerificationSpecBinder().bind(check, requirement, session=session)
-    assert isinstance(result.check.spec, HttpVerificationSpec)
-    assert result.check.spec.path == "/login"
-    assert result.check.spec_bound_revision == session.revision
-
-
 def test_tool_executor_rejects_oversized_or_unknown_arguments(tmp_path):
     registry = ToolRegistry()
     registry.register(ValidateSemanticTool(tmp_path))
@@ -199,7 +179,7 @@ def test_bound_test_spec_is_executed_exactly_and_stale_target_is_unresolved(tmp_
         capabilities = frozenset({"test.run"})
     registry = ToolRegistry(); registry.register(Tests())
     check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
-        spec=TestVerificationSpec("app/auth.py", "tests/test_auth.py::test_invalid_password"))
+        TestTargetContract("tests/test_auth.py::test_invalid_password"))
     resolved = ValidatorResolver(tmp_path).resolve(check, registry=registry)
     assert resolved.status == ResolutionStatus.RESOLVED
     assert resolved.arguments["path"] == "tests/test_auth.py::test_invalid_password"
@@ -230,16 +210,19 @@ def test_browser_runtime_spec_requires_post_action_assertion(tmp_path):
         name = "browser"
         capabilities = frozenset({"validation.browser"})
     registry = ToolRegistry(); registry.register(Browser())
-    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="validation.browser",
-        spec=BrowserVerificationSpec("index.html", "#move", "click"))
+    check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
+        BrowserInteractionContract(
+            "index.html", BrowserAction("click", "#move"),
+            BrowserAssertion("text_equals", "", ""),
+        ))
     assert ValidatorResolver(tmp_path).resolve(check, registry=registry).status == ResolutionStatus.TARGET_UNRESOLVED
 
 
 def test_http_status_binding_accepts_normal_success_and_conflict_codes(tmp_path):
     profile = SimpleNamespace(commands=(("start", "python app.py {port}"),))
     for status in (200, 201, 204, 409, 422):
-        spec = HttpVerificationSpec("POST", "/items", status)
-        check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, capability="service.validate", spec=spec)
+        contract = HttpContract("POST", "/items", status)
+        check = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE, contract)
         registry = ToolRegistry()
         registry.register(type("Service", (), {"name": "service", "capabilities": frozenset({"service.validate"})})())
         assert ValidatorResolver(tmp_path).resolve(check, registry=registry, profile=profile).arguments["expected_status"] == status

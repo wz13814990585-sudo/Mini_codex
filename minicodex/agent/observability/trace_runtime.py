@@ -443,69 +443,6 @@ class TracingToolExecutor:
                 },
             )
 
-        # =====================================================
-        # Validation
-        # =====================================================
-
-        if (
-            prepared.tool_name
-            in {
-                "run_tests",
-                "validate_static_web",
-            }
-        ):
-
-            self._safe_emit(
-                TraceEventType.VALIDATION_RUN,
-                {
-                    "success": (
-                        result.success
-                    ),
-                    "path": (
-                        prepared.arguments
-                        .get(
-                            "path"
-                        )
-                    ),
-                    "purpose": (
-                        prepared.arguments.get("purpose")
-                        or (
-                            "acceptance"
-                            if prepared.tool_name
-                            == "validate_static_web"
-                            else None
-                        )
-                    ),
-                    "outcome": result_data.get(
-                        "outcome"
-                    ),
-                    "passed": (
-                        result_data
-                        .get(
-                            "passed"
-                        )
-                    ),
-                    "failed": (
-                        result_data
-                        .get(
-                            "failed"
-                        )
-                    ),
-                    "errors": (
-                        result_data
-                        .get(
-                            "errors"
-                        )
-                    ),
-                    "skipped": (
-                        result_data
-                        .get(
-                            "skipped"
-                        )
-                    ),
-                },
-            )
-
         return execution
 
     def _safe_emit(

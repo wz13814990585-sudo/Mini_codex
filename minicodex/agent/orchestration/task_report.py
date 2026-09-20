@@ -38,9 +38,10 @@ class TaskReportBuilder:
 
         requirements = getattr(agent, "task_requirements", None)
         if requirements is not None and requirements.items:
+            satisfied = set(getattr(agent, "satisfied_requirement_ids", lambda: ())())
             lines.extend(["", "需求完成情况："])
             lines.extend(
-                f"- [{'x' if item.satisfied else ' '}] {item.description}"
+                f"- [{'x' if item.id in satisfied else ' '}] {item.description}"
                 for item in requirements.items
             )
 
@@ -67,9 +68,14 @@ class TaskReportBuilder:
             lines.extend(["", "停止前已修改："])
             lines.extend(f"- {path}" for path in changed)
         requirements = getattr(agent, "task_requirements", None)
-        if requirements is not None and requirements.unsatisfied:
+        if requirements is not None and requirements.items:
+            satisfied = set(getattr(agent, "satisfied_requirement_ids", lambda: ())())
+            missing = [item for item in requirements.items if item.id not in satisfied]
+        else:
+            missing = []
+        if missing:
             lines.extend(["", "尚缺少以下需求证据："])
-            lines.extend(f"- {item.description}" for item in requirements.unsatisfied)
+            lines.extend(f"- {item.description}" for item in missing)
         if debug:
             lines.extend(["", "结果：", "INCOMPLETE"])
         return "\n".join(lines)

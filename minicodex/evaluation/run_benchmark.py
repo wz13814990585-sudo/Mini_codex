@@ -10,6 +10,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import tempfile
 
 from .benchmark_v1 import BENCHMARK_VERSION, catalog_by_id, fixtures, smoke_fixtures
 from .harness import EvaluationHarness
@@ -84,6 +85,13 @@ def _cleanup_oracle(root: Path) -> None:
         shutil.rmtree(root)
 
 
+def benchmark_workspace_is_isolated(path: Path, repository: Path = APPLICATION_ROOT) -> bool:
+    """Live fixtures must never inherit the MiniCodex repository's Git root."""
+    workspace = path.resolve()
+    root = repository.resolve()
+    return workspace != root and root not in workspace.parents
+
+
 def _run_profile(args, *, selected, profile: EvaluationProfile, experiment_root: Path,
                  timestamp: str, api_key: str, preflight) -> EvaluationSummary:
     all_results = []
@@ -91,45 +99,51 @@ def _run_profile(args, *, selected, profile: EvaluationProfile, experiment_root:
         run_root = experiment_root / profile.value / f"run_{run_index:03d}"
         trace_root = experiment_root / "traces" / profile.value / f"run_{run_index:03d}"
         by_id = {fixture.case.case_id: fixture for fixture in selected}
+        with tempfile.TemporaryDirectory(prefix="minicodex-bench-") as temporary:
+            temporary_root = Path(temporary)
 
-        def factory(case):
-            fixture = by_id[case.case_id]
-            workspace = run_root / "workspaces" / case.case_id
-            oracle = run_root / "oracles" / case.case_id
-            workspace.mkdir(parents=True, exist_ok=False)
-            _materialize(fixture.workspace_files, workspace)
-            llm = LLMClient(api_key=api_key, base_url=args.base_url, model=args.model,
-                            temperature=args.temperature)
-            agent, recorder, _memory = build_agent(
-                WorkspaceConfig.create(workspace, application_root=APPLICATION_ROOT),
-                llm=llm, control_llm=llm, judge_llm=llm, output_level=args.output_level,
-            )
-            agent.max_steps = args.max_steps
-            agent.configured_max_steps = args.max_steps
-            agent.task_max_steps = args.max_steps
-            route = TaskRouter().route(case.prompt)
-            agent._benchmark_policy = benchmark_policy(
-                profile, mode=route.mode, max_steps=args.max_steps,
-                needs_plan=getattr(route, "needs_plan", None),
-            )
-            agent._benchmark_oracle_root = oracle
-            agent._benchmark_materialize_oracle = lambda: _materialize(fixture.oracle_files, oracle)
-            agent._benchmark_cleanup_oracle = lambda: _cleanup_oracle(oracle)
-            agent._benchmark_recorder = recorder
-            trace_path = trace_root / f"{case.case_id}.jsonl"
-            agent._benchmark_trace_path = str(trace_path)
-            return agent
+            def factory(case):
+                fixture = by_id[case.case_id]
+                workspace = temporary_root / "workspaces" / case.case_id
+                oracle = temporary_root / "oracles" / case.case_id
+                if not benchmark_workspace_is_isolated(workspace):
+                    raise RuntimeError("benchmark workspace must be outside the MiniCodex repository")
+                workspace.mkdir(parents=True, exist_ok=False)
+                _materialize(fixture.workspace_files, workspace)
+                llm = LLMClient(api_key=api_key, base_url=args.base_url, model=args.model,
+                                temperature=args.temperature)
+                agent, recorder, _memory = build_agent(
+                    WorkspaceConfig.create(workspace, application_root=APPLICATION_ROOT),
+                    llm=llm, control_llm=llm, judge_llm=llm, output_level=args.output_level,
+                )
+                agent.max_steps = args.max_steps
+                agent.configured_max_steps = args.max_steps
+                agent.task_max_steps = args.max_steps
+                route = TaskRouter().route(case.prompt)
+                agent._benchmark_policy = benchmark_policy(
+                    profile, mode=route.mode, max_steps=args.max_steps,
+                    needs_plan=getattr(route, "needs_plan", None),
+                )
+                agent._benchmark_oracle_root = oracle
+                agent._benchmark_materialize_oracle = lambda: _materialize(fixture.oracle_files, oracle)
+                agent._benchmark_cleanup_oracle = lambda: _cleanup_oracle(oracle)
+                agent._benchmark_recorder = recorder
+                trace_path = trace_root / f"{case.case_id}.jsonl"
+                agent._benchmark_trace_path = str(trace_path)
+                return agent
 
-        harness = EvaluationHarness(
-            agent_factory=factory,
-            profile=profile.value,
-            model=args.model,
-            run_index=run_index,
-        )
-        summary = harness.run_suite(
-            run_name=f"{BENCHMARK_VERSION}:{profile.value}:run_{run_index:03d}",
-            cases=[fixture.case for fixture in selected],
-        )
+            harness = EvaluationHarness(
+                agent_factory=factory,
+                profile=profile.value,
+                model=args.model,
+                run_index=run_index,
+            )
+            summary = harness.run_suite(
+                run_name=f"{BENCHMARK_VERSION}:{profile.value}:run_{run_index:03d}",
+                cases=[fixture.case for fixture in selected],
+            )
+            if args.keep_workspaces:
+                shutil.copytree(temporary_root / "workspaces", run_root / "workspaces")
         raw_path = experiment_root / profile.value / f"run_{run_index:03d}.jsonl"
         write_jsonl(raw_path, summary.results)
         all_results.extend(summary.results)
@@ -188,6 +202,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Agent 输出详细程度。")
     parser.add_argument("--preflight-only", action="store_true",
                         help="仅校验所选用例所需基础设施，不使用凭证、不调用模型。")
+    parser.add_argument("--keep-workspaces", action="store_true",
+                        help="保留临时执行工作区；默认在运行结束后删除。")
     return parser
 
 

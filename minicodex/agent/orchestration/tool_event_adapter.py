@@ -61,6 +61,7 @@ class ToolEventAdapter:
             print(f"[参数] {arguments}")
 
         if run.preparation_failed:
+            self._emit_validation_skipped(agent, tool_name, arguments, "preparation_failed")
             agent.working_summary.record_tool_result(tool_name=tool_name, arguments={}, result=result)
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
             self._append_observation(messages, tool_call.id, result, "工具准备失败")
@@ -71,6 +72,10 @@ class ToolEventAdapter:
 
         controller = getattr(agent, "action_controller", None)
         if run.restriction is not None:
+            self._emit_validation_skipped(
+                agent, tool_name, arguments,
+                str(run.restriction.failure_type or "restricted"),
+            )
             if run.restriction.failure_type == "action_required_restriction":
                 self._emit_event(agent, RuntimeEventType.PHASE_CHANGED, phase=AgentPhase.ACTING)
             if metrics is not None and controller is not None:
@@ -92,10 +97,27 @@ class ToolEventAdapter:
             )
 
         if run.duplicate_blocked:
+            self._emit_validation_skipped(agent, tool_name, arguments, "duplicate_tool_call")
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
             if metrics is not None:
                 metrics.repeated_action_count += 1
             print("\n[重复工具调用已拦截]")
+            agent.validation_pipeline.state.observe_execution(
+                check_id=str(arguments.get("validation_check", "")),
+                tool_name=tool_name,
+                execution_status="blocked",
+                reason="duplicate_tool_call",
+                proof_accepted=False,
+            )
+            agent.working_summary.record_tool_result(
+                tool_name=tool_name, arguments=arguments, result=result,
+                revision=current_revision,
+            )
+            self._append_observation(messages, tool_call.id, result, "重复工具调用已拦截")
+            signal = ProgressSignal(ProgressKind.NONE, "重复工具调用未执行。")
+            signals.append(signal)
+            self._observe(agent, tool_name, signal)
+            return None
         elif not result.success:
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
             failure_type = str(result.data.get("failure_type", "") or "")
@@ -341,3 +363,32 @@ class ToolEventAdapter:
             emit(f"正在验证 {path or 'Web 产物'}...")
             if result.success and result.data.get("outcome") == "passed":
                 emit("验证通过。")
+
+    @staticmethod
+    def _emit_validation_skipped(agent, tool_name: str, arguments: dict, reason: str) -> None:
+        registry = getattr(agent, "registry", None)
+        capabilities = (
+            registry.capabilities_for(tool_name)
+            if registry is not None and tool_name in getattr(registry, "_tools", {})
+            else frozenset()
+        )
+        is_validation = bool(capabilities & {
+            "test.run", "validation.static_web", "validation.browser",
+            "service.validate", "validation.semantic",
+        }) or (
+            "process.run" in capabilities
+            and arguments.get("purpose") in {"acceptance", "regression"}
+        )
+        if not is_validation:
+            return
+        recorder = getattr(agent, "trace_recorder", None)
+        if recorder is None:
+            return
+        from ..observability.trace import TraceEventType
+        recorder.emit(TraceEventType.VALIDATION_SKIPPED, {
+            "check_id": str(arguments.get("validation_check", "")),
+            "tool_name": tool_name,
+            "execution_status": "blocked",
+            "reason_code": reason,
+            "proof_accepted": False,
+        })

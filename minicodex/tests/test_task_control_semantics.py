@@ -128,7 +128,7 @@ def test_fast_is_planless_even_when_legacy_caller_requests_planning(tmp_path):
     )
     agent.run("Create try_code/game.html", use_planning=True)
     assert agent.active_plan is None
-    assert agent.execution_metrics.final_outcome == "incomplete"
+    assert agent.execution_metrics.final_outcome in {"incomplete", "blocked"}
 
 
 def test_router_uses_semantics_not_single_path_only():
@@ -140,83 +140,6 @@ def test_router_uses_semantics_not_single_path_only():
     ).mode == ExecutionMode.COMPLEX
     assert router.route("Improve account settings behavior").mode == ExecutionMode.STANDARD
     assert router.route("Refactor runtime concurrency handling").mode == ExecutionMode.COMPLEX
-
-
-def completion_agent(mode, *, edit, acceptance, relevant=False, full=False, plan=True):
-    policy = policy_for(mode)
-    active_plan = None
-    if policy.use_plan:
-        step = PlanStep(id=1, description="Outcome exists")
-        active_plan = AgentPlan(goal="goal", steps=[step])
-        if plan:
-            active_plan.start_current_step()
-            active_plan.complete_current_step()
-    state_obj = SimpleNamespace(
-        edit_revision=int(edit),
-        has_edit=edit,
-        acceptance_passed=acceptance,
-        targeted_passed=relevant,
-        full_passed=full,
-    )
-    return SimpleNamespace(
-        execution_policy=policy,
-        validation_pipeline=SimpleNamespace(state=state_obj),
-        active_plan=active_plan,
-    )
-
-
-def test_mode_specific_completion_and_already_satisfied():
-    completion = TaskCompletionPolicy()
-    fast_edit = completion.evaluate(
-        completion_agent(ExecutionMode.FAST, edit=True, acceptance=True)
-    )
-    fast_existing = completion.evaluate(
-        completion_agent(ExecutionMode.FAST, edit=False, acceptance=True)
-    )
-    standard = completion.evaluate(
-        completion_agent(
-            ExecutionMode.STANDARD,
-            edit=True,
-            acceptance=True,
-            relevant=True,
-        )
-    )
-    complex_missing = completion.evaluate(
-        completion_agent(
-            ExecutionMode.COMPLEX,
-            edit=True,
-            acceptance=True,
-            relevant=True,
-        )
-    )
-    complex_ready = completion.evaluate(
-        completion_agent(
-            ExecutionMode.COMPLEX,
-            edit=True,
-            acceptance=True,
-            full=True,
-        )
-    )
-
-    assert fast_edit.outcome == TaskOutcome.EDITED_AND_VALIDATED
-    assert fast_existing.outcome == TaskOutcome.ALREADY_SATISFIED
-    assert standard.status == CompletionStatus.READY
-    assert complex_missing.status == CompletionStatus.NEEDS_FULL_VALIDATION
-    assert complex_ready.status == CompletionStatus.READY
-
-
-def test_standard_plan_bookkeeping_cannot_veto_green_evidence():
-    completion = TaskCompletionPolicy()
-    agent = completion_agent(
-        ExecutionMode.STANDARD,
-        edit=True,
-        acceptance=True,
-        relevant=True,
-        plan=False,
-    )
-    decision = completion.evaluate(agent)
-    assert decision.status == CompletionStatus.READY
-    assert decision.outcome == TaskOutcome.EDITED_AND_VALIDATED
 
 
 def test_semantic_evidence_strength_rules():

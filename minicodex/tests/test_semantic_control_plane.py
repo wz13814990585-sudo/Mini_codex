@@ -87,49 +87,59 @@ def test_needs_plan_overrides_mode_default_without_changing_resource_owner():
 
 def test_requirements_extraction_and_evidence_are_revision_aware():
     llm = StubLLM({"requirements": [
-        {"description": "failed login is 401", "category": "behavior", "kind": "behavioral", "paths": ["auth.py"], "observable": "POST /login with invalid password returns 401"},
-        {"description": "coverage exists", "category": "test", "kind": "behavioral", "paths": ["tests/test_auth.py"], "observable": "auth coverage test passes"},
-        {"description": "README updated", "category": "documentation", "kind": "semantic", "paths": ["README.md"], "observable": "README explains token expiry"},
-    ]})
+        {"description": "登录失败返回 401", "category": "behavior", "paths": ["auth.py"],
+         "contract": {"type": "pytest", "target": "tests/test_auth.py"}},
+        {"description": "认证覆盖测试通过", "category": "test", "paths": ["tests/test_auth.py"],
+         "contract": {"type": "pytest", "target": "tests/test_auth.py"}},
+        {"description": "README 说明令牌过期", "category": "documentation", "paths": ["README.md"],
+         "contract": {"type": "semantic", "path": "README.md", "claim": "README 说明令牌过期"}},
+    ], "policy": {"no_edit_if_already_satisfied": False}})
     requirements = RequirementsExtractor(llm).extract(
         "Fix auth, add tests, and update README", mode=ExecutionMode.STANDARD
     )
     assert len(requirements.items) == 3
     assert requirements.items[0].observable.endswith("401")
     assert requirements.items[2].kind.value == "semantic"
-    from minicodex.agent.validation.plan import ValidationPlanner, RequirementEvidenceResolver
+    from minicodex.agent.validation.plan import ValidationPlanner
+    from minicodex.agent.validation.validator_resolver import ResolutionStatus, ValidatorResolution
     pipeline = ValidationPipeline()
     pipeline.state.plan = ValidationPlanner().build(requirements)
     pipeline.record_edit()
     pipeline.record_edit()
-    assert not requirements.all_satisfied
-    pipeline.observe("run_tests", {"path": "tests/test_auth.py", "purpose": "acceptance", "validation_check": "V1"},
-                     ToolResult(True, "passed", {"tests_passed": True, "passed": 1}))
-    RequirementEvidenceResolver().resolve(requirements, pipeline.state)
-    assert requirements.items[0].satisfied
-    assert not requirements.all_satisfied
-    requirements.invalidate_revision(3)
-    assert requirements.items[0].satisfied is False
+    assert not pipeline.state.acceptance_passed
+    pipeline.observe(
+        "run_tests",
+        {"path": "tests/test_auth.py", "purpose": "acceptance", "validation_check": "V1"},
+        ToolResult(True, "passed", {"tests_passed": True, "passed": 1}),
+        resolution=ValidatorResolution(
+            "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+            "test.run", "tests/test_auth.py", "pytest|tests/test_auth.py",
+        ),
+    )
+    assert pipeline.state.proof("V1")
+    assert pipeline.state.proof("V2") is None
+    pipeline.record_edit()
+    assert pipeline.state.proof("V1") is None
 
 
 def test_completion_rejects_green_validation_when_one_requirement_is_open():
     requirements = TaskRequirements([
-        TaskRequirement("R1", "behavior", satisfied=True),
-        TaskRequirement("R2", "tests", RequirementCategory.TEST, satisfied=True),
+        TaskRequirement("R1", "behavior"),
+        TaskRequirement("R2", "tests", RequirementCategory.TEST),
         TaskRequirement("R3", "documentation", RequirementCategory.DOCUMENTATION),
     ])
-    state = SimpleNamespace(
-        edit_revision=1, has_edit=True, acceptance_passed=True,
-        targeted_passed=False, full_passed=False,
-    )
+    from minicodex.agent.validation.plan import ValidationPlanner
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(requirements)
+    pipeline.record_edit()
     agent = SimpleNamespace(
-        validation_pipeline=SimpleNamespace(state=state),
+        validation_pipeline=pipeline,
         execution_policy=policy_for(ExecutionMode.FAST),
         active_plan=None, task_state=None, task_requirements=requirements,
     )
     decision = TaskCompletionPolicy().evaluate(agent)
     assert decision.can_complete is False
-    assert "documentation" in decision.reason
+    assert "V1" in decision.reason
 
 
 def test_mode_escalation_preserves_consumed_budget_and_is_monotonic():
@@ -179,7 +189,7 @@ def test_baseline_failure_identity_and_flaky_state():
     passing = ToolResult(True, "pass", {"tests_passed": True, "passed": 1, "failed": 0, "errors": 0, "skipped": 0})
     pipeline.observe("run_tests", {"path": "tests/test_auth.py", "purpose": "regression"}, passing)
     unstable = pipeline.observe("run_tests", {"path": "tests/test_auth.py", "purpose": "regression"}, failed_result("A"))
-    assert unstable.unstable is True
+    assert unstable.unstable is False
 
 
 def test_semantic_judge_failure_is_uncertain_and_recovery_is_bounded():

@@ -196,38 +196,6 @@ def test_no_progress_restriction_closes_batch_before_guidance():
     assert history[3]["role"] == "user"
 
 
-def test_validation_transition_closes_batch_before_followup():
-    calls = [
-        tool_call("A", "validate_static_web", {"path": "game.html"}),
-        tool_call("B", "git_status"),
-    ]
-    agent, llm = make_agent(
-        FakeMessage(tool_calls=calls),
-        no_progress=10,
-    )
-    agent.validation_pipeline.record_edit()
-    agent.tool_executor = ResultExecutor(
-        {
-            "validate_static_web": ToolResult(
-                success=True,
-                summary="Static web validation passed",
-                data={"outcome": "passed", "errors": []},
-            )
-        }
-    )
-
-    run_agent_loop(agent, "Build game.html")
-
-    history = conversation_after_first_response(llm)
-    assert_batch_order(history, ["A", "B"])
-    assert "跳过" in history[2]["content"] or "skipped" in history[2]["content"].lower()
-    assert history[3]["role"] == "user"
-    assert (
-        "完整回归" in history[3]["content"]
-        or "full regression" in history[3]["content"].lower()
-    )
-
-
 def test_action_required_closes_batch_before_message():
     calls = [
         tool_call("A", "search_code", {"query": "a"}),

@@ -1,6 +1,7 @@
 """Validation evidence, targeting, and policy domain."""
 
 from .evidence import (
+    ExecutionStatus,
     FailureComparison,
     FailureDelta,
     ValidationEvidence,
@@ -11,14 +12,31 @@ from .evidence import (
 )
 from .pipeline import ValidationPipeline
 from .ledger import ValidationLedger
+from .executor import (
+    ValidationExecutionResult,
+    ValidationExecutionState,
+    ValidationExecutor,
+)
 from .validator_resolver import ValidatorResolution, ValidatorResolver
-from .verification_spec import (BrowserVerificationSpec, CommandVerificationSpec, FileVerificationSpec,
-                                HttpVerificationSpec, SemanticVerificationSpec, TestVerificationSpec)
-from .verification_spec_binder import BindingResult, VerificationSpecBinder
+from .contracts import (
+    BrowserAction,
+    BrowserAssertion,
+    BrowserInteractionContract,
+    CommandContract,
+    FileContainsContract,
+    FileExistsContract,
+    HttpContract,
+    NodeBehaviorContract,
+    PythonBehaviorContract,
+    SemanticContract,
+    TestTargetContract,
+    VerificationContract,
+    parse_contract,
+)
 from .test_index import IndexedTest, TestIndex
 from .test_target_resolver import TestTargetResolution, TestTargetResolver
 from .regression_policy import RegressionPolicy, RegressionRequirement
-from .completion import CompletionDecision, CompletionGate, CompletionStatus, TaskOutcome
+from .completion import CompletionDecision, CompletionStatus, TaskOutcome
 from .completion_policy import TaskCompletionPolicy
 from .relevant_paths import RelevantPathResolver, RelevantPathSet
 from .semantic_judge import (
@@ -30,6 +48,7 @@ from .semantic_judge import (
 __all__ = [
     "FailureDelta",
     "FailureComparison",
+    "ExecutionStatus",
     "ValidationEvidence",
     "ValidationNextAction",
     "ValidationOutcome",
@@ -37,16 +56,24 @@ __all__ = [
     "ValidationPurpose",
     "ValidationScope",
     "ValidationLedger",
+    "ValidationExecutionResult",
+    "ValidationExecutionState",
+    "ValidationExecutor",
     "ValidatorResolution",
     "ValidatorResolver",
-    "BrowserVerificationSpec",
-    "CommandVerificationSpec",
-    "FileVerificationSpec",
-    "HttpVerificationSpec",
-    "SemanticVerificationSpec",
-    "TestVerificationSpec",
-    "BindingResult",
-    "VerificationSpecBinder",
+    "BrowserAction",
+    "BrowserAssertion",
+    "BrowserInteractionContract",
+    "CommandContract",
+    "FileContainsContract",
+    "FileExistsContract",
+    "HttpContract",
+    "NodeBehaviorContract",
+    "PythonBehaviorContract",
+    "SemanticContract",
+    "TestTargetContract",
+    "VerificationContract",
+    "parse_contract",
     "IndexedTest",
     "TestIndex",
     "TestTargetResolution",
@@ -54,7 +81,6 @@ __all__ = [
     "RegressionPolicy",
     "RegressionRequirement",
     "CompletionDecision",
-    "CompletionGate",
     "CompletionStatus",
     "TaskCompletionPolicy",
     "TaskOutcome",

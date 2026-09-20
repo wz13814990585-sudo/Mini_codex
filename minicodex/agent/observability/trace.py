@@ -45,6 +45,8 @@ class TraceEventType(
     EDIT_APPLIED = "edit_applied"
 
     VALIDATION_RUN = "validation_run"
+    VALIDATION_EVIDENCE = "validation_evidence"
+    VALIDATION_SKIPPED = "validation_skipped"
 
     ROLLBACK_STARTED = "rollback_started"
     ROLLBACK_FINISHED = "rollback_finished"
@@ -398,6 +400,7 @@ class TraceRecorder:
                     .VALIDATION_RUN
                     .value
                 ]
+                + counts[TraceEventType.VALIDATION_EVIDENCE.value]
             ),
             rollbacks=(
                 counts[

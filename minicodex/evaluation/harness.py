@@ -9,9 +9,7 @@ from collections.abc import (
 import fnmatch
 import time
 
-from ..agent.validation import (
-    CompletionGate,
-)
+from ..agent.validation import CompletionDecision, CompletionStatus, TaskOutcome
 from ..agent.routing import TaskIntent
 
 from .checks import (
@@ -64,9 +62,6 @@ class EvaluationHarness:
             or EvaluationCheckRunner()
         )
 
-        self.completion_gate = (
-            CompletionGate()
-        )
         self.profile = profile
         self.model = model
         self.run_index = int(run_index)
@@ -302,22 +297,15 @@ class EvaluationHarness:
             )
         )
 
-        completion = (
-            self.completion_gate
-            .evaluate(
-                edit_revision=(
-                    edit_revision
-                ),
-                has_edit=(
-                    has_edit
-                ),
-                acceptance_passed=(
-                    acceptance_passed
-                ),
-                full_validation_passed=(
-                    full_passed
-                ),
-            )
+        completion = CompletionDecision(
+            CompletionStatus.READY if acceptance_passed else CompletionStatus.NEEDS_ACCEPTANCE,
+            edit_revision,
+            has_edit,
+            acceptance_passed,
+            full_passed,
+            "兼容评测夹具的派生完成状态。",
+            (TaskOutcome.EDITED_AND_VALIDATED if has_edit else TaskOutcome.ALREADY_SATISFIED)
+            if acceptance_passed else TaskOutcome.INCOMPLETE,
         )
         # Evaluate real agents with the same requirement-aware gate as execution.
         if getattr(agent, "completion_policy", None) is not None:
@@ -505,23 +493,17 @@ class EvaluationHarness:
                               for item in failed_evidence)
         recovery_entered = bool(failed_evidence and (repair_attempts > 0 or corrective_edit))
         recovery_success = bool(recovery_entered and (repair_attempts > 0 or corrective_edit) and oracle_passed)
-        first_targeted_acceptance = next((
-            item for item in evidence_history
-            if int(getattr(item, "edit_revision", 0) or 0) > 0
-            and getattr(getattr(item, "purpose", None), "value", getattr(item, "purpose", None)) == "acceptance"
-            and getattr(getattr(item, "scope", None), "value", getattr(item, "scope", None))
-            == "targeted"
-        ), None)
-        first_pass_success = bool(
-            edit_count > 0
-            and first_targeted_acceptance is not None
-            and getattr(getattr(first_targeted_acceptance, "outcome", None), "value",
-                        getattr(first_targeted_acceptance, "outcome", None)) == "passed"
-            and edit_revision == int(getattr(first_targeted_acceptance, "edit_revision", -1))
-            and not recovery_entered
-            and repair_attempts == 0
-            and int(metric("rollback_count", 0) or 0) == 0
-            and oracle_passed
+        first_pass_success = self._first_pass_success(
+            edit_count=edit_count,
+            edit_revision=edit_revision,
+            acceptance_passed=acceptance_passed,
+            plan=plan,
+            evidence_history=evidence_history,
+            recovery_entered=recovery_entered,
+            corrective_edit=corrective_edit,
+            repair_attempts=repair_attempts,
+            rollback_count=int(metric("rollback_count", 0) or 0),
+            oracle_passed=oracle_passed,
         )
         unauthorized_edit = bool(intent != TaskIntent.MODIFY and edit_count > 0)
         edited_paths = tuple(metric("edited_paths", ()) or ())
@@ -556,6 +538,21 @@ class EvaluationHarness:
             metrics=execution_metrics,
             blockers=tuple(getattr(agent, "concrete_blockers", ()) or ()),
         )
+        contributing_signals = tuple(dict.fromkeys(
+            signal for signal, present in (
+                ("wrong_validation_target", bool(metric("wrong_validation_target_count", 0))),
+                ("environment_failure", any(
+                    bool(getattr(item, "environment_failure", False))
+                    for item in evidence_history
+                ) or any(
+                    "environment" in str(item).casefold() or "port" in str(item).casefold()
+                    for item in getattr(validation_state, "execution_observations", ())
+                )),
+                ("repeated_action", int(metric("repeated_action_count", 0) or 0) > 0),
+                ("no_progress", int(metric("no_progress_detections", 0) or 0) > 0),
+            )
+            if present and signal != failure_category
+        ))
 
         return EvaluationResult(
             case_id=(
@@ -643,6 +640,8 @@ class EvaluationHarness:
             redundant_searches=int(metric("redundant_searches", 0)),
             wrong_validation_target=bool(metric("wrong_validation_target_count", 0)),
             failure_category=failure_category,
+            terminal_failure_category=failure_category,
+            contributing_signals=contributing_signals,
             cost_usd=metric("cost_usd"),
             duration_seconds=(
                 duration
@@ -684,6 +683,40 @@ class EvaluationHarness:
         )
 
     @staticmethod
+    def _first_pass_success(*, edit_count, edit_revision, acceptance_passed, plan,
+                            evidence_history, recovery_entered, corrective_edit,
+                            repair_attempts, rollback_count, oracle_passed):
+        required = [
+            check for check in getattr(plan, "checks", ())
+            if getattr(check, "required", False)
+            and getattr(getattr(check, "purpose", None), "value", getattr(check, "purpose", None))
+            == "acceptance"
+        ]
+        first_attempts = []
+        for check in required:
+            attempts = [
+                item for item in evidence_history
+                if getattr(item, "check_id", "") == check.id
+                and int(getattr(item, "edit_revision", -1)) == edit_revision
+                and getattr(getattr(item, "execution_status", None), "value", "executed")
+                == "executed"
+            ]
+            first_attempts.append(attempts[0] if attempts else None)
+        return bool(
+            edit_count > 0
+            and acceptance_passed
+            and required
+            and all(item is not None and getattr(
+                getattr(item, "outcome", None), "value", getattr(item, "outcome", None)
+            ) == "passed" for item in first_attempts)
+            and not recovery_entered
+            and not corrective_edit
+            and repair_attempts == 0
+            and rollback_count == 0
+            and oracle_passed
+        )
+
+    @staticmethod
     def _failure_category(*, passed, error, checks_passed, completion_ready, edit_count,
                           validation_state, metrics, false_completion=False,
                           oracle_infrastructure_failed=False, unauthorized_edit=False,
@@ -701,6 +734,8 @@ class EvaluationHarness:
         if wrong_file_edit:
             return "wrong_file_edit"
         reason = str(getattr(metrics, "final_reason_code", "") or "")
+        if getattr(metrics, "max_steps_exhausted", False) or reason == "max_steps":
+            return "max_steps_exhausted"
         if "routing" in reason:
             return "routing_failure"
         if "requirement" in reason or reason == "dependency_manifest_required":
@@ -722,8 +757,6 @@ class EvaluationHarness:
             return "edit_failure"
         if int(getattr(metrics, "failed_tool_call_count", 0) or 0) > 0:
             return "tool_error"
-        if getattr(metrics, "max_steps_exhausted", False):
-            return "max_steps_exhausted"
         if int(getattr(metrics, "tool_call_count", 0) or 0) == 0:
             return "no_tool_loop"
         if reason == "inspection_limit" or (

@@ -94,10 +94,9 @@ def validation_transition(
         return ControlDecision(
             restart=True,
             followup_message=(
-                f"请执行必需的验证项 {check.id}：{check.observable or check.reason}。"
-                f"使用能力 {check.capability}、强度 {check.strength.name}，"
-                f"并设置 validation_check='{check.id}'。"
-                if check is not None else "请执行下一个必需的验证项。"
+                f"Harness 将直接执行必需验证项 {check.id}（{check.contract_type}）。"
+                "不要由模型重新选择或复制验证器参数。"
+                if check is not None else "Harness 将执行下一个必需验证项。"
             ),
             skipped_reason="仍有必需验证项尚未证明",
             reason_code=ReasonCode.ACCEPTANCE_MISSING,
