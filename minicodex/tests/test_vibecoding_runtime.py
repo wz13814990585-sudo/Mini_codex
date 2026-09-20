@@ -486,10 +486,12 @@ def test_followup_reuses_session_without_task_evidence(tmp_path):
     agent.run("Set VALUE to 2 in examples/a.py.")
     assert agent.workspace_session is session
     assert agent.task_state.run_id != first_run_id
+    # Follow-up clears prior task evidence (revision reset, single fresh observation).
     assert agent.validation_pipeline.state.edit_revision == 0
     assert len(agent.validation_pipeline.state.evidence_history) == 1
-    assert agent.validation_pipeline.state.evidence_history[0].check_id == ""
-    assert agent.validation_pipeline.state.proof("V1") is None
+    # Scripted assertion targets V1; binding should attach it to the new plan check.
+    assert agent.validation_pipeline.state.evidence_history[0].check_id == "V1"
+    assert agent.validation_pipeline.state.proof("V1") is not None
     assert not agent.concrete_blockers
     builds = session.build_count
     agent.run("Set VALUE to 2 in examples/a.py.")
