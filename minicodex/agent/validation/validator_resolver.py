@@ -147,6 +147,11 @@ class ValidatorResolver:
                               {**common, "command": command}, contract.code)
 
         if isinstance(contract, HttpContract):
+            if self._http_requires_json_body(contract):
+                return self._unresolved(
+                    check, ResolutionStatus.TARGET_UNRESOLVED,
+                    "认证类 HTTP 契约缺少 json_body；不能用空请求体验收登录或凭据结果。",
+                )
             service = self._service_arguments(contract, profile)
             if service is not None and self._first(registry, "service.validate"):
                 return self._tool(registry, check, "service.validate", "validate_service",
@@ -173,21 +178,41 @@ class ValidatorResolver:
                     check, ResolutionStatus.TARGET_UNRESOLVED,
                     "浏览器交互契约缺少操作后的精确文本断言。",
                 )
+            if contract.non_target is not None and (
+                not contract.non_target.assertion.selector
+                or contract.non_target.assertion.type != "text_equals"
+                or contract.non_target.assertion.value == ""
+            ):
+                return self._unresolved(
+                    check, ResolutionStatus.TARGET_UNRESOLVED,
+                    "浏览器非目标行为缺少精确的不变状态断言。",
+                )
             browser = self._first(registry, "validation.browser")
-            if browser:
+            browser_path = self._browser_document_path(contract.path)
+            if browser and browser_path:
                 action = (
                     {"click_selector": contract.action.selector}
                     if contract.action.type == "click"
                     else {"keypress": contract.action.value,
                           "keypress_selector": contract.action.selector or contract.assertion.selector}
                 )
+                non_target = {}
+                if contract.non_target is not None:
+                    non_target = {
+                        "non_target_action_type": contract.non_target.action.type,
+                        "non_target_action_selector": contract.non_target.action.selector,
+                        "non_target_action_value": contract.non_target.action.value,
+                        "non_target_assertion_selector": contract.non_target.assertion.selector,
+                        "non_target_expected_value": contract.non_target.assertion.value,
+                    }
                 return self._result(
                     check, browser, "validation.browser",
-                    {**common, "path": contract.path,
+                    {**common, "path": browser_path,
                      "selector": contract.assertion.selector,
                      "assertion_kind": "text",
                      "expected_value": contract.assertion.value,
-                     "expected_text": contract.assertion.value, **action},
+                     "expected_text": contract.assertion.value,
+                     **action, **non_target},
                     contract.path,
                 )
             command = self._browser_node_command(contract)
@@ -261,6 +286,23 @@ class ValidatorResolver:
             result["json_body"] = contract.json_body
         return result
 
+    @staticmethod
+    def _http_requires_json_body(contract: HttpContract) -> bool:
+        """Auth-like mutating requests must carry an explicit body to avoid empty-body thrash."""
+
+        if contract.json_body is not None:
+            return False
+        if contract.method not in {"POST", "PUT", "PATCH"}:
+            return False
+        path = contract.path.casefold()
+        return any(
+            token in path
+            for token in (
+                "/login", "/auth", "/signin", "/sign-in",
+                "/signup", "/sign-up", "/register", "/token",
+            )
+        )
+
     def _http_inprocess_command(self, contract: HttpContract, paths) -> str:
         candidates = tuple(dict.fromkeys((*paths, "app.py")))
         source_path = next((
@@ -274,26 +316,32 @@ class ValidatorResolver:
         except (OSError, UnicodeError):
             return ""
         module = str(source_path)[:-3].replace("/", ".")
-        body = repr(contract.json_body)
+        json_kw = (
+            "" if contract.json_body is None
+            else f",json={contract.json_body!r}"
+        )
         if "FastAPI" in source:
             code = (
                 f"from importlib import import_module; "
                 f"from fastapi.testclient import TestClient; "
                 f"app=getattr(import_module({module!r}),'app'); "
-                f"r=TestClient(app).request({contract.method!r},{contract.path!r},json={body}); "
+                f"r=TestClient(app).request({contract.method!r},{contract.path!r}{json_kw}); "
                 f"assert r.status_code=={contract.expected_status}"
             )
         elif "Flask" in source:
             code = (
                 f"from importlib import import_module; "
                 f"app=getattr(import_module({module!r}),'app'); "
-                f"r=app.test_client().open({contract.path!r},method={contract.method!r},json={body}); "
+                f"r=app.test_client().open({contract.path!r},method={contract.method!r}{json_kw}); "
                 f"assert r.status_code=={contract.expected_status}"
             )
         else:
             return ""
         if contract.expected_text:
-            code += f"; assert {contract.expected_text!r} in r.get_data(as_text=True)"
+            if "FastAPI" in source:
+                code += f"; assert {contract.expected_text!r} in r.text"
+            else:
+                code += f"; assert {contract.expected_text!r} in r.get_data(as_text=True)"
         return self._python_command(code)
 
     def _browser_node_command(self, contract: BrowserInteractionContract) -> str:
@@ -320,6 +368,19 @@ class ValidatorResolver:
             if document is not None:
                 initial_text = document.initial_text
         action_selector = contract.action.selector or contract.assertion.selector
+        non_target_script = ""
+        if contract.non_target is not None:
+            non_target_selector = (
+                contract.non_target.action.selector
+                or contract.non_target.assertion.selector
+            )
+            non_target_script = (
+                f"perform({json.dumps(contract.non_target.action.type)}, "
+                f"{json.dumps(non_target_selector)}, "
+                f"{json.dumps(contract.non_target.action.value)}, 24);\n"
+                f"assertText({json.dumps(contract.non_target.assertion.selector)}, "
+                f"{json.dumps(contract.non_target.assertion.value)}, 25);"
+            )
         script = f"""
 import {{readFileSync}} from 'node:fs';
 const initialText = {json.dumps(initial_text)};
@@ -339,21 +400,36 @@ globalThis.document = {{
 }};
 const source = readFileSync({json.dumps(script_path)}, 'utf8');
 await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
-const action = node({json.dumps(action_selector)});
-if ({json.dumps(contract.action.type)} === 'click') {{
-  const cb = action._listeners?.click || action.onclick;
-  if (typeof cb !== 'function') process.exit(21);
-  cb({{type:'click'}});
-}} else {{
-  const cb = documentListeners.keydown || action._listeners?.keydown;
-  if (typeof cb !== 'function') process.exit(22);
-  cb({{key:{json.dumps(contract.action.value)}}});
-}}
-if (node({json.dumps(contract.assertion.selector)}).textContent !== {json.dumps(contract.assertion.value)}) process.exit(23);
+const perform = (type, selector, value, missingCode) => {{
+  const target = node(selector);
+  const cb = type === 'click'
+    ? (target._listeners?.click || target.onclick)
+    : (documentListeners.keydown || target._listeners?.keydown);
+  if (typeof cb !== 'function') process.exit(missingCode);
+  cb(type === 'click' ? {{type:'click'}} : {{type:'keydown', key:value}});
+}};
+const assertText = (selector, expected, failureCode) => {{
+  if (node(selector).textContent !== expected) process.exit(failureCode);
+}};
+{non_target_script}
+perform({json.dumps(contract.action.type)}, {json.dumps(action_selector)}, {json.dumps(contract.action.value)}, 21);
+assertText({json.dumps(contract.assertion.selector)}, {json.dumps(contract.assertion.value)}, 23);
 """
         return f"node --input-type=module -e {shlex.quote(script)}"
 
     def _html_document_for_script(self, script_path: str) -> _BrowserHtmlStateParser | None:
+        match = self._html_document_match(script_path)
+        return match[1] if match is not None else None
+
+    def _browser_document_path(self, contract_path: str) -> str:
+        if contract_path.casefold().endswith(".html"):
+            return contract_path
+        match = self._html_document_match(contract_path)
+        return match[0] if match is not None else ""
+
+    def _html_document_match(
+        self, script_path: str,
+    ) -> tuple[str, _BrowserHtmlStateParser] | None:
         try:
             expected = (self.workspace / script_path).resolve()
             expected.relative_to(self.workspace)
@@ -371,5 +447,5 @@ if (node({json.dumps(contract.assertion.selector)}).textContent !== {json.dumps(
             except (OSError, UnicodeError, ValueError):
                 continue
             if referenced == expected:
-                return parser
+                return html_path.relative_to(self.workspace).as_posix(), parser
         return None

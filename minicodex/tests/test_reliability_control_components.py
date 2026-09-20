@@ -238,7 +238,7 @@ def test_edit_retry_policy_allows_one_read_and_one_retry():
     assert policy.pending is None
 
 
-def test_stale_patch_with_current_content_skips_mandatory_read():
+def test_complete_stale_patch_preview_allows_immediate_retry():
     policy = EditRetryPolicy()
     stale = ToolResult(
         success=False,
@@ -247,13 +247,64 @@ def test_stale_patch_with_current_content_skips_mandatory_read():
             "path": "app.js",
             "failure_type": "stale_context",
             "current_content": "// keyboard behavior missing\n",
+            "content_truncated": False,
+            "content_complete": True,
         },
     )
     message = policy.observe("patch_file", {"path": "app.js"}, stale)
-    assert "CURRENT SOURCE" in message
+    assert "重试" in message
     assert "// keyboard behavior missing" in message
-    assert policy.restriction_reason("read_file", {"path": "app.js"}) is not None
+    assert policy.pending.read_completed is True
     assert policy.restriction_reason("patch_file", {"path": "app.js"}) is None
+    assert "// keyboard behavior missing" in policy.restriction_reason(
+        "read_file", {"path": "app.js"},
+    )
+
+
+def test_truncated_stale_patch_preview_still_requires_targeted_read():
+    policy = EditRetryPolicy()
+    preview = "x" * 4_000
+    stale = ToolResult(
+        success=False,
+        summary="stale",
+        data={
+            "path": "huge.js",
+            "failure_type": "stale_context",
+            "current_content": preview,
+            "content_truncated": True,
+            "content_complete": False,
+        },
+    )
+    message = policy.observe("patch_file", {"path": "huge.js"}, stale)
+    assert "读取" in message
+    assert policy.pending.read_completed is False
+    assert policy.restriction_reason("read_file", {"path": "huge.js"}) is None
+    assert policy.restriction_reason("patch_file", {"path": "huge.js"}) is not None
+
+
+def test_stale_range_requires_a_read_covering_the_failed_region():
+    policy = EditRetryPolicy()
+    stale = ToolResult(False, "stale", data={
+        "path": "large.py", "failure_type": "stale_context",
+        "start_line": 300, "end_line": 310,
+        "current_content": "first 4000 chars are not targeted evidence",
+    })
+    policy.observe("replace_lines", {"path": "large.py"}, stale)
+    assert policy.restriction_reason(
+        "read_file", {"path": "large.py", "offset": 1, "limit": 200},
+    ) is not None
+    policy.observe(
+        "read_file", {"path": "large.py", "offset": 1, "limit": 200},
+        ToolResult(True, "read", data={"path": "large.py"}, llm_content="prefix"),
+    )
+    assert policy.pending.read_completed is False
+    targeted = policy.observe(
+        "read_file", {"path": "large.py", "offset": 290, "limit": 30},
+        ToolResult(True, "read", data={"path": "large.py"}, llm_content="target"),
+    )
+    assert "重试" in targeted
+    assert policy.pending.read_completed is True
+
 
 def test_dependency_resolver_declared_undeclared_and_standalone(tmp_path):
     (tmp_path / "pyproject.toml").write_text(

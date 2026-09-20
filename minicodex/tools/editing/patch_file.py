@@ -106,6 +106,7 @@ class PatchFileTool(
         )
 
         if count == 0:
+            truncated = len(before_content) > 4_000
             return ToolResult(
                 success=False,
                 summary=f"{path} 的补丁上下文已过期。",
@@ -119,6 +120,8 @@ class PatchFileTool(
                     "reason_code": ReasonCode.STALE_CONTEXT.value,
                     "retry_action": "read_target_region_then_retry_once",
                     "current_content": before_content[:4_000],
+                    "content_truncated": truncated,
+                    "content_complete": not truncated,
                 },
                 error="当前文件中未找到 old_text。",
             )

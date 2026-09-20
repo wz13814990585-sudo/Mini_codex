@@ -28,6 +28,11 @@ class ValidateBrowserAppTool(BaseTool):
             "keypress_selector": {"type": "string", "description": "可选：按键目标选择器。"},
             "assertion_kind": {"type": "string", "enum": ["text", "visible", "value", "attribute", "class", "style"], "description": "操作后的断言类型。"},
             "expected_value": {"type": "string", "description": "操作后断言的期望值。"},
+            "non_target_action_type": {"type": "string", "enum": ["click", "keypress"]},
+            "non_target_action_selector": {"type": "string"},
+            "non_target_action_value": {"type": "string"},
+            "non_target_assertion_selector": {"type": "string"},
+            "non_target_expected_value": {"type": "string"},
         },
         "required": ["path"],
     }
@@ -50,6 +55,11 @@ class ValidateBrowserAppTool(BaseTool):
         keypress_selector: str = "",
         assertion_kind: str = "",
         expected_value: str = "",
+        non_target_action_type: str = "",
+        non_target_action_selector: str = "",
+        non_target_action_value: str = "",
+        non_target_assertion_selector: str = "",
+        non_target_expected_value: str = "",
     ) -> ToolResult:
         target = resolve_workspace_path(self.workspace, path)
         if not target.is_file():
@@ -83,6 +93,18 @@ class ValidateBrowserAppTool(BaseTool):
                 )
                 page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
                 page.goto(target.as_uri(), wait_until="load")
+                if non_target_action_type:
+                    self._perform_action(
+                        page, non_target_action_type, non_target_action_selector,
+                        non_target_action_value,
+                    )
+                    actual = page.locator(non_target_assertion_selector).first.inner_text()
+                    if actual != non_target_expected_value:
+                        errors.append(
+                            "非目标操作改变了状态："
+                            f"{non_target_assertion_selector}={actual!r}，"
+                            f"期望 {non_target_expected_value!r}"
+                        )
                 if selector and page.locator(selector).count() == 0:
                     errors.append(f"未找到选择器：{selector}")
                 if click_selector:
@@ -100,8 +122,8 @@ class ValidateBrowserAppTool(BaseTool):
                         if selector and page.locator(selector).count()
                         else page.locator("body").inner_text()
                     )
-                    if expected_value not in actual:
-                        errors.append(f"未找到期望文本：{expected_value}")
+                    if actual != expected_value:
+                        errors.append(f"文本不等于期望值：{expected_value}")
                 elif assertion_kind == "visible" and not page.locator(selector).first.is_visible():
                     errors.append(f"选择器不可见：{selector}")
                 elif assertion_kind == "value" and page.locator(selector).first.input_value() != expected_value:
@@ -130,6 +152,18 @@ class ValidateBrowserAppTool(BaseTool):
         result = self._result(path, "failed" if errors else "passed", errors)
         result.data["evidence_strength"] = 5 if assertion_kind and expected_value and (click_selector or keypress) else 0
         return result
+
+    @staticmethod
+    def _perform_action(page, action_type: str, selector: str, value: str) -> None:
+        if action_type == "click":
+            page.locator(selector).click()
+        elif action_type == "keypress":
+            if selector:
+                page.locator(selector).press(value)
+            else:
+                page.keyboard.press(value)
+        else:
+            raise ValueError(f"不支持的浏览器 action：{action_type}")
 
     @staticmethod
     def _result(path: str, outcome: str, errors: list[str]) -> ToolResult:

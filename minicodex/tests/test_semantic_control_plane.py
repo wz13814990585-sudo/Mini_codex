@@ -13,7 +13,7 @@ from ..agent.safety import SafetyPolicy
 from ..agent.validation import (
     BrowserInteractionContract,
     FailureDelta, RegressionClassification, RegressionRecoveryPolicy,
-    SemanticRegressionJudge, TaskCompletionPolicy, ValidationPipeline,
+    SemanticContract, SemanticRegressionJudge, TaskCompletionPolicy, ValidationPipeline,
 )
 from ..agent.task_state import AgentPhase, TaskState
 from ..agent.validation import TaskOutcome
@@ -152,7 +152,7 @@ def test_requirements_extracts_explicit_dom_interaction_as_browser_contract():
     assert "不能降级为 semantic" in RequirementsExtractor.SYSTEM_PROMPT
 
 
-def test_keyboard_request_fallback_and_semantic_are_upgraded_to_browser_contract():
+def test_browser_contract_is_only_created_by_typed_requirements_output():
     prompt = (
         "Update app.js so pressing ArrowLeft changes #state text from idle to left; "
         "other keys leave it unchanged."
@@ -160,26 +160,30 @@ def test_keyboard_request_fallback_and_semantic_are_upgraded_to_browser_contract
     fallback = RequirementsExtractor(llm=None).extract(
         prompt, mode=ExecutionMode.FAST, target_paths=("app.js",),
     )
-    assert isinstance(fallback.items[0].contract, BrowserInteractionContract)
-    assert fallback.items[0].contract.action.type == "keypress"
-    assert fallback.items[0].contract.action.value == "ArrowLeft"
-    assert fallback.items[0].contract.assertion.selector == "#state"
-    assert fallback.items[0].contract.assertion.value == "left"
+    assert isinstance(fallback.items[0].contract, SemanticContract)
 
     llm = StubLLM({
-        "requirements": [{
-            "description": "键盘行为",
-            "category": "behavior",
-            "paths": ["app.js"],
-            "contract": {"type": "semantic", "path": "app.js", "claim": prompt},
-        }],
+        "requirements": [
+            {
+                "description": "键盘行为",
+                "category": "behavior",
+                "paths": ["app.js"],
+                "contract": {"type": "semantic", "path": "app.js", "claim": prompt},
+            },
+            {
+                "description": "保留模块结构",
+                "category": "behavior",
+                "paths": ["app.js"],
+                "contract": {"type": "semantic", "path": "app.js", "claim": "保留模块结构"},
+            },
+        ],
         "policy": {"no_edit_if_already_satisfied": False},
     })
-    upgraded = RequirementsExtractor(llm).extract(
+    extracted = RequirementsExtractor(llm).extract(
         prompt, mode=ExecutionMode.STANDARD, target_paths=("app.js",),
     )
-    assert isinstance(upgraded.items[0].contract, BrowserInteractionContract)
-    assert upgraded.items[0].contract.assertion.value == "left"
+    assert len(extracted.items) == 2
+    assert all(isinstance(item.contract, SemanticContract) for item in extracted.items)
 
 def test_completion_rejects_green_validation_when_one_requirement_is_open():
     requirements = TaskRequirements([

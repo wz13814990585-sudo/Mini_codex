@@ -8,21 +8,12 @@ import re
 from ..routing import ExecutionMode
 from ..routing.structured_output import StructuredOutputError, parse_bounded_json_object
 from ..validation.contracts import (
-    BrowserAction,
-    BrowserAssertion,
-    BrowserInteractionContract,
     SemanticContract,
     VerificationContract,
     parse_contract,
 )
 
-REQUIREMENTS_PROMPT_VERSION = "task-requirements-v3"
-
-_SELECTOR_RE = re.compile(r"#([A-Za-z_][\w-]*)")
-_KEY_RE = re.compile(r"\b(Arrow(?:Left|Right|Up|Down)|Enter|Escape|Tab|Backspace)\b")
-_FROM_TO_RE = re.compile(r"\bfrom\s+(\S+)\s+to\s+(\S+)", re.IGNORECASE)
-_CLICK_RE = re.compile(r"\bclick(?:ing)?\s+(#[A-Za-z_][\w-]*)", re.IGNORECASE)
-_PATH_RE = re.compile(r"\b([\w./-]+\.(?:html|js|jsx|ts|tsx))\b", re.IGNORECASE)
+REQUIREMENTS_PROMPT_VERSION = "task-requirements-v5"
 
 
 class RequirementCategory(str, Enum):
@@ -94,14 +85,19 @@ contract 必须使用以下严格结构之一：
 {"type":"pytest","target":"tests/test_x.py"}
 {"type":"python_behavior","code":"from pkg import f; assert f(1)==2"}
 {"type":"node_behavior","code":"可由 node --input-type=module -e 执行且失败时非零退出的代码"}
-{"type":"http_response","method":"POST","path":"/login","expected_status":401}
+{"type":"http_response","method":"POST","path":"/login","expected_status":200,"json_body":{"username":"demo","password":"demo"},"expected_text":"token"}
+{"type":"http_response","method":"POST","path":"/login","expected_status":401,"json_body":{"username":"demo","password":"wrong"}}
 {"type":"browser_interaction","path":"index.html","action":{"type":"click","selector":"#increment"},"assertion":{"type":"text_equals","selector":"#count","value":"1"}}
-{"type":"browser_interaction","path":"app.js","action":{"type":"keypress","selector":"#state","value":"ArrowLeft"},"assertion":{"type":"text_equals","selector":"#state","value":"left"}}
+{"type":"browser_interaction","path":"app.js","action":{"type":"keypress","selector":"#state","value":"ArrowLeft"},"assertion":{"type":"text_equals","selector":"#state","value":"left"},"non_target":{"action":{"type":"keypress","selector":"#state","value":"x"},"assertion":{"type":"text_equals","selector":"#state","value":"idle"}}}
 {"type":"semantic","path":"README.md","claim":"中文语义声明"}
 不要从说明文字产生通用 shell 命令。行为断言必须真正调用目标代码并在错误时失败。
 凡是明确指定 DOM selector、click/keypress 交互和交互后文本状态的 Web 行为，必须使用
 browser_interaction，不能降级为 semantic。若任务只给出 JavaScript 文件，path 使用该
 JavaScript 路径；解析器会从仓库事实定位引用它的 HTML 文档。
+若用户要求非目标交互不改变状态，browser_interaction 必须同时包含 non_target，明确给出
+一个非目标 action 以及执行后必须保持的精确状态 assertion。
+登录/鉴权类 HTTP 行为必须在 http_response 中提供 json_body（合法与非法凭据各用对应 body），
+禁止省略 body 后用空请求验收；需要检查响应片段时使用 expected_text。
 能由一个完全相同契约证明的结果应使用相同 contract。description 保持简洁中文；
 contract 的类型和字段名保持英文。不要把“若已经满足则不编辑”提取为 requirement，
 只设置 policy.no_edit_if_already_satisfied。不要臆造仓库事实。"""
@@ -126,23 +122,13 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
         structural = structural and not any(w in text for w in ("game", "tetris", "playable", "click", "keyboard", "login", "游戏"))
         fallback_category = RequirementCategory.FILE if structural else RequirementCategory.BEHAVIOR
         path = str(next(iter(target_paths), ""))
-        browser = self._explicit_browser_contract(user_request, target_paths)
-        if browser is not None:
-            fallback = TaskRequirements([
-                TaskRequirement(
-                    "R1", str(user_request)[:500], category=RequirementCategory.BEHAVIOR,
-                    paths=tuple(dict.fromkeys((*target_paths, browser.path))),
-                    contract=browser, kind=RequirementKind.BEHAVIORAL,
-                )
-            ])
-        else:
-            fallback = TaskRequirements([
-                TaskRequirement(
-                    "R1", str(user_request)[:500], category=fallback_category,
-                    paths=tuple(target_paths),
-                    contract=SemanticContract(path, str(user_request)[:500]),
-                )
-            ])
+        fallback = TaskRequirements([
+            TaskRequirement(
+                "R1", str(user_request)[:500], category=fallback_category,
+                paths=tuple(target_paths),
+                contract=SemanticContract(path, str(user_request)[:500]),
+            )
+        ])
         if self.llm is None or not self.should_extract(user_request, mode):
             return fallback
         started = time.monotonic()
@@ -191,10 +177,7 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
                 1, int(getattr(usage, "prompt_tokens", 0) or 0),
                 int(getattr(usage, "completion_tokens", 0) or 0), time.monotonic() - started,
             )
-            return TaskRequirements(
-                self._upgrade_semantic_browser_contracts(items, browser),
-                no_edit_if_already_satisfied=no_edit,
-            )
+            return TaskRequirements(items, no_edit_if_already_satisfied=no_edit)
         except Exception:
             self.last_telemetry = RequirementsTelemetry(calls=1, latency_seconds=time.monotonic() - started)
             return fallback
@@ -208,66 +191,3 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
         if not normalized or any(part == ".." for part in normalized.split("/")):
             return ""
         return normalized
-
-    @classmethod
-    def _explicit_browser_contract(cls, user_request: str, target_paths=()) -> BrowserInteractionContract | None:
-        """Salvage browser_interaction from explicit selectors/keys/from-to tokens only."""
-
-        text = str(user_request or "")
-        selectors = [f"#{name}" for name in _SELECTOR_RE.findall(text)]
-        if not selectors:
-            return None
-        path = cls._browser_path_hint(text, target_paths)
-        if not path:
-            return None
-        from_to = _FROM_TO_RE.search(text)
-        if from_to is None:
-            return None
-        expected = from_to.group(2).strip(".,;:!?)'\"")
-        if not expected:
-            return None
-        click = _CLICK_RE.search(text)
-        if click is not None:
-            action_selector = click.group(1)
-            assertion_selector = next(
-                (item for item in selectors if item != action_selector), action_selector
-            )
-            return BrowserInteractionContract(
-                path,
-                BrowserAction("click", action_selector),
-                BrowserAssertion("text_equals", assertion_selector, expected),
-            )
-        key = _KEY_RE.search(text)
-        if key is None:
-            return None
-        assertion_selector = selectors[0]
-        return BrowserInteractionContract(
-            path,
-            BrowserAction("keypress", assertion_selector, key.group(1)),
-            BrowserAssertion("text_equals", assertion_selector, expected),
-        )
-
-    @staticmethod
-    def _browser_path_hint(user_request: str, target_paths=()) -> str:
-        for candidate in target_paths:
-            path = str(candidate or "").strip()
-            if path.lower().endswith((".html", ".js", ".jsx", ".ts", ".tsx")):
-                return path
-        match = _PATH_RE.search(str(user_request or ""))
-        return match.group(1) if match else ""
-
-    @staticmethod
-    def _upgrade_semantic_browser_contracts(items, browser: BrowserInteractionContract | None):
-        if browser is None:
-            return items
-        upgraded = []
-        for item in items:
-            if isinstance(item.contract, SemanticContract):
-                paths = tuple(dict.fromkeys((*item.paths, browser.path)))
-                upgraded.append(TaskRequirement(
-                    item.id, item.description, RequirementCategory.BEHAVIOR, paths,
-                    browser, RequirementKind.BEHAVIORAL,
-                ))
-            else:
-                upgraded.append(item)
-        return upgraded

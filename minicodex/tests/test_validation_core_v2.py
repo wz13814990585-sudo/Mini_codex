@@ -1,3 +1,4 @@
+import json
 import shlex
 import subprocess
 from types import SimpleNamespace
@@ -6,14 +7,17 @@ import pytest
 
 from ..agent.planning.requirements import (
     RequirementCategory,
+    RequirementsExtractor,
     TaskRequirement,
     TaskRequirements,
 )
+from ..agent.routing import ExecutionMode
 from ..agent.runtime.tool_executor import ToolExecutor
 from ..agent.validation import (
     BrowserAction,
     BrowserAssertion,
     BrowserInteractionContract,
+    BrowserNoOpBehavior,
     CompletionStatus,
     FileExistsContract,
     HttpContract,
@@ -39,6 +43,8 @@ from ..agent.validation.plan import ValidationPlanner
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolution
 from ..tools.registry import ToolRegistry
 from ..tools.results import ToolResult
+from ..tools.execution import RunCommandTool
+from ..llm.types import LLMResponse, TokenUsage
 
 
 class _TestsTool:
@@ -182,6 +188,7 @@ def test_chinese_file_description_uses_typed_path_not_description(tmp_path):
 
 def _execute_browser_fallback(
     tmp_path, html, javascript, action, assertion, *, contract_path="index.html",
+    non_target=None,
 ):
     html_path = tmp_path / "index.html"
     script_path = tmp_path / "app.js"
@@ -192,7 +199,7 @@ def _execute_browser_fallback(
         script_path: script_path.read_bytes(),
     }
     contract = BrowserInteractionContract(
-        contract_path, action, assertion,
+        contract_path, action, assertion, non_target,
     )
     check = ValidationPlanner().build(requirements(contract)).checks[0]
     registry = ToolRegistry()
@@ -289,6 +296,98 @@ document.addEventListener("keydown", () => {
     assert completed.returncode != 0
 
 
+class _TypedRequirementsLLM:
+    model = "offline-typed-requirements"
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def chat(self, messages, tools=None):
+        self.calls.append((messages, tools))
+        return LLMResponse(
+            SimpleNamespace(content=json.dumps(self.payload), tool_calls=[]),
+            TokenUsage(),
+        )
+
+
+def _execute_keyboard_requirement(workspace, requirements, javascript):
+    workspace.mkdir()
+    (workspace / "index.html").write_text(_KEYBOARD_HTML, encoding="utf-8")
+    (workspace / "app.js").write_text(javascript, encoding="utf-8")
+    plan = ValidationPlanner().build(requirements)
+    check = plan.checks[0]
+    registry = ToolRegistry()
+    registry.register(RunCommandTool(workspace))
+    resolution = ValidatorResolver(workspace).resolve(check, registry=registry)
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = plan
+    pipeline.record_edit()
+    agent = SimpleNamespace(
+        registry=registry,
+        tool_executor=ToolExecutor(registry),
+        validation_pipeline=pipeline,
+        token_metrics=SimpleNamespace(call_count=0),
+        execution_metrics=None,
+        refresh_workspace_facts=lambda: None,
+    )
+    result = ValidationExecutor().execute(agent, check, resolution)
+    return check, resolution, result
+
+
+def test_keyboard_prompt_to_executor_proves_trigger_and_non_target_no_op(tmp_path):
+    prompt = (
+        "Update app.js so pressing ArrowLeft changes #state text from idle to left; "
+        "other keys leave it unchanged."
+    )
+    llm = _TypedRequirementsLLM({
+        "requirements": [{
+            "description": "ArrowLeft 改变状态，其他按键不改变状态",
+            "category": "behavior",
+            "paths": ["app.js"],
+            "contract": {
+                "type": "browser_interaction",
+                "path": "app.js",
+                "action": {
+                    "type": "keypress", "selector": "#state", "value": "ArrowLeft",
+                },
+                "assertion": {
+                    "type": "text_equals", "selector": "#state", "value": "left",
+                },
+                "non_target": {
+                    "action": {"type": "keypress", "selector": "#state", "value": "x"},
+                    "assertion": {
+                        "type": "text_equals", "selector": "#state", "value": "idle",
+                    },
+                },
+            },
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    extracted = RequirementsExtractor(llm).extract(
+        prompt, mode=ExecutionMode.STANDARD, target_paths=("app.js",),
+    )
+    assert llm.calls[0][0][-1]["content"] == prompt
+    contract = extracted.items[0].contract
+    assert isinstance(contract, BrowserInteractionContract)
+    assert isinstance(contract.non_target, BrowserNoOpBehavior)
+
+    correct = _execute_keyboard_requirement(tmp_path / "correct", extracted, _KEYBOARD_JS)
+    assert correct[0].contract is contract
+    assert correct[1].status == ResolutionStatus.RESOLVED
+    assert correct[2].state == ValidationExecutionState.PROVEN
+
+    every_key_left = """\
+const state = document.getElementById("state");
+document.addEventListener("keydown", () => {
+  state.textContent = "left";
+});
+"""
+    wrong = _execute_keyboard_requirement(tmp_path / "wrong", extracted, every_key_left)
+    assert wrong[1].status == ResolutionStatus.RESOLVED
+    assert wrong[2].state == ValidationExecutionState.FAILED
+
+
 def test_unavailable_browser_without_fallback_is_blocked(tmp_path):
     contract = BrowserInteractionContract(
         "index.html", BrowserAction("click", "#x"),
@@ -330,6 +429,8 @@ def test_wrong_validation_target_counts_only_explicit_proof_attempts():
         plan_orchestrator=SimpleNamespace(reconcile=lambda _agent: (None, False)),
         validation_orchestrator=SimpleNamespace(apply=lambda **_kwargs: None),
         latest_progress_signal=None,
+        current_validation_check=None,
+        current_validator_resolution=None,
     )
     handler = ValidationResultHandler()
     result = ToolResult(
@@ -344,6 +445,24 @@ def test_wrong_validation_target_counts_only_explicit_proof_attempts():
         emit=lambda *_args, **_kwargs: None,
     )
     assert metrics.wrong_validation_target_count == 0
+
+    bound = handler.apply(
+        agent, tool_name="run_command",
+        arguments={
+            "command": "python -c 'print(1)'",
+            "purpose": "acceptance",
+            "validation_check": "V1",
+        },
+        result=ToolResult(
+            True, "bound pass",
+            {"command_succeeded": True, "outcome": "passed"},
+        ),
+        capabilities=frozenset({"process.run"}), metrics=metrics,
+        emit=lambda *_args, **_kwargs: None,
+    )
+    assert metrics.wrong_validation_target_count == 0
+    assert bound.evidence is not None
+    assert bound.evidence.check_id == "V1"
 
     handler.apply(
         agent, tool_name="run_command",
@@ -360,6 +479,38 @@ def test_wrong_validation_target_counts_only_explicit_proof_attempts():
         emit=lambda *_args, **_kwargs: None,
     )
     assert metrics.wrong_validation_target_count == 1
+
+
+def test_llm_validation_binds_via_current_prepared_check():
+    pipeline = planned(FileExistsContract("app.py"))
+    metrics = ExecutionMetrics()
+    check = pipeline.state.plan.checks[0]
+    agent = SimpleNamespace(
+        validation_pipeline=pipeline,
+        checkpoint_manager=SimpleNamespace(all_checkpoints=lambda: ()),
+        task_state=SimpleNamespace(work_unit=None, recovery_level=0),
+        workspace=".",
+        sync_requirements_state=lambda: None,
+        plan_orchestrator=SimpleNamespace(reconcile=lambda _agent: (None, False)),
+        validation_orchestrator=SimpleNamespace(apply=lambda **_kwargs: None),
+        latest_progress_signal=None,
+        current_validation_check=check,
+        current_validator_resolution=ValidatorResolution(
+            check.id, ResolutionStatus.RESOLVED, target="app.py",
+            validation_key="file_exists|app.py",
+        ),
+    )
+    handled = ValidationResultHandler().apply(
+        agent, tool_name="run_command",
+        arguments={"command": "python -c 'print(1)'", "purpose": "acceptance"},
+        result=ToolResult(True, "ok", {"command_succeeded": True}),
+        capabilities=frozenset({"process.run"}), metrics=metrics,
+        emit=lambda *_args, **_kwargs: None,
+    )
+    assert metrics.wrong_validation_target_count == 0
+    assert handled.evidence is not None
+    assert handled.evidence.check_id == "V1"
+    assert pipeline.state.proof("V1") is not None
 
 
 def test_resolved_executor_runs_without_llm_decision(tmp_path):

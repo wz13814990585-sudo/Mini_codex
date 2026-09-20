@@ -11,6 +11,9 @@ EDIT_TOOLS = frozenset(
     {"patch_file", "replace_lines", "replace_symbol", "write_file"}
 )
 
+# Matches tools.editing.patch_file preview truncation.
+_PREVIEW_LIMIT = 4_000
+
 
 @dataclass
 class PendingEditRetry:
@@ -85,17 +88,24 @@ class EditRetryPolicy:
                     "唯一的过期上下文编辑重试也失败了。请勿循环；"
                     "报告具体冲突，或选择另一条有证据的编辑路径。"
                 )
-            current_text = str(result.data.get("current_content", "") or "")[:4_000]
+            current_text = str(result.data.get("current_content", "") or "")[:_PREVIEW_LIMIT]
+            start_line = self._optional_int(result.data.get("start_line"))
+            end_line = self._optional_int(result.data.get("end_line"))
+            preview_ok = self._preview_is_authoritative(
+                tool_name, result.data, current_text, start_line,
+            )
             self.pending = PendingEditRetry(
                 path=path,
                 edit_tool=tool_name,
-                start_line=self._optional_int(result.data.get("start_line")),
-                end_line=self._optional_int(result.data.get("end_line")),
+                start_line=start_line,
+                end_line=end_line,
                 failure_type=typed_failure,
                 current_text=current_text,
-                read_completed=bool(current_text) and typed_failure == EditFailureType.STALE_CONTEXT,
+                # Complete whole-file patch previews are authoritative; ranged
+                # or truncated previews still require a targeted refresh.
+                read_completed=preview_ok,
             )
-            if self.pending.read_completed:
+            if preview_ok:
                 return self._retry_instruction(self.pending)
             return self.read_instruction()
 
@@ -112,6 +122,8 @@ class EditRetryPolicy:
             return (
                 "该编辑不会产生任何变更。请检查当前证据，"
                 "并确认请求的状态是否已经满足。"
+                "若要写入新逻辑，old_text 必须是文件中已存在的片段，"
+                "不能把目标代码同时当作 old_text 与 new_text。"
             )
 
         if typed_failure == EditFailureType.PERMISSION_DENIED:
@@ -127,7 +139,12 @@ class EditRetryPolicy:
         ):
             pending.read_completed = True
             return "符号搜索已完成。请用更精确的范围重试一次 replace_symbol。"
-        if tool_name == "read_file" and path == pending.path and result.success:
+        if (
+            tool_name == "read_file"
+            and path == pending.path
+            and result.success
+            and self._read_covers_pending(arguments, pending)
+        ):
             pending.read_completed = True
             pending.current_text = str(getattr(result, "llm_content", "") or "")[:2_000]
             return self._retry_instruction(pending)
@@ -176,6 +193,29 @@ class EditRetryPolicy:
             return int(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _preview_is_authoritative(
+        tool_name: str,
+        data: dict,
+        current_text: str,
+        start_line: int | None,
+    ) -> bool:
+        """Whole-file patch previews may skip a mandatory re-read; ranged ones may not."""
+
+        if not current_text:
+            return False
+        # Line-ranged failures need a covering read of the failed region.
+        if start_line is not None or tool_name == "replace_lines":
+            return False
+        if data.get("content_truncated") is True:
+            return False
+        if data.get("content_complete") is False:
+            return False
+        # Legacy callers without an explicit flag: full preview limit means truncation.
+        if len(current_text) >= _PREVIEW_LIMIT:
+            return False
+        return tool_name in {"patch_file", "write_file"}
 
     @staticmethod
     def _read_covers_pending(arguments: dict, pending: PendingEditRetry) -> bool:

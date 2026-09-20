@@ -8,6 +8,9 @@ from pathlib import Path
 from ..editing.edit_verifier import EditVerifier
 from ..progress import ProgressKind, ProgressSignal
 from ..task_state import RuntimeEventType
+from ..validation.validator_resolver import ResolutionStatus, ValidatorResolution
+
+
 class EditResultHandler:
     def apply(self, agent, *, tool_name, arguments, result, current_plan_step, emit):
         revision = agent.validation_pipeline.record_edit()
@@ -71,20 +74,28 @@ class ValidationResultHandler:
                                    milestone_syntax_errors=syntax_errors)
                 if capabilities & {"validation.static_web", "validation.browser", "service.validate"}:
                     result.data["errors"] = [*result.data.get("errors", []), *syntax_errors]
-        evidence = agent.validation_pipeline.observe(tool_name=tool_name, arguments=arguments, result=result,
-                                                     capabilities=capabilities)
-        if evidence is None:
-            return ValidationHandled(None, ProgressSignal(ProgressKind.NONE, "未产生验证证据。"), None, False)
+
         checks = agent.validation_pipeline.state.plan.checks
-        contract = next((check for check in checks if check.id == evidence.check_id), None)
         attempted_check = str(arguments.get("validation_check", "")).strip()
+        resolution = self._resolve_binding(agent, attempted_check, checks)
+        known_ids = {check.id for check in checks}
         if (
             metrics is not None
             and attempted_check
-            and evidence.purpose.value == "acceptance"
-            and contract is None
+            and attempted_check not in known_ids
         ):
+            # Explicit proof attempt aimed at a check that is not in the plan.
             metrics.wrong_validation_target_count += 1
+
+        evidence = agent.validation_pipeline.observe(
+            tool_name=tool_name,
+            arguments=arguments,
+            result=result,
+            capabilities=capabilities,
+            resolution=resolution,
+        )
+        if evidence is None:
+            return ValidationHandled(None, ProgressSignal(ProgressKind.NONE, "未产生验证证据。"), None, False)
         agent.sync_requirements_state()
         ledger = agent.validation_pipeline.state
         milestones = (all(ledger.proof(check_id) is not None for check_id in unit.milestone_check_ids)
@@ -102,3 +113,37 @@ class ValidationResultHandler:
             metrics.recovery_successes += 1
         signal = agent.latest_progress_signal or ProgressSignal(ProgressKind.NONE, "验证未产生可比较的进展。")
         return ValidationHandled(evidence, signal, decision, completed)
+
+    @staticmethod
+    def _resolve_binding(agent, attempted_check: str, checks) -> ValidatorResolution | None:
+        """Bind LLM-driven validation to a plan check without inventing targets."""
+
+        current = getattr(agent, "current_validator_resolution", None)
+        if (
+            attempted_check
+            and current is not None
+            and getattr(current, "check_id", "") == attempted_check
+        ):
+            return current
+
+        check = None
+        if attempted_check:
+            check = next((item for item in checks if item.id == attempted_check), None)
+        if check is None and not attempted_check:
+            prepared = getattr(agent, "current_validation_check", None)
+            if prepared is not None and any(item.id == prepared.id for item in checks):
+                check = prepared
+                if current is not None and getattr(current, "check_id", "") == prepared.id:
+                    return current
+        if check is None:
+            return None
+        return ValidatorResolution(
+            check.id,
+            ResolutionStatus.RESOLVED,
+            target=str(getattr(getattr(check, "contract", None), "path", "")
+                       or getattr(getattr(check, "contract", None), "target", "")
+                       or getattr(getattr(check, "contract", None), "code", "")
+                       or check.id),
+            validation_key=f"{check.contract_type}|{check.id}",
+            reason="LLM 工具结果已绑定到当前计划检查。",
+        )

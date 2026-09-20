@@ -69,10 +69,17 @@ class BrowserAssertion:
 
 
 @dataclass(frozen=True)
+class BrowserNoOpBehavior:
+    action: BrowserAction
+    assertion: BrowserAssertion
+
+
+@dataclass(frozen=True)
 class BrowserInteractionContract:
     path: str
     action: BrowserAction
     assertion: BrowserAssertion
+    non_target: BrowserNoOpBehavior | None = None
     contract_type: str = "browser_interaction"
 
 
@@ -135,30 +142,24 @@ def parse_contract(raw: Any) -> VerificationContract:
         return HttpContract(method, _text(raw, "path"), status,
                             str(raw.get("expected_text", "")), body)
     if kind == "browser_interaction":
-        _exact(raw, {"type", "path", "action", "assertion"})
-        action = raw["action"]
-        assertion = raw["assertion"]
-        if not isinstance(action, dict) or not isinstance(assertion, dict):
-            raise ValueError("action/assertion 必须是对象")
-        _exact(action, {"type"}, optional={"selector", "value"})
-        _exact(assertion, {"type", "selector", "value"})
-        action_type = _text(action, "type")
-        if action_type not in {"click", "keypress"}:
-            raise ValueError("browser action 无效")
-        assertion_type = _text(assertion, "type")
-        if assertion_type != "text_equals":
-            raise ValueError("browser assertion 无效")
-        selector = str(action.get("selector", "")).strip()
-        value = str(action.get("value", "")).strip()
-        if action_type == "click" and not selector:
-            raise ValueError("click 需要 selector")
-        if action_type == "keypress" and not value:
-            raise ValueError("keypress 需要 value")
+        _exact(raw, {"type", "path", "action", "assertion"}, optional={"non_target"})
+        action = _browser_action(raw["action"])
+        assertion = _browser_assertion(raw["assertion"])
+        non_target = raw.get("non_target")
+        no_op = None
+        if non_target is not None:
+            if not isinstance(non_target, dict):
+                raise ValueError("non_target 必须是对象")
+            _exact(non_target, {"action", "assertion"})
+            no_op = BrowserNoOpBehavior(
+                _browser_action(non_target["action"]),
+                _browser_assertion(non_target["assertion"]),
+            )
         return BrowserInteractionContract(
             _text(raw, "path"),
-            BrowserAction(action_type, selector, value),
-            BrowserAssertion(assertion_type, _text(assertion, "selector"),
-                             _text(assertion, "value")),
+            action,
+            assertion,
+            no_op,
         )
     if kind == "semantic":
         _exact(raw, {"type", "path", "claim"})
@@ -177,6 +178,36 @@ def _text(raw: dict, key: str) -> str:
     if not value:
         raise ValueError(f"{key} 不能为空")
     return value
+
+
+def _browser_action(raw: Any) -> BrowserAction:
+    if not isinstance(raw, dict):
+        raise ValueError("browser action 必须是对象")
+    _exact(raw, {"type"}, optional={"selector", "value"})
+    action_type = _text(raw, "type")
+    if action_type not in {"click", "keypress"}:
+        raise ValueError("browser action 无效")
+    selector = str(raw.get("selector", "")).strip()
+    value = str(raw.get("value", "")).strip()
+    if action_type == "click" and not selector:
+        raise ValueError("click 需要 selector")
+    if action_type == "keypress" and not value:
+        raise ValueError("keypress 需要 value")
+    return BrowserAction(action_type, selector, value)
+
+
+def _browser_assertion(raw: Any) -> BrowserAssertion:
+    if not isinstance(raw, dict):
+        raise ValueError("browser assertion 必须是对象")
+    _exact(raw, {"type", "selector", "value"})
+    assertion_type = _text(raw, "type")
+    if assertion_type != "text_equals":
+        raise ValueError("browser assertion 无效")
+    return BrowserAssertion(
+        assertion_type,
+        _text(raw, "selector"),
+        _text(raw, "value"),
+    )
 
 
 def _exact(raw: dict, required: set[str], *, optional: set[str] | None = None) -> None:

@@ -80,11 +80,13 @@ def test_typed_http_and_browser_specs_do_not_copy_observable_to_tool_arguments(t
     registry.register(BrowserTool())
     profile = SimpleNamespace(commands=(("start", "python app.py {port}"),))
     http = ValidationCheck("V1", ("R1",), ValidationPurpose.ACCEPTANCE,
-        HttpContract("POST", "/login", 401), strength=EvidenceStrength.RUNTIME)
+        HttpContract("POST", "/login", 401, json_body={"username": "demo", "password": "wrong"}),
+        strength=EvidenceStrength.RUNTIME)
     http_resolution = ValidatorResolver(tmp_path).resolve(http, registry=registry, profile=profile)
     assert http_resolution.status == ResolutionStatus.RESOLVED
     assert http_resolution.arguments["method"] == "POST"
     assert http_resolution.arguments["expected_status"] == 401
+    assert http_resolution.arguments["json_body"] == {"username": "demo", "password": "wrong"}
     assert "do not pass" not in str(http_resolution.arguments)
     browser = ValidationCheck("V2", ("R2",), ValidationPurpose.ACCEPTANCE,
         BrowserInteractionContract(
@@ -216,6 +218,47 @@ def test_browser_runtime_spec_requires_post_action_assertion(tmp_path):
             BrowserAssertion("text_equals", "", ""),
         ))
     assert ValidatorResolver(tmp_path).resolve(check, registry=registry).status == ResolutionStatus.TARGET_UNRESOLVED
+
+
+def test_auth_http_contract_without_json_body_is_unresolved(tmp_path):
+    registry = ToolRegistry()
+    registry.register(type("Service", (), {
+        "name": "service", "capabilities": frozenset({"service.validate"}),
+    })())
+    profile = SimpleNamespace(commands=(("start", "python app.py {port}"),))
+    check = ValidationCheck(
+        "V1", ("R1",), ValidationPurpose.ACCEPTANCE,
+        HttpContract("POST", "/login", 200),
+    )
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry, profile=profile)
+    assert resolution.status == ResolutionStatus.TARGET_UNRESOLVED
+    assert "json_body" in resolution.reason
+
+
+def test_auth_http_contract_with_json_body_resolves_inprocess(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n",
+        encoding="utf-8",
+    )
+    registry = ToolRegistry()
+    registry.register(type("Run", (), {
+        "name": "run_command", "capabilities": frozenset({"process.run"}),
+    })())
+    check = ValidationCheck(
+        "V1", ("R1",), ValidationPurpose.ACCEPTANCE,
+        HttpContract(
+            "POST", "/login", 200,
+            expected_text="token",
+            json_body={"username": "demo", "password": "demo"},
+        ),
+    )
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    assert resolution.status == ResolutionStatus.RESOLVED
+    command = resolution.arguments["command"]
+    assert "username" in command and "demo" in command and "password" in command
+    assert "json=None" not in command
+    assert "token" in command
+    assert "r.text" in command
 
 
 def test_http_status_binding_accepts_normal_success_and_conflict_codes(tmp_path):
