@@ -14,6 +14,7 @@ from ..agent.validation import (
     BrowserInteractionContract,
     FailureDelta, RegressionClassification, RegressionRecoveryPolicy,
     SemanticContract, SemanticRegressionJudge, TaskCompletionPolicy, ValidationPipeline,
+    TestTargetContract,
 )
 from ..agent.task_state import AgentPhase, TaskState
 from ..agent.validation import TaskOutcome
@@ -150,6 +151,40 @@ def test_requirements_extracts_explicit_dom_interaction_as_browser_contract():
     assert isinstance(requirements.items[0].contract, BrowserInteractionContract)
     assert requirements.items[0].contract.path == "app.js"
     assert "不能降级为 semantic" in RequirementsExtractor.SYSTEM_PROMPT
+    assert "优先使用 pytest" in RequirementsExtractor.SYSTEM_PROMPT
+
+
+def test_existing_pytest_contract_drops_conflicting_python_behavior(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_people.py").write_text("def test_basic(): pass\n", encoding="utf-8")
+    llm = StubLLM({
+        "requirements": [
+            {
+                "description": "排序行为",
+                "category": "behavior",
+                "paths": ["src/people.py"],
+                "contract": {
+                    "type": "python_behavior",
+                    "code": "from src.people import names_by_age; assert names_by_age([('b', 2)]) == ['b']",
+                },
+            },
+            {
+                "description": "仓库测试",
+                "category": "test",
+                "paths": ["tests/test_people.py"],
+                "contract": {"type": "pytest", "target": "tests/test_people.py"},
+            },
+        ],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    requirements = RequirementsExtractor(llm).extract(
+        "Fix sort key",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("src/people.py", "tests/test_people.py"),
+        workspace=tmp_path,
+    )
+    assert len(requirements.items) == 1
+    assert isinstance(requirements.items[0].contract, TestTargetContract)
 
 
 def test_browser_contract_is_only_created_by_typed_requirements_output():

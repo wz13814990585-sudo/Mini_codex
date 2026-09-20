@@ -43,6 +43,7 @@ class ActionController:
         self.has_edit = bool(state and state.edit_revision > 0)
         self.acceptance_missing = True
         self.next_required_check_id = ""
+        self.next_contract_type = ""
         self.validator_resolution_status = ""
         self.unresolved_reason = ""
         self.validation_paths = ()
@@ -64,6 +65,7 @@ class ActionController:
         remaining_budget: int,
         acceptance_missing: bool | None = None,
         next_required_check_id: str = "",
+        next_contract_type: str = "",
         validator_resolution_status: object = "",
         unresolved_reason: str = "",
         validation_paths=(),
@@ -86,6 +88,7 @@ class ActionController:
         same_obligation = (next_required_check_id == self.next_required_check_id
                            and status == self.validator_resolution_status)
         self.next_required_check_id = str(next_required_check_id or "")
+        self.next_contract_type = str(next_contract_type or "")
         self.validator_resolution_status = str(status or "")
         self.unresolved_reason = str(unresolved_reason or "")
         self.validation_paths = tuple(dict.fromkeys(validation_paths or self.target_paths))
@@ -198,6 +201,16 @@ class ActionController:
 
         if tool_name == "replan" and not getattr(policy, "enable_replan", False):
             return "FAST 模式无计划；replan 不可用。"
+
+        if (
+            tool_name == "validate_static_web"
+            and self.next_contract_type == "browser_interaction"
+        ):
+            return (
+                f"当前必需检查 {self.next_required_check_id or 'browser_interaction'} "
+                "是浏览器交互契约。请修复 HTML 引用的脚本中的事件监听，"
+                "不要用 validate_static_web / require_inline_script 替代。"
+            )
 
         if (
             "test.run" in capabilities

@@ -769,6 +769,7 @@ class MiniCodexAgent:
                 user_input,
                 mode=self.execution_policy.mode,
                 target_paths=getattr(self.execution_route, "target_paths", ()),
+                workspace=self.workspace,
             )
             if self.task_requires_validation
             else TaskRequirements()

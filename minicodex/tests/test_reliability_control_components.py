@@ -207,6 +207,28 @@ def test_action_controller_is_phase_aware():
     assert controller.restriction_reason("read_file", {}, policy) is None
 
 
+def test_browser_obligation_blocks_inline_static_web_detour():
+    controller = ActionController()
+    policy = policy_for(ExecutionMode.STANDARD)
+    state = TaskState(phase=AgentPhase.FIXING, edit_revision=1)
+    controller.reset(state)
+    controller.update_context(
+        state=state,
+        policy=policy,
+        remaining_budget=6,
+        next_required_check_id="V3",
+        next_contract_type="browser_interaction",
+    )
+    reason = controller.restriction_reason(
+        "validate_static_web",
+        {"path": "index.html", "require_inline_script": True},
+        policy,
+    )
+    assert reason is not None
+    assert "浏览器交互" in reason or "browser_interaction" in reason
+    assert controller.restriction_reason("patch_file", {"path": "app.js"}, policy) is None
+
+
 def test_edit_retry_policy_allows_one_read_and_one_retry():
     policy = EditRetryPolicy()
     stale = ToolResult(

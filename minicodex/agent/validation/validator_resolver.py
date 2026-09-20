@@ -405,11 +405,24 @@ const perform = (type, selector, value, missingCode) => {{
   const cb = type === 'click'
     ? (target._listeners?.click || target.onclick)
     : (documentListeners.keydown || target._listeners?.keydown);
-  if (typeof cb !== 'function') process.exit(missingCode);
+  if (typeof cb !== 'function') {{
+    console.error(
+      'Missing ' + type + ' handler on ' + selector
+      + '; fix the referenced script (for example app.js). '
+      + 'Do not replace browser proof with validate_static_web/require_inline_script.'
+    );
+    process.exit(missingCode);
+  }}
   cb(type === 'click' ? {{type:'click'}} : {{type:'keydown', key:value}});
 }};
 const assertText = (selector, expected, failureCode) => {{
-  if (node(selector).textContent !== expected) process.exit(failureCode);
+  if (node(selector).textContent !== expected) {{
+    console.error(
+      'Assertion failed for ' + selector + ': expected ' + JSON.stringify(expected)
+      + ', got ' + JSON.stringify(node(selector).textContent)
+    );
+    process.exit(failureCode);
+  }}
 }};
 {non_target_script}
 perform({json.dumps(contract.action.type)}, {json.dumps(action_selector)}, {json.dumps(contract.action.value)}, 21);

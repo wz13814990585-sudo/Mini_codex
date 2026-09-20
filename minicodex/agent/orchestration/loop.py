@@ -99,12 +99,14 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
     validation_paths = (validation_paths_for(check) if callable(validation_paths_for) else
                         tuple(getattr(agent.task_state, "relevant_paths", ()) or ()))
     if controller is not None:
+        contract = getattr(check, "contract", None)
         controller.update_context(
             state=agent.task_progress_state(remaining),
             policy=agent.execution_policy,
             remaining_budget=remaining,
             acceptance_missing=None,
             next_required_check_id=getattr(check, "id", ""),
+            next_contract_type=str(getattr(contract, "contract_type", "") or ""),
             validator_resolution_status=getattr(resolution, "status", ""),
             unresolved_reason=getattr(resolution, "reason", ""),
             validation_paths=validation_paths,

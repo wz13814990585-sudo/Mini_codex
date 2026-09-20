@@ -7,13 +7,17 @@ import re
 
 from ..routing import ExecutionMode
 from ..routing.structured_output import StructuredOutputError, parse_bounded_json_object
+from pathlib import Path
+
 from ..validation.contracts import (
+    PythonBehaviorContract,
     SemanticContract,
+    TestTargetContract,
     VerificationContract,
     parse_contract,
 )
 
-REQUIREMENTS_PROMPT_VERSION = "task-requirements-v5"
+REQUIREMENTS_PROMPT_VERSION = "task-requirements-v6"
 
 
 class RequirementCategory(str, Enum):
@@ -98,6 +102,9 @@ JavaScript 路径；解析器会从仓库事实定位引用它的 HTML 文档。
 一个非目标 action 以及执行后必须保持的精确状态 assertion。
 登录/鉴权类 HTTP 行为必须在 http_response 中提供 json_body（合法与非法凭据各用对应 body），
 禁止省略 body 后用空请求验收；需要检查响应片段时使用 expected_text。
+若仓库已有覆盖该行为的 pytest（如 tests/test_*.py），优先使用 pytest 契约，不要再另造
+与现有测试入参形状不一致的 python_behavior（例如源码/测试用 dict 行时，禁止改用 tuple）。
+python_behavior 的调用形状必须与现有源码或测试一致。
 能由一个完全相同契约证明的结果应使用相同 contract。description 保持简洁中文；
 contract 的类型和字段名保持英文。不要把“若已经满足则不编辑”提取为 requirement，
 只设置 policy.no_edit_if_already_satisfied。不要臆造仓库事实。"""
@@ -116,7 +123,14 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
         coordinators = sum(text.casefold().count(x) for x in (" and ", "、", "并且", "同时", ","))
         return mode != ExecutionMode.FAST or coordinators >= 2
 
-    def extract(self, user_request: str, *, mode: ExecutionMode, target_paths=()) -> TaskRequirements:
+    def extract(
+        self,
+        user_request: str,
+        *,
+        mode: ExecutionMode,
+        target_paths=(),
+        workspace=None,
+    ) -> TaskRequirements:
         text = user_request.casefold()
         structural = bool(target_paths) and all(str(p).endswith((".md", ".txt", ".html", ".css")) for p in target_paths)
         structural = structural and not any(w in text for w in ("game", "tetris", "playable", "click", "keyboard", "login", "游戏"))
@@ -172,6 +186,7 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
                 items.append(TaskRequirement(f"R{index}", description, category, paths, contract, kind))
             if not items:
                 raise StructuredOutputError("需求列表为空")
+            items = self._prefer_existing_pytest(items, workspace)
             usage = getattr(response, "usage", None)
             self.last_telemetry = RequirementsTelemetry(
                 1, int(getattr(usage, "prompt_tokens", 0) or 0),
@@ -181,6 +196,30 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
         except Exception:
             self.last_telemetry = RequirementsTelemetry(calls=1, latency_seconds=time.monotonic() - started)
             return fallback
+
+    @staticmethod
+    def _prefer_existing_pytest(items: list[TaskRequirement], workspace) -> list[TaskRequirement]:
+        """Drop invented python_behavior when a real in-repo pytest contract already exists."""
+
+        root = Path(workspace).resolve() if workspace else None
+        if root is None:
+            return items
+        has_repo_pytest = False
+        for item in items:
+            contract = item.contract
+            if not isinstance(contract, TestTargetContract):
+                continue
+            target = str(contract.target or "").split("::", 1)[0].strip()
+            if target and (root / target).is_file():
+                has_repo_pytest = True
+                break
+        if not has_repo_pytest:
+            return items
+        filtered = [
+            item for item in items
+            if not isinstance(item.contract, PythonBehaviorContract)
+        ]
+        return filtered or items
 
     @staticmethod
     def _normalize_path_hint(value) -> str:
