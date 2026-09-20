@@ -22,6 +22,7 @@ class PendingEditRetry:
     retry_used: bool = False
     failure_type: EditFailureType = EditFailureType.STALE_CONTEXT
     symbol: str | None = None
+    current_text: str = ""
 
 
 class EditRetryPolicy:
@@ -60,10 +61,7 @@ class EditRetryPolicy:
             )
         if tool_name in EDIT_TOOLS and path == pending.path:
             return None
-        return (
-            f"{pending.path} 的最新上下文已可用。请立即重试一次定向编辑；"
-            "不允许扩大搜索或执行无关操作。"
-        )
+        return self._retry_instruction(pending)
 
     def observe(self, tool_name: str, arguments: dict, result) -> str | None:
         failure_type = str(
@@ -87,13 +85,18 @@ class EditRetryPolicy:
                     "唯一的过期上下文编辑重试也失败了。请勿循环；"
                     "报告具体冲突，或选择另一条有证据的编辑路径。"
                 )
+            current_text = str(result.data.get("current_content", "") or "")[:4_000]
             self.pending = PendingEditRetry(
                 path=path,
                 edit_tool=tool_name,
                 start_line=self._optional_int(result.data.get("start_line")),
                 end_line=self._optional_int(result.data.get("end_line")),
                 failure_type=typed_failure,
+                current_text=current_text,
+                read_completed=bool(current_text) and typed_failure == EditFailureType.STALE_CONTEXT,
             )
+            if self.pending.read_completed:
+                return self._retry_instruction(self.pending)
             return self.read_instruction()
 
         if tool_name == "replace_symbol" and typed_failure == EditFailureType.SYMBOL_NOT_FOUND:
@@ -126,10 +129,8 @@ class EditRetryPolicy:
             return "符号搜索已完成。请用更精确的范围重试一次 replace_symbol。"
         if tool_name == "read_file" and path == pending.path and result.success:
             pending.read_completed = True
-            return (
-                f"{pending.path} 中的受影响源码已是最新。"
-                f"请基于当前内容重试一次 {pending.edit_tool} 编辑。"
-            )
+            pending.current_text = str(getattr(result, "llm_content", "") or "")[:2_000]
+            return self._retry_instruction(pending)
         if tool_name in EDIT_TOOLS and path == pending.path:
             pending.retry_used = True
             self.pending = None
@@ -152,6 +153,21 @@ class EditRetryPolicy:
             f"编辑被拒绝（{pending.failure_type.value}）。请先读取 "
             f"{pending.path}{range_text} 一次，再重试一次定向编辑。"
             "请勿扩大搜索或重新规划。"
+        )
+
+    @staticmethod
+    def _retry_instruction(pending: PendingEditRetry) -> str:
+        exact = ""
+        if pending.current_text and pending.edit_tool == "patch_file":
+            exact = (
+                "\npatch_file.old_text 必须从下面最新源码逐字复制，不得改写、概括、"
+                "调整大小写或补标点：\n"
+                f"--- CURRENT SOURCE ---\n{pending.current_text}\n--- END CURRENT SOURCE ---"
+            )
+        return (
+            f"{pending.path} 的最新上下文已可用。下一次工具调用必须是 "
+            f"{pending.edit_tool}，并立即对该路径重试一次定向编辑；"
+            f"不允许再次读取、扩大搜索、完成计划步骤或执行无关操作。{exact}"
         )
 
     @staticmethod

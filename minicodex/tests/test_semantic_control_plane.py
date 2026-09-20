@@ -11,6 +11,7 @@ from ..agent.routing import ExecutionMode, TaskIntent, TaskRouter, policy_for
 from ..agent.runtime import RuntimeTaskControl
 from ..agent.safety import SafetyPolicy
 from ..agent.validation import (
+    BrowserInteractionContract,
     FailureDelta, RegressionClassification, RegressionRecoveryPolicy,
     SemanticRegressionJudge, TaskCompletionPolicy, ValidationPipeline,
 )
@@ -121,6 +122,64 @@ def test_requirements_extraction_and_evidence_are_revision_aware():
     pipeline.record_edit()
     assert pipeline.state.proof("V1") is None
 
+
+def test_requirements_extracts_explicit_dom_interaction_as_browser_contract():
+    llm = StubLLM({
+        "requirements": [{
+            "description": "左方向键把状态改为 left",
+            "category": "behavior",
+            "paths": ["app.js"],
+            "contract": {
+                "type": "browser_interaction",
+                "path": "app.js",
+                "action": {
+                    "type": "keypress", "selector": "#state", "value": "ArrowLeft",
+                },
+                "assertion": {
+                    "type": "text_equals", "selector": "#state", "value": "left",
+                },
+            },
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    requirements = RequirementsExtractor(llm).extract(
+        "Update app.js so ArrowLeft changes #state to left.",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("app.js",),
+    )
+    assert isinstance(requirements.items[0].contract, BrowserInteractionContract)
+    assert requirements.items[0].contract.path == "app.js"
+    assert "不能降级为 semantic" in RequirementsExtractor.SYSTEM_PROMPT
+
+
+def test_keyboard_request_fallback_and_semantic_are_upgraded_to_browser_contract():
+    prompt = (
+        "Update app.js so pressing ArrowLeft changes #state text from idle to left; "
+        "other keys leave it unchanged."
+    )
+    fallback = RequirementsExtractor(llm=None).extract(
+        prompt, mode=ExecutionMode.FAST, target_paths=("app.js",),
+    )
+    assert isinstance(fallback.items[0].contract, BrowserInteractionContract)
+    assert fallback.items[0].contract.action.type == "keypress"
+    assert fallback.items[0].contract.action.value == "ArrowLeft"
+    assert fallback.items[0].contract.assertion.selector == "#state"
+    assert fallback.items[0].contract.assertion.value == "left"
+
+    llm = StubLLM({
+        "requirements": [{
+            "description": "键盘行为",
+            "category": "behavior",
+            "paths": ["app.js"],
+            "contract": {"type": "semantic", "path": "app.js", "claim": prompt},
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    upgraded = RequirementsExtractor(llm).extract(
+        prompt, mode=ExecutionMode.STANDARD, target_paths=("app.js",),
+    )
+    assert isinstance(upgraded.items[0].contract, BrowserInteractionContract)
+    assert upgraded.items[0].contract.assertion.value == "left"
 
 def test_completion_rejects_green_validation_when_one_requirement_is_open():
     requirements = TaskRequirements([

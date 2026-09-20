@@ -212,14 +212,23 @@ def test_edit_retry_policy_allows_one_read_and_one_retry():
     stale = ToolResult(
         success=False,
         summary="stale",
-        data={"path": "demo.py", "failure_type": "stale_context", "start_line": 2},
+        data={"path": "demo.py", "failure_type": "stale_context"},
     )
-    assert "读取" in policy.observe("replace_lines", {"path": "demo.py"}, stale)
+    assert "读取" in policy.observe("patch_file", {"path": "demo.py"}, stale)
     assert policy.restriction_reason("search_code", {"query": "x"})
     assert policy.restriction_reason("read_file", {"path": "demo.py"}) is None
 
-    read = ToolResult(success=True, summary="read", data={"path": "demo.py"})
-    assert "重试" in policy.observe("read_file", {"path": "demo.py"}, read)
+    read = ToolResult(
+        success=True, summary="read", data={"path": "demo.py"},
+        llm_content="// keyboard behavior missing",
+    )
+    retry_message = policy.observe("read_file", {"path": "demo.py"}, read)
+    assert "重试" in retry_message
+    assert "// keyboard behavior missing" in retry_message
+    assert "不得改写、概括" in retry_message
+    assert "// keyboard behavior missing" in policy.restriction_reason(
+        "read_file", {"path": "demo.py"},
+    )
     assert policy.restriction_reason("patch_file", {"path": "demo.py"}) is None
     policy.observe(
         "patch_file",
@@ -228,6 +237,23 @@ def test_edit_retry_policy_allows_one_read_and_one_retry():
     )
     assert policy.pending is None
 
+
+def test_stale_patch_with_current_content_skips_mandatory_read():
+    policy = EditRetryPolicy()
+    stale = ToolResult(
+        success=False,
+        summary="stale",
+        data={
+            "path": "app.js",
+            "failure_type": "stale_context",
+            "current_content": "// keyboard behavior missing\n",
+        },
+    )
+    message = policy.observe("patch_file", {"path": "app.js"}, stale)
+    assert "CURRENT SOURCE" in message
+    assert "// keyboard behavior missing" in message
+    assert policy.restriction_reason("read_file", {"path": "app.js"}) is not None
+    assert policy.restriction_reason("patch_file", {"path": "app.js"}) is None
 
 def test_dependency_resolver_declared_undeclared_and_standalone(tmp_path):
     (tmp_path / "pyproject.toml").write_text(

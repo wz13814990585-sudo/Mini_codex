@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from html.parser import HTMLParser
 import json
 from pathlib import Path
-import re
 import shlex
 import sys
 
@@ -22,6 +22,61 @@ from .contracts import (
     TestTargetContract,
 )
 from .plan import ValidationCheck
+
+
+class _BrowserHtmlStateParser(HTMLParser):
+    """Extract external script and initial textContent for id-addressable nodes."""
+
+    _VOID_TAGS = frozenset({
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    })
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.initial_text: dict[str, str] = {}
+        self.script_src = ""
+        self._tag_stack: list[str] = []
+        self._text_contexts: list[tuple[str, int]] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.casefold()
+        attributes = {str(name).casefold(): value or "" for name, value in attrs}
+        if tag == "script" and not self.script_src and attributes.get("src"):
+            self.script_src = attributes["src"]
+
+        selector = f"#{attributes['id']}" if attributes.get("id") else ""
+        if tag in self._VOID_TAGS:
+            if selector:
+                self.initial_text.setdefault(selector, "")
+            return
+
+        self._tag_stack.append(tag)
+        if selector and selector not in self.initial_text:
+            self.initial_text[selector] = ""
+            self._text_contexts.append((selector, len(self._tag_stack)))
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        attributes = {str(name).casefold(): value or "" for name, value in attrs}
+        if attributes.get("id"):
+            self.initial_text.setdefault(f"#{attributes['id']}", "")
+
+    def handle_data(self, data: str) -> None:
+        for selector, _depth in self._text_contexts:
+            self.initial_text[selector] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.casefold()
+        try:
+            index = len(self._tag_stack) - 1 - self._tag_stack[::-1].index(tag)
+        except ValueError:
+            return
+        closing_depth = index + 1
+        self._text_contexts = [
+            context for context in self._text_contexts
+            if context[1] < closing_depth
+        ]
+        del self._tag_stack[index:]
 
 
 class ResolutionStatus(str, Enum):
@@ -245,24 +300,33 @@ class ValidatorResolver:
         if contract.action.type not in {"click", "keypress"}:
             return ""
         script_path = contract.path
+        initial_text: dict[str, str] = {}
         if contract.path.endswith(".html"):
             try:
                 html = (self.workspace / contract.path).read_text(encoding="utf-8")
             except (OSError, UnicodeError):
                 return ""
-            match = re.search(r"<script[^>]+src=[\"']([^\"']+)[\"']", html, re.I)
-            if not match:
+            parser = _BrowserHtmlStateParser()
+            parser.feed(html)
+            parser.close()
+            if not parser.script_src:
                 return ""
-            script_path = str((Path(contract.path).parent / match.group(1)).as_posix())
+            initial_text = parser.initial_text
+            script_path = str((Path(contract.path).parent / parser.script_src).as_posix())
             while script_path.startswith("./"):
                 script_path = script_path[2:]
+        else:
+            document = self._html_document_for_script(contract.path)
+            if document is not None:
+                initial_text = document.initial_text
         action_selector = contract.action.selector or contract.assertion.selector
         script = f"""
 import {{readFileSync}} from 'node:fs';
+const initialText = {json.dumps(initial_text)};
 const nodes = new Map();
 const node = selector => {{
   if (!nodes.has(selector)) nodes.set(selector, {{
-    textContent: selector === {json.dumps(contract.assertion.selector)} ? '' : '',
+    textContent: Object.prototype.hasOwnProperty.call(initialText, selector) ? initialText[selector] : '',
     addEventListener: (type, cb) => {{ nodes.get(selector)._listeners ??= {{}}; nodes.get(selector)._listeners[type] = cb; }}
   }});
   return nodes.get(selector);
@@ -288,3 +352,24 @@ if ({json.dumps(contract.action.type)} === 'click') {{
 if (node({json.dumps(contract.assertion.selector)}).textContent !== {json.dumps(contract.assertion.value)}) process.exit(23);
 """
         return f"node --input-type=module -e {shlex.quote(script)}"
+
+    def _html_document_for_script(self, script_path: str) -> _BrowserHtmlStateParser | None:
+        try:
+            expected = (self.workspace / script_path).resolve()
+            expected.relative_to(self.workspace)
+        except (OSError, ValueError):
+            return None
+        for html_path in sorted(self.workspace.rglob("*.html")):
+            try:
+                parser = _BrowserHtmlStateParser()
+                parser.feed(html_path.read_text(encoding="utf-8"))
+                parser.close()
+                if not parser.script_src:
+                    continue
+                referenced = (html_path.parent / parser.script_src).resolve()
+                referenced.relative_to(self.workspace)
+            except (OSError, UnicodeError, ValueError):
+                continue
+            if referenced == expected:
+                return parser
+        return None

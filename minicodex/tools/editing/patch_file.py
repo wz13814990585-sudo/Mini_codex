@@ -118,6 +118,7 @@ class PatchFileTool(
                     "edit_failure_type": EditFailureType.STALE_CONTEXT.value,
                     "reason_code": ReasonCode.STALE_CONTEXT.value,
                     "retry_action": "read_target_region_then_retry_once",
+                    "current_content": before_content[:4_000],
                 },
                 error="当前文件中未找到 old_text。",
             )

@@ -1,3 +1,5 @@
+import shlex
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -178,12 +180,19 @@ def test_chinese_file_description_uses_typed_path_not_description(tmp_path):
     assert "仓库根目录" not in resolution.arguments["command"]
 
 
-def test_browser_contract_does_not_parse_description_and_has_node_fallback(tmp_path):
-    (tmp_path / "index.html").write_text("<script type='module' src='./app.js'></script>")
-    (tmp_path / "app.js").write_text("document.querySelector('#increment').onclick=()=>{}")
+def _execute_browser_fallback(
+    tmp_path, html, javascript, action, assertion, *, contract_path="index.html",
+):
+    html_path = tmp_path / "index.html"
+    script_path = tmp_path / "app.js"
+    html_path.write_text(html, encoding="utf-8")
+    script_path.write_text(javascript, encoding="utf-8")
+    before = {
+        html_path: html_path.read_bytes(),
+        script_path: script_path.read_bytes(),
+    }
     contract = BrowserInteractionContract(
-        "index.html", BrowserAction("click", "#increment"),
-        BrowserAssertion("text_equals", "#count", "1"),
+        contract_path, action, assertion,
     )
     check = ValidationPlanner().build(requirements(contract)).checks[0]
     registry = ToolRegistry()
@@ -191,7 +200,93 @@ def test_browser_contract_does_not_parse_description_and_has_node_fallback(tmp_p
     resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
     assert resolution.status == ResolutionStatus.RESOLVED
     assert resolution.capability == "process.run"
-    assert "#increment" in resolution.arguments["command"]
+    completed = subprocess.run(
+        shlex.split(resolution.arguments["command"]),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert {path: path.read_bytes() for path in before} == before
+    return completed
+
+
+_KEYBOARD_HTML = """\
+<div id="state">idle</div>
+<script type="module" src="./app.js"></script>
+"""
+_KEYBOARD_JS = """\
+const state = document.getElementById("state");
+document.addEventListener("keydown", event => {
+  if (event.key === "ArrowLeft") {
+    state.textContent = "left";
+  }
+});
+"""
+
+
+def test_browser_node_fallback_executes_target_key_against_initial_html(tmp_path):
+    completed = _execute_browser_fallback(
+        tmp_path, _KEYBOARD_HTML, _KEYBOARD_JS,
+        BrowserAction("keypress", "#state", "ArrowLeft"),
+        BrowserAssertion("text_equals", "#state", "left"),
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_browser_node_fallback_preserves_initial_text_for_unrelated_key(tmp_path):
+    completed = _execute_browser_fallback(
+        tmp_path, _KEYBOARD_HTML, _KEYBOARD_JS,
+        BrowserAction("keypress", "#state", "x"),
+        BrowserAssertion("text_equals", "#state", "idle"),
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_browser_node_fallback_finds_html_state_from_javascript_contract(tmp_path):
+    completed = _execute_browser_fallback(
+        tmp_path, _KEYBOARD_HTML, _KEYBOARD_JS,
+        BrowserAction("keypress", "#state", "x"),
+        BrowserAssertion("text_equals", "#state", "idle"),
+        contract_path="app.js",
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_browser_node_fallback_executes_counter_click(tmp_path):
+    completed = _execute_browser_fallback(
+        tmp_path,
+        """\
+<button id="increment">+</button>
+<span id="count">0</span>
+<script type="module" src="./app.js"></script>
+""",
+        """\
+const count = document.getElementById("count");
+document.getElementById("increment").addEventListener("click", () => {
+  count.textContent = String(Number(count.textContent) + 1);
+});
+""",
+        BrowserAction("click", "#increment"),
+        BrowserAssertion("text_equals", "#count", "1"),
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_browser_node_fallback_fails_when_unrelated_key_mutates_state(tmp_path):
+    completed = _execute_browser_fallback(
+        tmp_path, _KEYBOARD_HTML,
+        """\
+const state = document.getElementById("state");
+document.addEventListener("keydown", () => {
+  state.textContent = "left";
+});
+""",
+        BrowserAction("keypress", "#state", "x"),
+        BrowserAssertion("text_equals", "#state", "idle"),
+    )
+    assert completed.returncode != 0
 
 
 def test_unavailable_browser_without_fallback_is_blocked(tmp_path):
