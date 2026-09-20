@@ -1,80 +1,59 @@
 # MiniCodex Benchmark V1
 
-`minicodex-bench-v1` is the fixed, opt-in repository coding benchmark used to
-compare a credible simple baseline with the current MiniCodex control plane.
-It reuses `EvaluationHarness`, `EvaluationCheckRunner`, runtime traces, and
-`ExecutionMetrics`; it is not a second evaluation framework.
+`minicodex-bench-v1` 是固定的、需显式启用的仓库编码基准，用于对比可信的简单 baseline 与当前 MiniCodex 控制面。
+它复用 `EvaluationHarness`、`EvaluationCheckRunner`、运行时 trace 与 `ExecutionMetrics`，**不是**另一套评测框架。
 
-## Catalog
+## 题库目录
 
-The catalog contains 30 unique tasks: 5 create, 7 modify, 8 fix, 4 refactor,
-2 dependency/environment, 2 follow-up, and 2 already-satisfied tasks. It covers
-Python packages, Flask, FastAPI, HTML/JavaScript, and TypeScript-compatible
-modules. `smoke_fixtures()` selects eight stable representative cases.
+题库共 30 道互不重复的任务：5 道 create、7 道 modify、8 道 fix、4 道 refactor、
+2 道 dependency/environment、2 道 follow-up、2 道 already-satisfied。
+覆盖 Python 包、Flask、FastAPI、HTML/JavaScript，以及兼容 TypeScript 的模块。
+`smoke_fixtures()` 选出 8 道稳定的代表性用例。
 
-Every case has a hidden executable Python/pytest oracle. Fixture source is placed in an isolated
-agent workspace. Oracle files live in a separate root, are not materialized
-until the agent has terminated, and are removed immediately after the check so
-later agents cannot discover prior oracles. Workspace file tools reject path traversal; the
-evaluation runner alone receives both roots. Oracles execute behavior wherever
-possible. Structural assertions are used only when structure or dependency
-metadata is itself part of the requirement.
+每道题都有隐藏的可执行 Python/pytest oracle。Fixture 源码放在隔离的 Agent 工作区中。
+Oracle 文件位于单独根目录：Agent 结束后才物化，检查一完成立即删除，
+避免后续 Agent 发现历史 oracle。工作区文件工具会拒绝路径穿越；
+只有评测 runner 同时持有两边根目录。能做行为验证时优先执行行为 oracle；
+仅当结构或依赖元数据本身就是需求的一部分时，才使用结构性断言。
 
-## Metric definitions
+## 指标定义
 
-- Task success requires the independent oracle, the normal completion gate,
-  budgets, and an error-free run.
-- First-pass success requires the first post-edit validation whose purpose is
-  `ACCEPTANCE` and scope is `TARGETED` to pass on the final edit revision. The
-  independent oracle must pass, with no repair/recovery or rollback. A
-  regression-only or full-suite pass does not qualify. Explicit
-  already-satisfied cases are excluded from this rate's denominator.
-- Recovery is entered when a failed/inconclusive post-edit validation is
-  followed by a corrective edit, or the existing repair path records an
-  attempt. Recovery succeeds only when corrective action occurred and the final
-  independent oracle passes. Non-recovery tasks are excluded from the rate.
-- Validation pass rate is `passed / (passed + failed)`; inconclusive executions
-  are reported separately.
-- False completion means a successful agent terminal outcome followed by an
-  independent oracle failure.
-- Unauthorized edit means an inspect-only or informational task changed a
-  file. Wrong-file edit is separate: a modify task touched only paths outside
-  its fixture's deterministic expected implementation scope. Ambiguous cases
-  leave strict wrong-file detection disabled, and allowed supporting edits do
-  not become false positives.
-- A failed tool call is a canonical tool result with `success == false`, such
-  as malformed arguments, an execution exception, or a policy block. A
-  validator that executes successfully but reports failing tests remains a
-  successful tool call and a failed validation outcome.
-- Agent steps are main loop turns. They are distinct from tool calls and all
-  LLM calls.
-- Cost remains `null` unless a provider reports trustworthy pricing data.
+- **任务成功**：独立 oracle 通过、正常完成门控通过、未超预算，且运行无错误。
+- **首次修改成功**：最终编辑版本上，第一条 purpose 为 `ACCEPTANCE`、scope 为 `TARGETED`
+  的编辑后验证必须通过；独立 oracle 必须通过；期间不得出现 repair/recovery 或 rollback。
+  仅回归或完整套件通过不算。明确的 already-satisfied 用例不计入该比率的分母。
+- **恢复**：进入条件是编辑后验证失败/无定论之后出现纠正性编辑，或既有 repair 路径记录了尝试。
+  仅当确实发生纠正动作且最终独立 oracle 通过时，恢复才算成功。未进入恢复的任务不计入该比率。
+- **验证通过率**：`passed / (passed + failed)`；inconclusive 另行统计。
+- **错误完成**：Agent 终端结果显示成功，但独立 oracle 失败。
+- **未授权编辑**：inspect-only 或 informational 任务却改动了文件。
+  **错误文件编辑**是另一项：modify 任务只改动了 fixture 确定性期望实现范围之外的路径。
+  语义模糊的用例会关闭严格 wrong-file 检测；允许的辅助性编辑不会变成误报。
+- **失败工具调用**：规范工具结果中 `success == false`（如参数畸形、执行异常或策略拦截）。
+  验证器本身执行成功但报告测试失败时，仍算**成功的工具调用** + **失败的验证结果**。
+- **Agent 步数**：主循环回合数，与工具调用次数、全部 LLM 调用次数不同。
+- **成本**：除非提供商给出可信计价数据，否则保持 `null`。
 
-The raw schema also records action economy, validation counts, recovery,
-rollbacks, wrong targets, repetition, token use, call classes, latency, oracle
-checks, failure category/reason, trace path, profile, run index, and benchmark
-version. Summaries report aggregate and per-category metrics. Failure reports
-group deterministic categories without an LLM judge.
+原始 schema 还会记录动作经济性、验证计数、恢复、回滚、错误目标、重复、Token 使用、
+调用类别、延迟、oracle 检查、failure category/reason、trace 路径、profile、run index
+与 benchmark version。汇总报告给出总体与分 category 指标。失败报告按确定性类别聚合，
+不使用 LLM 评判。
 
-## Profiles and fairness
+## Profile 与公平性
 
-Both profiles use the shared `MiniCodexAgent` loop, identical fixtures, model,
-temperature, maximum main-loop steps, timeout class, tools, and oracle.
-`minicodex` uses the normal mode policy. `baseline` remains able to inspect,
-edit, run commands/tests, and validate, but disables planning/replanning,
-long-term-memory policy, and heavy recovery. The comparison report never assumes
-that MiniCodex improves a metric.
+两个 profile 共用同一套 `MiniCodexAgent` 循环、相同 fixture、模型、temperature、
+主循环最大步数、超时档位、工具与 oracle。
+`minicodex` 使用正常模式策略。`baseline` 仍可检查、编辑、跑命令/测试并验证，
+但关闭规划/重规划、长期记忆策略与重恢复。对比报告**从不预设** MiniCodex 一定会改善某项指标。
 
-## Live CLI
+## 在线 CLI
 
-Live execution requires explicit provider, model, and credential configuration:
+在线运行需要显式配置 provider、model 与凭证：
 
-Before any model is constructed or task starts, the CLI checks the environment
-needed by the selected fixtures. Python and pytest are always checked; FastAPI,
-Flask, packaging, node, and npm are checked only when selected cases require
-them. A failed preflight exits with status 2 and emits no benchmark results.
-Successful preflight details are stored under `metadata.environment`. Run the
-same check without credentials or provider calls with:
+在构造任何模型或启动任务之前，CLI 会检查所选 fixture 所需的环境。
+始终检查 Python 与 pytest；仅当选中用例需要时，才检查 FastAPI、Flask、packaging、node 与 npm。
+预检失败以退出码 2 结束，且不产出任何 benchmark 结果。
+预检成功详情写入 `metadata.environment`。也可在不带凭证、不发起 provider 调用的情况下只跑预检：
 
 ```bash
 python -m minicodex.evaluation.run_benchmark --profile both --smoke --preflight-only
@@ -94,9 +73,9 @@ python -m minicodex.evaluation.run_benchmark \
   --profile minicodex --provider deepseek --model deepseek-chat --smoke
 ```
 
-Useful filters are `--category`, repeatable `--case-id`, `--max-steps`,
-`--temperature`, `--base-url`, and `--output`. Non-DeepSeek provider labels
-require an explicit compatible `--base-url`. Results are written beneath:
+常用过滤参数：`--category`、可重复的 `--case-id`、`--max-steps`、
+`--temperature`、`--base-url`、`--output`。非 DeepSeek 的 provider 标签需要显式提供兼容的 `--base-url`。
+结果写入：
 
 ```text
 benchmark_results/minicodex-bench-v1/<experiment-id>/
@@ -110,5 +89,5 @@ benchmark_results/minicodex-bench-v1/<experiment-id>/
     └── comparison.json
 ```
 
-Existing experiment directories and raw run files are never overwritten.
-Ordinary `python -m pytest` does not invoke this CLI or a live provider.
+已有实验目录与原始 run 文件**永不覆盖**。
+普通 `python -m pytest` **不会**调用本 CLI，也不会发起在线 provider 请求。
