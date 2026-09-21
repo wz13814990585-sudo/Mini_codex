@@ -179,6 +179,8 @@ class ValidatorResolver:
                     "认证类 HTTP 契约缺少 json_body；不能用空请求体验收登录或凭据结果。",
                 )
             service = self._service_arguments(contract, profile)
+            if service is None:
+                service = self._framework_service_arguments(contract, paths)
             if service is not None and self._first(registry, "service.validate"):
                 return self._tool(registry, check, "service.validate", "validate_service",
                                   {**common, **service}, f"{contract.method} {contract.path}")
@@ -332,6 +334,45 @@ class ValidatorResolver:
         result = {
             "argv": argv, "port": 0, "path": contract.path,
             "method": contract.method, "expected_status": contract.expected_status,
+            "expected_text": contract.expected_text,
+        }
+        if contract.json_body is not None:
+            result["json_body"] = contract.json_body
+        return result
+
+    def _framework_service_arguments(self, contract: HttpContract, paths):
+        """Derive a bounded local service command from an unambiguous app module.
+
+        Flask's in-process testing stack is not reliable in every Python build;
+        a real loopback probe also provides stronger evidence for HTTP behavior.
+        Project-declared start/dev commands still take precedence.
+        """
+        candidates = tuple(dict.fromkeys((*paths, "app.py")))
+        source_path = next((
+            str(path) for path in candidates
+            if str(path).endswith(".py") and (self.workspace / str(path)).is_file()
+        ), "")
+        if not source_path:
+            return None
+        try:
+            source = (self.workspace / source_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        preferred = str(self.preferred_http_framework or "").casefold()
+        if preferred and preferred != "flask":
+            return None
+        if "Flask" not in source or not re.search(r"\bapp\s*=\s*Flask\s*\(", source):
+            return None
+        module = source_path[:-3].replace("/", ".")
+        result = {
+            "argv": [
+                sys.executable, "-m", "flask", "--app", module, "run",
+                "--host", "127.0.0.1", "--port", "{port}", "--no-reload",
+            ],
+            "port": 0,
+            "path": contract.path,
+            "method": contract.method,
+            "expected_status": contract.expected_status,
             "expected_text": contract.expected_text,
         }
         if contract.json_body is not None:

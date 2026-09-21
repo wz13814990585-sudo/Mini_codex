@@ -45,6 +45,7 @@ from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorRes
 from ..tools.registry import ToolRegistry
 from ..tools.results import ToolResult
 from ..tools.execution import RunCommandTool
+from ..tools.validation.validate_service import ValidateServiceTool
 from ..llm.types import LLMResponse, TokenUsage
 
 
@@ -84,6 +85,11 @@ class CommandTool:
     def execute(self, command, purpose="diagnostic"):
         self.calls += 1
         return ToolResult(True, "executed", {"command_succeeded": True, "exit_code": 0})
+
+
+class ServiceTool:
+    name = "validate_service"
+    capabilities = frozenset({"service.validate"})
 
 
 def requirements(*contracts):
@@ -781,6 +787,37 @@ def test_http_environment_failure_then_pass_closes_check():
                      ToolResult(True, "401", {"outcome": "passed", "errors": []}),
                      frozenset({"service.validate"}), resolution=resolution)
     assert pipeline.state.proof("V1")
+
+
+def test_flask_http_contract_prefers_real_service_probe_without_project_command(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask\napp = Flask(__name__)\n",
+        encoding="utf-8",
+    )
+    check = ValidationPlanner().build(
+        requirements(HttpContract("GET", "/health", 200, '"status": "ok"'))
+    ).checks[0]
+    registry = ToolRegistry()
+    registry.register(CommandTool())
+    registry.register(ServiceTool())
+
+    resolution = ValidatorResolver(tmp_path).resolve(
+        check, registry=registry, paths=("app.py",),
+    )
+
+    assert resolution.tool_name == "validate_service"
+    assert resolution.capability == "service.validate"
+    assert resolution.arguments["argv"][-2:] == ["{port}", "--no-reload"]
+    assert resolution.arguments["path"] == "/health"
+
+
+def test_service_json_fragment_ignores_only_insignificant_json_whitespace():
+    assert ValidateServiceTool._response_contains(
+        '{"status":"ok"}\n', '"status": "ok"',
+    )
+    assert not ValidateServiceTool._response_contains(
+        "HelloAlice", "Hello Alice",
+    )
 
 
 def test_pytest_no_tests_collected_is_inconclusive_not_failure():

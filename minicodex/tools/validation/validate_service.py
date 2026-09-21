@@ -1,5 +1,7 @@
 """Run and probe a local application, always cleaning up the owned process group."""
 from pathlib import Path
+import json
+import re
 import shlex
 import socket
 
@@ -82,7 +84,10 @@ class ValidateServiceTool(BaseTool):
             with service:
                 service.wait_ready(ready_path or path)
                 status, body = service.probe(path, method=method, json_body=json_body)
-                passed = status == (200 if expected_status is None else int(expected_status)) and expected_text in body
+                passed = (
+                    status == (200 if expected_status is None else int(expected_status))
+                    and self._response_contains(body, expected_text)
+                )
             return ToolResult(True, "服务断言通过" if passed else "服务断言失败",
                               {"outcome": "passed" if passed else "failed", "errors": [] if passed else ["response mismatch"],
                                "path": path, "status": status, "stdout": service.output})
@@ -90,3 +95,20 @@ class ValidateServiceTool(BaseTool):
             service.stop()
             return ToolResult(False, "无法验证服务",
                               {"failure_type": "environment_failure", "stdout": service.output}, error=str(exc))
+
+    @staticmethod
+    def _response_contains(body: str, expected_text: str) -> bool:
+        if expected_text in body:
+            return True
+        # JSON producers legitimately differ only in insignificant formatting
+        # (for example {"status":"ok"} vs {"status": "ok"}).  Relax
+        # whitespace only for a JSON response and a JSON-shaped expectation;
+        # ordinary human-readable text remains an exact substring assertion.
+        if not any(token in expected_text for token in (":", "{", "[")):
+            return False
+        try:
+            json.loads(body)
+        except (TypeError, json.JSONDecodeError):
+            return False
+        compact = lambda value: re.sub(r"\s+", "", value)
+        return compact(expected_text) in compact(body)

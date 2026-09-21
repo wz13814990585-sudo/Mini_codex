@@ -399,6 +399,41 @@ def test_sanitize_does_not_rewrite_boundary_assertions():
     assert "raises(ValueError):\n    apply_discount(100, 100)" in code
 
 
+def test_sanitize_prunes_normal_result_assertion_that_conflicts_with_rejection_contract():
+    items = [
+        TaskRequirement(
+            "R1", "折扣结果非负", RequirementCategory.BEHAVIOR, ("src/pricing.py",),
+            PythonBehaviorContract(
+                "from pricing import apply_discount\n"
+                "assert apply_discount(100, 20) == 80\n"
+                "assert apply_discount(50, 150) >= 0\n"
+            ),
+        ),
+        TaskRequirement(
+            "R2", "越界折扣抛错", RequirementCategory.BEHAVIOR, ("src/pricing.py",),
+            PythonBehaviorContract(
+                "from pricing import apply_discount\n"
+                "for bad in (-1, 101, 200, -50):\n"
+                "    try:\n"
+                "        apply_discount(100, bad)\n"
+                "    except ValueError:\n"
+                "        pass\n"
+                "    else:\n"
+                "        raise AssertionError('expected ValueError')\n"
+            ),
+        ),
+    ]
+
+    fixed = RequirementsExtractor._sanitize_contracts(
+        items,
+        "apply_discount never returns negative and rejects percentage outside 0..100 with ValueError",
+    )
+
+    assert "apply_discount(100, 20) == 80" in fixed[0].contract.code
+    assert "apply_discount(50, 150)" not in fixed[0].contract.code
+    assert "ValueError" in fixed[1].contract.code
+
+
 def test_sanitize_inverts_absence_file_contains():
     items = [
         TaskRequirement(

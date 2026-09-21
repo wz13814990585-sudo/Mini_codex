@@ -22,7 +22,7 @@ from ..validation.contracts import (
     parse_contract,
 )
 
-REQUIREMENTS_PROMPT_VERSION = "task-requirements-v9"
+REQUIREMENTS_PROMPT_VERSION = "task-requirements-v10"
 
 
 class RequirementCategory(str, Enum):
@@ -113,6 +113,8 @@ Follow-up/modify 若仓库已有公开 callable，必须保留其调用形状与
 禁止改成无参函数、Web route 或 Flask/FastAPI endpoint 来“重写”实现。
 若要求 reject/raise/ValueError（而不是 clamp 到边界值），python_behavior 必须用
 pytest.raises 或 try/except 断言异常，禁止写成越界输入仍返回数值的 assert。
+若任务同时要求有效输入的结果性质与越界输入抛错，结果性质只可断言有效输入；禁止在一个
+contract 中把越界输入当作正常返回值、又在另一个 contract 中要求它抛错。异常语义优先。
 回归断言必须与仓库事实中的现有行为一致，禁止臆造。
 若要求保持 JSON/文本字段不变，优先 file_contains 精确片段，不要用无法核对基线的 semantic。
 重构移动符号时，契约需同时覆盖：新文件存在定义、旧文件改为导入、公开行为不变。
@@ -419,7 +421,6 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
     def _sanitize_contracts(cls, items: list[TaskRequirement], user_request: str) -> list[TaskRequirement]:
         """Repair high-confidence contract hallucinations after extraction."""
 
-        del user_request
         sanitized: list[TaskRequirement] = []
         for item in items:
             contract = item.contract
@@ -449,7 +450,101 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                     )
                     continue
             sanitized.append(item)
-        return sanitized
+        return cls._prune_conflicting_boundary_assertions(sanitized, user_request)
+
+    @classmethod
+    def _prune_conflicting_boundary_assertions(
+        cls, items: list[TaskRequirement], user_request: str,
+    ) -> list[TaskRequirement]:
+        """Remove normal-result assertions that contradict explicit rejection.
+
+        This is deliberately narrow: it only acts when the user's text states
+        numeric bounds, another Python contract explicitly expects ValueError,
+        and that rejection contract identifies the bounded argument position.
+        """
+        match = re.search(
+            r"outside\s*(-?\d+(?:\.\d+)?)\s*(?:\.\.|to)\s*(-?\d+(?:\.\d+)?)|"
+            r"(?:范围|区间)\s*(-?\d+(?:\.\d+)?)\s*(?:\.\.|到|至)\s*(-?\d+(?:\.\d+)?)\s*(?:之外|以外)",
+            str(user_request or ""),
+            re.IGNORECASE,
+        )
+        if not match:
+            return items
+        values = next((pair for pair in (match.group(1, 2), match.group(3, 4)) if all(pair)), None)
+        if values is None:
+            return items
+        lower, upper = sorted(float(value) for value in values)
+
+        rejected_positions: set[tuple[str, int]] = set()
+        for item in items:
+            contract = item.contract
+            if not isinstance(contract, PythonBehaviorContract) or "ValueError" not in contract.code:
+                continue
+            try:
+                tree = ast.parse(contract.code)
+            except SyntaxError:
+                continue
+            for loop in (node for node in ast.walk(tree) if isinstance(node, ast.For)):
+                if not isinstance(loop.target, ast.Name) or "ValueError" not in ast.unparse(loop):
+                    continue
+                variable = loop.target.id
+                for call in (node for node in ast.walk(loop) if isinstance(node, ast.Call)):
+                    function = cls._call_name(call.func)
+                    if not function:
+                        continue
+                    for index, argument in enumerate(call.args):
+                        if isinstance(argument, ast.Name) and argument.id == variable:
+                            rejected_positions.add((function, index))
+
+        if not rejected_positions:
+            return items
+
+        class Pruner(ast.NodeTransformer):
+            def visit_Assert(self, node):
+                for call in (candidate for candidate in ast.walk(node.test) if isinstance(candidate, ast.Call)):
+                    function = RequirementsExtractor._call_name(call.func)
+                    for rejected_function, position in rejected_positions:
+                        if function != rejected_function or position >= len(call.args):
+                            continue
+                        number = RequirementsExtractor._numeric_literal(call.args[position])
+                        if number is not None and not lower <= number <= upper:
+                            return None
+                return self.generic_visit(node)
+
+        result = []
+        for item in items:
+            contract = item.contract
+            if not isinstance(contract, PythonBehaviorContract) or "ValueError" in contract.code:
+                result.append(item)
+                continue
+            try:
+                tree = ast.parse(contract.code)
+                transformed = Pruner().visit(tree)
+                ast.fix_missing_locations(transformed)
+                code = ast.unparse(transformed)
+            except (SyntaxError, ValueError):
+                result.append(item)
+                continue
+            result.append(replace(item, contract=PythonBehaviorContract(code)))
+        return result
+
+    @staticmethod
+    def _call_name(function) -> str:
+        if isinstance(function, ast.Name):
+            return function.id
+        if isinstance(function, ast.Attribute):
+            return function.attr
+        return ""
+
+    @staticmethod
+    def _numeric_literal(node) -> float | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub)
+                and isinstance(node.operand, ast.Constant)
+                and isinstance(node.operand.value, (int, float))):
+            return -float(node.operand.value)
+        return None
 
     @staticmethod
     def _normalize_src_imports(code: str) -> str:

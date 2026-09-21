@@ -202,6 +202,8 @@ DiffQualityGate 会检查：
 
 修复后的 `minicodex-bench-v1-r2` 在线 smoke（DeepSeek `deepseek-chat`，temperature 0，单次运行）为 8/8。`fix_python_sort_key` 从旧结果的零编辑误完成变为一次正确 patch 后通过；`create_calculator_service` 从旧 trace 的 6 次编辑降为严格位于 `src/calculator/` 的 2 次编辑。平均每题 3.5 次 LLM 调用、7207.6 tokens、6.97 秒。原始结果位于 `benchmark_results/minicodex-bench-v1-r2/product_gate_r2_online/`。
 
+随后在 commit `b54a61c` 上执行了完整 30 题单次在线 R2：26/30（86.67%），错误完成、越权编辑与错误文件编辑均为 0。四个失败的隐藏 oracle 实际全部通过，但完成门禁因内部验收未通过而安全停止。其中三个 Flask 场景复现为子进程 `Flask.test_client()` 的 `SIGSEGV (-11)`；另一个折扣边界场景由“越界仍返回非负值”和“越界必须抛 ValueError”两个互相矛盾的提取契约造成。运行后已改为对 Flask 使用受控回环服务探测，并增加边界异常契约一致性清理；这些修复已通过本地端到端验证，但尚未再次使用在线模型复测。原始结果位于 `benchmark_results/minicodex-bench-v1-r2/product_full_r2_online/`。
+
 ### 行动效率指标
 
 记录首次编辑时间、前置检查 / 搜索数、工具 / 模型调用、token、重复读取 / 搜索、错文件 / 错验证目标、验证 / 编辑比、无进展、耗尽、回滚、恢复和可选美元成本。
@@ -248,7 +250,8 @@ python -m minicodex.evaluation.vibebench
 | RealRepoBench 绑定 | 569 passed / 13.78s | SpecBinder / 项目执行环境 |
 | 预真实测试集成 | 572 passed / 12.86s | 再绑定 / 参数校验 / 外置 oracle |
 | 执行闭环 | 579 passed / 13.09s | 完成初始执行闭环 |
-| 产品门禁与 R2 oracle | **654 passed / 21.63s** | 当前最新；离线 VibeBench 15/15 |
+| 产品门禁与 R2 oracle | 654 passed / 21.63s | 离线 VibeBench 15/15 |
+| Dogfood、发布门禁与完整 R2 修复 | **662 passed / 19.92s** | 当前最新；离线 VibeBench 15/15；Flask 服务端到端探测通过 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 
@@ -256,7 +259,7 @@ CI 只跑确定性 pytest / compileall，不调用真实模型。
 
 ## 9. 真实剩余边界
 
-- 未做真实模型成功率 / 成本实验；未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
+- 已做一次 30 题真实模型实验，但尚未做修复后的复测与 3 次重复稳定性实验；未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
 - 需求提取与验证目标选择仍依赖模型 / 有限启发式；显式绑定与强度是确定性门禁，但不能自动证明任意文档语义正确
 - 导航有规模界限：session 扫描最多约 1500 文件，约定 / 依赖扫描最多约 80 源文件，TestIndex 最多约 2000 文件
 - 外部变更检测是 stat 指纹，不是文件系统事务 / 锁；整任务撤销仅覆盖检查点化编辑
