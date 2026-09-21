@@ -299,10 +299,19 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                 contract = replace(contract, target=target)
             elif isinstance(contract, PythonBehaviorContract):
                 imported_paths = cls._existing_python_import_paths(root, contract.code)
-                if imported_paths and not any((root / path).exists() for path in paths):
-                    # A non-existent model path such as calculator.js cannot
-                    # override the actual module imported by its own contract.
-                    paths = imported_paths
+                if imported_paths:
+                    # A Python behavior contract is anchored by its real
+                    # imports. Keep existing/explicit supporting files, but
+                    # drop invented non-existent aliases even when the model
+                    # also happened to name one valid path. This prevents a
+                    # mixed scope such as (calculator.js,
+                    # src/calculator/service.py) from authorizing an unrelated
+                    # parallel implementation.
+                    anchored = tuple(
+                        path for path in paths
+                        if path in explicit or (root / path).exists()
+                    )
+                    paths = tuple(dict.fromkeys((*anchored, *imported_paths)))
             normalized.append(TaskRequirement(
                 item.id,
                 item.description,

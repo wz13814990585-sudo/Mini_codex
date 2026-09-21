@@ -4,6 +4,7 @@ from ..agent.runtime import (
     ToolExecutor,
 )
 from ..tools.results import ToolResult
+from ..tools.registry import ToolRegistry
 
 
 class FakeRegistry:
@@ -227,3 +228,50 @@ def test_execute_prepared_is_safe_after_prepare_failure():
         ]
         == "argument_parsing"
     )
+
+
+class _StrictValidationTool:
+    name = "strict_validation"
+    capabilities = frozenset({"service.validate"})
+    parameters = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    }
+
+    def __init__(self):
+        self.path = None
+
+    def execute(self, path):
+        self.path = path
+        return ToolResult(True, "validated", {"outcome": "passed"})
+
+    def to_schema(self):
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "strict validator",
+                "parameters": self.parameters,
+            },
+        }
+
+
+def test_execute_strips_unsupported_internal_metadata_at_backend_boundary():
+    registry = ToolRegistry()
+    tool = _StrictValidationTool()
+    registry.register(tool)
+    executor = ToolExecutor(registry)
+
+    execution = executor.execute_prepared(PreparedToolCall(
+        tool.name,
+        {
+            "path": "/health",
+            "purpose": "acceptance",
+            "validation_check": "V1",
+        },
+    ))
+
+    assert execution.result.success is True
+    assert execution.arguments["purpose"] == "acceptance"
+    assert tool.path == "/health"

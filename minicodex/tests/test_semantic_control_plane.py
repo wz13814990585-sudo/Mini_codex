@@ -278,6 +278,28 @@ def test_python_contract_import_replaces_nonexistent_model_path(tmp_path):
     assert result[0].paths == ("src/calculator/service.py",)
 
 
+def test_python_contract_import_prunes_mixed_invented_model_path(tmp_path):
+    package = tmp_path / "src" / "calculator"
+    package.mkdir(parents=True)
+    (package / "service.py").write_text(
+        "def add(a, b): return a + b\n",
+        encoding="utf-8",
+    )
+    item = TaskRequirement(
+        "R1",
+        "增加 subtract",
+        RequirementCategory.BEHAVIOR,
+        ("calculator.js", "src/calculator/service.py"),
+        PythonBehaviorContract(
+            "from calculator.service import add; assert add(2, 3) == 5"
+        ),
+    )
+
+    result = RequirementsExtractor._canonicalize_paths([item], tmp_path, ())
+
+    assert result[0].paths == ("src/calculator/service.py",)
+
+
 def test_requirements_do_not_rewrite_http_contract_to_benchmark_callable(tmp_path):
     (tmp_path / "app.py").write_text(
         "def login(user, password):\n"

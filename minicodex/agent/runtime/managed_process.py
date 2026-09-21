@@ -123,7 +123,7 @@ class ManagedProcess:
         # Kill the owned group even if the parent exited and left children behind.
         try:
             os.killpg(self.process.pid, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         try:
             self.process.wait(timeout=.5)
@@ -131,7 +131,11 @@ class ManagedProcess:
             pass
         try:
             os.killpg(self.process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
+            # The group may have disappeared between wait() and killpg(), or
+            # macOS may briefly report EPERM while reaping the session. The
+            # best-effort hard kill must never replace the original service
+            # timeout/validation error during context-manager cleanup.
             pass
         self.process.wait(timeout=2)
         if self.reader and self.reader.ident is not None:

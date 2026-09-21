@@ -38,6 +38,12 @@ class ToolExecutor:
     ):
         self.registry = registry
 
+    _INTERNAL_TOOL_CALL_METADATA = frozenset({
+        "purpose",
+        "validation_check",
+        "edit_intent",
+    })
+
     # =========================================================
     # Prepare
     # =========================================================
@@ -148,12 +154,11 @@ class ToolExecutor:
         # prepare accepts them here, and the orchestration layer strips them
         # before the underlying tool.execute(**kwargs) call.
         # See turn_builder / tool_call_runner for the matching strip set.
-        _INTERNAL_TOOL_CALL_METADATA = frozenset({
-            "purpose",
-            "validation_check",
-            "edit_intent",
-        })
-        unknown = set(arguments) - set(properties) - _INTERNAL_TOOL_CALL_METADATA
+        unknown = (
+            set(arguments)
+            - set(properties)
+            - self._INTERNAL_TOOL_CALL_METADATA
+        )
         # A deliberately empty properties mapping is used by lightweight
         # adapters to mean an open-ended interface.  Preserve that standard
         # JSON-Schema behaviour; production tools declare their accepted
@@ -201,7 +206,10 @@ class ToolExecutor:
         try:
             result = self.registry.execute(
                 prepared.tool_name,
-                prepared.arguments,
+                self._backend_arguments(
+                    prepared.tool_name,
+                    prepared.arguments,
+                ),
             )
 
         except Exception as e:
@@ -268,4 +276,29 @@ class ToolExecutor:
             arguments=prepared.arguments,
             result=result,
         )
+
+    def _backend_arguments(self, tool_name: str, arguments: dict) -> dict:
+        """Strip orchestration metadata unsupported by the backend tool.
+
+        Validation binding still receives the original prepared arguments.
+        Only the final ``tool.execute(**kwargs)`` boundary is narrowed, so
+        tools such as ``run_command`` keep their declared ``purpose`` while
+        service/browser validators do not receive an unexpected keyword.
+        """
+
+        try:
+            schema = self.registry.get(tool_name).parameters
+        except Exception:
+            return dict(arguments)
+        properties = schema.get("properties", {})
+        if not properties:
+            return dict(arguments)
+        return {
+            key: value
+            for key, value in arguments.items()
+            if (
+                key not in self._INTERNAL_TOOL_CALL_METADATA
+                or key in properties
+            )
+        }
     MAX_TOOL_ARGUMENT_CHARS = 1_000_000
