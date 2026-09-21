@@ -229,3 +229,29 @@ def test_relevant_paths_include_symbol_search_recovery_matches(tmp_path):
     relevant = RelevantPathResolver(tmp_path).resolve(agent)
 
     assert relevant.reasons["src/worker.py"] == ("符号搜索恢复",)
+
+
+def test_relevant_paths_ignore_nonexistent_planner_criteria(tmp_path):
+    source = tmp_path / "src/calculator/service.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def add(a, b): return a + b\n", encoding="utf-8")
+    step = SimpleNamespace(acceptance_criteria=(
+        {"path": "calculator.js"},
+        {"path": "src/calculator/service.py"},
+    ))
+    agent = SimpleNamespace(
+        execution_route=SimpleNamespace(target_paths=()),
+        git_awareness=None,
+        validation_pipeline=SimpleNamespace(
+            state=SimpleNamespace(latest_evidence=None),
+        ),
+        active_plan=SimpleNamespace(all_steps=lambda: (step,)),
+        edit_retry=None,
+        latest_dependency_resolution=None,
+        latest_symbol_recovery_paths=(),
+    )
+
+    relevant = RelevantPathResolver(tmp_path).resolve(agent)
+
+    assert relevant.paths == ("src/calculator/service.py",)
+    assert "calculator.js" not in relevant.reasons

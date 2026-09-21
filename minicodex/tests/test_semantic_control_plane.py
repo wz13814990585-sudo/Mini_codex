@@ -300,6 +300,45 @@ def test_python_contract_import_prunes_mixed_invented_model_path(tmp_path):
     assert result[0].paths == ("src/calculator/service.py",)
 
 
+def test_http_contract_anchors_invented_paths_to_existing_flask_app(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask\n"
+        "app = Flask(__name__)\n"
+        "@app.get('/square')\n"
+        "def square(): return {'result': 4}\n",
+        encoding="utf-8",
+    )
+    item = TaskRequirement(
+        "R1",
+        "修复 square 路由",
+        RequirementCategory.BEHAVIOR,
+        ("src/routes/square.js", "tests/square.test.js"),
+        HttpContract("GET", "/square", 400, ""),
+    )
+
+    result = RequirementsExtractor._canonicalize_paths([item], tmp_path, ())
+
+    assert result[0].paths == ("app.py",)
+
+
+def test_http_contract_preserves_explicit_new_target_path(tmp_path):
+    item = TaskRequirement(
+        "R1",
+        "创建健康检查",
+        RequirementCategory.BEHAVIOR,
+        ("invented/server.js",),
+        HttpContract("GET", "/health", 200, "ok"),
+    )
+
+    result = RequirementsExtractor._canonicalize_paths(
+        [item],
+        tmp_path,
+        ("src/server.py",),
+    )
+
+    assert result[0].paths == ("src/server.py",)
+
+
 def test_requirements_do_not_rewrite_http_contract_to_benchmark_callable(tmp_path):
     (tmp_path / "app.py").write_text(
         "def login(user, password):\n"

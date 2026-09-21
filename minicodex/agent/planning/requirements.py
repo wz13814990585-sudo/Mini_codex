@@ -16,6 +16,7 @@ from ..validation.contracts import (
     FileContainsContract,
     FileExistsContract,
     BrowserInteractionContract,
+    HttpContract,
     PythonBehaviorContract,
     SemanticContract,
     TestTargetContract,
@@ -297,6 +298,16 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                 file, separator, node = contract.target.partition("::")
                 target = canonical(file) + (separator + node if separator else "")
                 contract = replace(contract, target=target)
+            elif isinstance(contract, HttpContract):
+                # An HTTP endpoint is implemented by the repository's actual
+                # service entry/route files, not by model-invented paths. An
+                # explicit user path remains authoritative; otherwise anchor
+                # the requirement to bounded, existing HTTP application code.
+                http_paths = cls._existing_http_app_paths(root, contract.path)
+                if explicit:
+                    paths = explicit
+                elif http_paths:
+                    paths = http_paths
             elif isinstance(contract, PythonBehaviorContract):
                 imported_paths = cls._existing_python_import_paths(root, contract.code)
                 if imported_paths:
@@ -347,6 +358,58 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                     found.append(candidate)
                     break
         return tuple(dict.fromkeys(found))
+
+    @staticmethod
+    def _existing_http_app_paths(root: Path, endpoint: str) -> tuple[str, ...]:
+        """Find a small existing implementation scope for an HTTP contract."""
+
+        endpoint = str(endpoint or "").split("?", 1)[0].strip()
+        ignored = {
+            ".git", ".minicodex", "node_modules", "dist", "build",
+            "coverage", ".venv", "venv", "__pycache__", "tests", "test",
+        }
+        candidates: list[tuple[int, str]] = []
+        visited = 0
+        for base, dirs, names in os.walk(root, followlinks=False):
+            dirs[:] = sorted(
+                name for name in dirs
+                if name not in ignored and not name.startswith(".")
+            )
+            for name in sorted(names):
+                if visited >= 300:
+                    break
+                file = Path(base) / name
+                if file.suffix.casefold() not in {
+                    ".py", ".js", ".jsx", ".ts", ".tsx",
+                } or file.is_symlink():
+                    continue
+                visited += 1
+                try:
+                    if file.stat().st_size > 128_000:
+                        continue
+                    source = file.read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    continue
+                lowered = source.casefold()
+                score = 0
+                if endpoint and endpoint in source:
+                    score += 8
+                if any(marker in lowered for marker in (
+                    "from flask", "import flask", "fastapi(",
+                    "from fastapi", "express()", "httprequesthandler",
+                )):
+                    score += 4
+                if file.stem.casefold() in {"app", "main", "server", "routes", "router"}:
+                    score += 2
+                if score >= 6:
+                    candidates.append((score, file.relative_to(root).as_posix()))
+            if visited >= 300:
+                break
+        if not candidates:
+            return ()
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        best = candidates[0][0]
+        return tuple(path for score, path in candidates if score == best)[:3]
 
     @classmethod
     def _user_message(cls, user_request: str, target_paths, workspace) -> str:

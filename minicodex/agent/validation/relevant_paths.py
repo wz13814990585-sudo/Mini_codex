@@ -21,9 +21,11 @@ class RelevantPathResolver:
     def resolve(self, agent) -> RelevantPathSet:
         reasons: dict[str, list[str]] = {}
 
-        def add(value, reason: str) -> None:
+        def add(value, reason: str, *, require_existing: bool = False) -> None:
             normalized = self._normalize(value)
             if normalized is None:
+                return
+            if require_existing and not (self.workspace / normalized).is_file():
                 return
             reasons.setdefault(normalized, [])
             if reason not in reasons[normalized]:
@@ -55,7 +57,14 @@ class RelevantPathResolver:
         if plan is not None:
             for step in plan.all_steps():
                 for criterion in getattr(step, "acceptance_criteria", ()) or ():
-                    add(criterion.get("path"), "验收标准")
+                    # Planner output is advisory and may hallucinate a path.
+                    # New-file authority comes from explicit routing or typed
+                    # requirements, not from a prose plan criterion.
+                    add(
+                        criterion.get("path"),
+                        "验收标准",
+                        require_existing=True,
+                    )
 
         pending = getattr(getattr(agent, "edit_retry", None), "pending", None)
         if pending is not None:
