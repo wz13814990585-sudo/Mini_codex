@@ -72,6 +72,18 @@ class SchemaDenialReason(str, Enum):
     VALIDATING_INSPECTION_BUDGET = "validating_inspection_budget"
     FINALIZATION_RECON = "finalization_recon"
     CONTRACT_VALIDATOR_MISMATCH = "contract_validator_mismatch"
+    VALIDATION_MILESTONE = "validation_milestone"
+    EDIT_RETRY_REFRESH = "edit_retry_refresh"
+
+
+# Keep in sync with tools.editing / EditRetryPolicy.EDIT_TOOLS.
+EDIT_TOOL_NAMES = frozenset(
+    {"write_file", "patch_file", "replace_lines", "replace_symbol"}
+)
+
+VALIDATION_MILESTONE_MESSAGE = (
+    "The bounded edit unit requires validation before further edits."
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +107,12 @@ class ExecutableToolPolicyState:
     enable_replan: bool = False
     exposed_tool_names: frozenset[str] | None = None
     denied_tool_names: frozenset[str] = field(default_factory=frozenset)
+    # WorkUnit.milestone_due — must match tool_batch validation_milestone guard.
+    milestone_due: bool = False
+    # EditRetryPolicy pending refresh — allow one targeted read even under
+    # action_required so schema and runtime cannot deadlock.
+    edit_retry_needs_read: bool = False
+    edit_retry_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,7 +199,11 @@ class ExecutableToolPolicy:
         budget = _inspection_budget(state)
         allow_inspection = True
 
-        if state.action_required:
+        if state.edit_retry_needs_read:
+            # Stale-edit recovery must be able to refresh even under
+            # action_required / finalization recon lockdown.
+            allow_inspection = True
+        elif state.action_required:
             # FIXING still permits one targeted read before the action gate
             # fully closes reconnaissance (matches ActionController order).
             if state.phase == AgentPhase.FIXING and state.consecutive_inspections < 1:
@@ -243,11 +265,30 @@ class ExecutableToolPolicy:
             else:
                 allow_inspection = True
 
-        if allow_inspection and state.phase != AgentPhase.FIXING:
+        if allow_inspection and state.phase != AgentPhase.FIXING and not state.edit_retry_needs_read:
             allowed.update(INSPECTION_CAPABILITIES)
-        elif allow_inspection and state.phase == AgentPhase.FIXING:
+        elif allow_inspection and state.phase == AgentPhase.FIXING and not state.edit_retry_needs_read:
             allowed.add(CAP_FILE_READ_ALIAS)
             denied_tools.add("list_files")
+        elif allow_inspection and state.edit_retry_needs_read:
+            # Only the pending-path refresh read — not list/search/git.
+            allowed.add(CAP_FILE_READ_ALIAS)
+            denied_tools.update(
+                {"list_files", "search_code", "search_symbol", "git_status", "git_diff"}
+            )
+
+        # Bounded edit unit: further code.edit is rejected until validation runs.
+        # Must stay aligned with tool_batch.resolve_tool_restriction.
+        if state.milestone_due:
+            allowed.difference_update(EDIT_CAPABILITIES)
+            denied_tools.update(EDIT_TOOL_NAMES)
+            denials.append(SchemaDenialReason.VALIDATION_MILESTONE.value)
+
+        # Stale-context recovery: hide edits until the required refresh read.
+        if state.edit_retry_needs_read:
+            allowed.difference_update(EDIT_CAPABILITIES)
+            denied_tools.update(EDIT_TOOL_NAMES)
+            denials.append(SchemaDenialReason.EDIT_RETRY_REFRESH.value)
 
         return ExecutableToolDecision(
             allowed_capabilities=frozenset(allowed),
@@ -272,12 +313,23 @@ class ExecutableToolPolicy:
         decision = cls.resolve(state)
         caps = frozenset(capabilities)
 
+        if CAP_CODE_EDIT in caps and state.milestone_due:
+            return VALIDATION_MILESTONE_MESSAGE
+        if CAP_CODE_EDIT in caps and state.edit_retry_needs_read:
+            path = state.edit_retry_path or "目标文件"
+            return (
+                f"上次编辑使用了过期上下文。请先只读取 {path} "
+                f"的受影响区域，再重试编辑。"
+            )
+
         if tool_name in decision.denied_tool_names:
             if tool_name == "list_files" and state.phase == AgentPhase.FIXING:
                 return (
                     "验证失败。最多探查一个针对性源码区域，然后修复。"
                     "不允许大范围侦察。"
                 )
+            if state.milestone_due and tool_name in EDIT_TOOL_NAMES:
+                return VALIDATION_MILESTONE_MESSAGE
             if tool_name == "validate_static_web" and state.next_contract_type == "browser_interaction":
                 return (
                     f"当前必需检查 {state.next_required_check_id or 'browser_interaction'} "
@@ -301,9 +353,12 @@ class ExecutableToolPolicy:
                 if (
                     state.action_required
                     and not (
-                        state.phase == AgentPhase.FIXING
-                        and state.consecutive_inspections < 1
-                        and is_read_capability(caps)
+                        (
+                            state.phase == AgentPhase.FIXING
+                            and state.consecutive_inspections < 1
+                            and is_read_capability(caps)
+                        )
+                        or (state.edit_retry_needs_read and is_read_capability(caps))
                     )
                 ):
                     return (

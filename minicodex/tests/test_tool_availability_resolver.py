@@ -67,6 +67,8 @@ def _agent(
     finalization_active: bool = False,
     allow_proof_inspection: bool = False,
     mode: ExecutionMode = ExecutionMode.STANDARD,
+    milestone_due: bool = False,
+    edit_retry_path: str | None = None,
 ):
     registry = registry or _registry_with_core_tools()
     action = ActionController(registry)
@@ -83,6 +85,25 @@ def _agent(
         AgentPhase.FIXING,
         AgentPhase.FINALIZING,
     }
+    work_unit = None
+    if milestone_due:
+        work_unit = SimpleNamespace(
+            closed=False,
+            milestone_due=True,
+            status="ready_for_validation",
+        )
+    edit_retry = None
+    if edit_retry_path is not None:
+        from minicodex.agent.editing.edit_failure import EditFailureType
+        from minicodex.agent.editing.edit_retry import EditRetryPolicy, PendingEditRetry
+
+        edit_retry = EditRetryPolicy()
+        edit_retry.pending = PendingEditRetry(
+            path=edit_retry_path,
+            edit_tool="write_file",
+            read_completed=False,
+            failure_type=EditFailureType.STALE_CONTEXT,
+        )
     return SimpleNamespace(
         registry=registry,
         action_controller=action,
@@ -90,9 +111,10 @@ def _agent(
         finalization=SimpleNamespace(
             active=finalization_active,
             allow_proof_inspection=allow_proof_inspection,
+            restriction_reason=lambda tool_name: None,
         ),
-        task_state=SimpleNamespace(phase=phase, work_unit=None),
-        edit_retry=None,
+        task_state=SimpleNamespace(phase=phase, work_unit=work_unit),
+        edit_retry=edit_retry,
         dependency_resolver=None,
         execution_route=None,
     )
@@ -240,6 +262,50 @@ def test_action_controller_still_blocks_bypassed_schema_calls():
     assert search_reason is not None
 
 
+def test_milestone_due_hides_edit_keeps_validator():
+    agent = _agent(
+        phase=AgentPhase.VALIDATING,
+        contract="python_behavior",
+        validator_status="resolved",
+        milestone_due=True,
+    )
+    names = _schema_names(agent)
+    assert "write_file" not in names
+    assert "patch_file" not in names
+    assert "run_command" in names
+    from minicodex.agent.orchestration.tool_batch import resolve_tool_restriction
+
+    blocked = resolve_tool_restriction(agent, "write_file", {"path": "a.py", "content": "x"})
+    assert blocked is not None
+    assert blocked.failure_type == "validation_milestone"
+
+
+def test_edit_retry_pending_allows_read_under_action_required():
+    agent = _agent(
+        phase=AgentPhase.ACTING,
+        action_required=True,
+        consecutive_inspections=3,
+        contract="python_behavior",
+        edit_retry_path="src/routes/square.js",
+    )
+    names = _schema_names(agent)
+    assert "read_file" in names
+    assert "write_file" not in names
+    assert "list_files" not in names
+    assert "search_code" not in names
+
+    from minicodex.agent.orchestration.tool_batch import resolve_tool_restriction
+
+    ok = resolve_tool_restriction(
+        agent, "read_file", {"path": "src/routes/square.js"}
+    )
+    assert ok is None
+    still_blocked = resolve_tool_restriction(
+        agent, "write_file", {"path": "src/routes/square.js", "content": "x"}
+    )
+    assert still_blocked is not None
+
+
 def test_advertised_subseteq_executable_consistency():
     cases = [
         _agent(phase=AgentPhase.INSPECTING, contract="python_behavior"),
@@ -252,6 +318,12 @@ def test_advertised_subseteq_executable_consistency():
             phase=AgentPhase.VALIDATING,
             contract="python_behavior",
             validator_status="resolved",
+        ),
+        _agent(
+            phase=AgentPhase.VALIDATING,
+            contract="python_behavior",
+            validator_status="resolved",
+            milestone_due=True,
         ),
         _agent(phase=AgentPhase.FIXING, contract="pytest", consecutive_inspections=0),
         _agent(phase=AgentPhase.FIXING, contract="pytest", consecutive_inspections=1),
@@ -273,6 +345,13 @@ def test_advertised_subseteq_executable_consistency():
             consecutive_inspections=2,
             contract="python_behavior",
         ),
+        _agent(
+            phase=AgentPhase.ACTING,
+            action_required=True,
+            consecutive_inspections=2,
+            contract="python_behavior",
+            edit_retry_path="a.py",
+        ),
     ]
     resolver = ToolAvailabilityResolver()
     for agent in cases:
@@ -281,6 +360,9 @@ def test_advertised_subseteq_executable_consistency():
         assert "list_files" not in advertised or snap.state.phase not in {
             AgentPhase.FIXING,
         }
+        if snap.state.milestone_due:
+            assert "write_file" not in advertised
+            assert "patch_file" not in advertised
         for name in advertised:
             caps = agent.registry.capabilities_for(name)
             block = ExecutableToolPolicy.capability_block_reason(
@@ -297,12 +379,17 @@ def test_advertised_subseteq_executable_consistency():
             caps = agent.registry.capabilities_for(name)
             if "process.run" in caps:
                 args = {"purpose": "acceptance"}
+            if name == "read_file" and snap.state.edit_retry_path:
+                args = {"path": snap.state.edit_retry_path}
             shared = agent.action_controller.restriction_reason(
                 name,
                 args,
                 agent.execution_policy,
                 finalization_active=bool(agent.finalization.active),
                 allow_proof_inspection=bool(agent.finalization.allow_proof_inspection),
+                milestone_due=bool(snap.state.milestone_due),
+                edit_retry_needs_read=bool(snap.state.edit_retry_needs_read),
+                edit_retry_path=str(snap.state.edit_retry_path or ""),
             )
             assert shared is None, (
                 f"{name} advertised but ActionController blocks under "

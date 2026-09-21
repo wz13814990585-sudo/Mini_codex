@@ -56,6 +56,24 @@ class ToolAvailabilityResolver:
             inspection_budget = action._inspection_limit(policy)
 
         exposed = getattr(policy, "exposed_tool_names", None) if policy else None
+        unit = getattr(task_state, "work_unit", None)
+        milestone_due = bool(
+            unit is not None
+            and not bool(getattr(unit, "closed", False))
+            and bool(getattr(unit, "milestone_due", False))
+        )
+        edit_retry_needs_read = False
+        edit_retry_path = ""
+        retry = getattr(agent, "edit_retry", None)
+        pending = getattr(retry, "pending", None) if retry is not None else None
+        if pending is not None and not bool(getattr(pending, "read_completed", False)):
+            # Symbol recovery uses search_symbol; path refresh uses read_file.
+            failure = str(getattr(pending, "failure_type", "") or "")
+            failure_value = getattr(failure, "value", failure)
+            if failure_value != "symbol_not_found":
+                edit_retry_needs_read = True
+                edit_retry_path = str(getattr(pending, "path", "") or "")
+
         return ExecutableToolPolicyState(
             phase=phase,
             action_required=bool(getattr(action, "action_required", False)),
@@ -89,6 +107,9 @@ class ToolAvailabilityResolver:
             ),
             enable_replan=bool(getattr(policy, "enable_replan", False)),
             exposed_tool_names=frozenset(exposed) if exposed is not None else None,
+            milestone_due=milestone_due,
+            edit_retry_needs_read=edit_retry_needs_read,
+            edit_retry_path=edit_retry_path,
         )
 
     def filter_schemas(self, agent, schemas: list[dict]) -> list[dict]:

@@ -19,14 +19,31 @@ class ToolRestriction:
 def resolve_tool_restriction(agent, tool_name: str, arguments: dict) -> ToolRestriction | None:
     """Apply edit recovery, finalization, action, and dependency policy in order."""
 
+    from ..progress.executable_tool_policy import (
+        VALIDATION_MILESTONE_MESSAGE,
+        CAP_CODE_EDIT,
+    )
+
     unit = getattr(getattr(agent, "task_state", None), "work_unit", None)
     registry = getattr(agent, "registry", None)
     caps = registry.capabilities_for(tool_name) if registry and tool_name in getattr(registry, "_tools", {}) else frozenset()
-    if unit and not unit.closed and unit.milestone_due and "code.edit" in caps:
-        return ToolRestriction("validation_milestone", "The bounded edit unit requires validation before further edits.")
+    milestone_due = bool(
+        unit and not unit.closed and unit.milestone_due and CAP_CODE_EDIT in caps
+    )
+    if milestone_due:
+        return ToolRestriction("validation_milestone", VALIDATION_MILESTONE_MESSAGE)
 
     retry = getattr(agent, "edit_retry", None)
+    edit_retry_needs_read = False
+    edit_retry_path = ""
     if retry is not None:
+        pending = getattr(retry, "pending", None)
+        if pending is not None and not bool(getattr(pending, "read_completed", False)):
+            failure = getattr(pending, "failure_type", None)
+            failure_value = getattr(failure, "value", failure)
+            if str(failure_value or "") != "symbol_not_found":
+                edit_retry_needs_read = True
+                edit_retry_path = str(getattr(pending, "path", "") or "")
         reason = retry.restriction_reason(tool_name, arguments)
         if reason:
             return ToolRestriction("edit_retry_restriction", reason)
@@ -47,6 +64,11 @@ def resolve_tool_restriction(agent, tool_name: str, arguments: dict) -> ToolRest
             policy,
             finalization_active=bool(getattr(fin, "active", False)),
             allow_proof_inspection=bool(getattr(fin, "allow_proof_inspection", False)),
+            milestone_due=bool(
+                unit and not unit.closed and bool(getattr(unit, "milestone_due", False))
+            ),
+            edit_retry_needs_read=edit_retry_needs_read,
+            edit_retry_path=edit_retry_path,
         )
         if reason:
             return ToolRestriction("action_required_restriction", reason, reason_code=ReasonCode.INSPECTION_LIMIT)

@@ -195,6 +195,9 @@ class ActionController:
         *,
         finalization_active: bool = False,
         allow_proof_inspection: bool = False,
+        milestone_due: bool = False,
+        edit_retry_needs_read: bool = False,
+        edit_retry_path: str = "",
     ) -> "ExecutableToolPolicyState":
         """Snapshot shared with ToolAvailabilityResolver / schema filtering."""
 
@@ -221,6 +224,9 @@ class ActionController:
                 if getattr(policy, "exposed_tool_names", None) is not None
                 else None
             ),
+            milestone_due=bool(milestone_due),
+            edit_retry_needs_read=bool(edit_retry_needs_read),
+            edit_retry_path=str(edit_retry_path or ""),
         )
 
     def restriction_reason(
@@ -231,6 +237,9 @@ class ActionController:
         *,
         finalization_active: bool = False,
         allow_proof_inspection: bool = False,
+        milestone_due: bool = False,
+        edit_retry_needs_read: bool = False,
+        edit_retry_path: str = "",
     ) -> str | None:
         """Block only another wasteful action; edits/validation stay open."""
 
@@ -252,6 +261,9 @@ class ActionController:
                     policy,
                     finalization_active=finalization_active,
                     allow_proof_inspection=allow_proof_inspection,
+                    milestone_due=milestone_due,
+                    edit_retry_needs_read=edit_retry_needs_read,
+                    edit_retry_path=edit_retry_path,
                 ),
                 tool_name=tool_name,
                 capabilities=capabilities,
@@ -405,6 +417,10 @@ class ActionController:
         ).strip().lower() in {"acceptance", "regression"}:
             return None
         if tool_name == "replan" and getattr(policy, "enable_replan", False):
+            return None
+        # Pending stale-edit refresh: one targeted file.read must remain executable
+        # even when action_required has closed general reconnaissance.
+        if edit_retry_needs_read and is_read:
             return None
         if self._inspection(tool_name) or "process.run" in capabilities:
             return self.INSTRUCTION
