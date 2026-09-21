@@ -38,7 +38,10 @@ from ..agent.validation import (
 from ..evaluation.harness import EvaluationHarness
 from ..agent.observability.trace import TraceEventType, TraceRecorder
 from ..agent.observability.metrics import ExecutionMetrics
-from ..agent.orchestration.tool_result_handlers import ValidationResultHandler
+from ..agent.orchestration.tool_result_handlers import (
+    EditResultHandler,
+    ValidationResultHandler,
+)
 from ..agent.validation.executor import ValidationExecutionState
 from ..agent.validation.plan import EvidenceStrength, ValidationPlanner
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolution
@@ -818,6 +821,48 @@ def test_service_json_fragment_ignores_only_insignificant_json_whitespace():
     assert not ValidateServiceTool._response_contains(
         "HelloAlice", "Hello Alice",
     )
+
+
+def test_edit_refreshes_workspace_before_materializing_regression():
+    order = []
+    session = SimpleNamespace(
+        invalidate=lambda path: order.append(("invalidate", path)),
+        refresh=lambda: order.append(("refresh", None)),
+    )
+    agent = SimpleNamespace(
+        validation_pipeline=SimpleNamespace(
+            record_edit=lambda: 1,
+            state=SimpleNamespace(plan=SimpleNamespace(checks=())),
+        ),
+        sync_requirements_state=lambda: None,
+        working_summary=SimpleNamespace(
+            advance_revision=lambda revision: None,
+            memory=None,
+        ),
+        workspace_session=session,
+        materialize_regression_checks=lambda path: order.append(
+            ("materialize", path)
+        ),
+        progress=SimpleNamespace(mark_meaningful_progress=lambda: None),
+        plan_orchestrator=SimpleNamespace(reconcile=lambda current: (None, ())),
+        _repo_map_initialized=True,
+        _repo_map_revision=1,
+    )
+
+    EditResultHandler().apply(
+        agent,
+        tool_name="write_file",
+        arguments={"path": "package.json"},
+        result=ToolResult(True, "edited", {}),
+        current_plan_step=None,
+        emit=lambda *args, **kwargs: None,
+    )
+
+    assert order == [
+        ("invalidate", "package.json"),
+        ("refresh", None),
+        ("materialize", "package.json"),
+    ]
 
 
 def test_pytest_no_tests_collected_is_inconclusive_not_failure():

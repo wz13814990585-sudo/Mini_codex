@@ -20,6 +20,14 @@ class EditResultHandler:
         agent._repo_map_revision = None
         path = str(arguments.get("path", ""))
         agent.workspace_session.invalidate(path)
+        # Regression discovery must observe the just-written manifest/source
+        # revision. In particular, adding a package.json test script changes
+        # ProjectProfile.commands; materializing checks against the stale
+        # profile leaves completion requiring regression with no executable
+        # regression check and sends the model into a validation loop.
+        refresh_workspace = getattr(agent.workspace_session, "refresh", None)
+        if callable(refresh_workspace):
+            refresh_workspace()
         materialize_regression = getattr(agent, "materialize_regression_checks", None)
         if callable(materialize_regression):
             materialize_regression(path)
