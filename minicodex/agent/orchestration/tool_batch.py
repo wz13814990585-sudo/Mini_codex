@@ -33,6 +33,38 @@ def resolve_tool_restriction(agent, tool_name: str, arguments: dict) -> ToolRest
     if milestone_due:
         return ToolRestriction("validation_milestone", VALIDATION_MILESTONE_MESSAGE)
 
+    purpose = str((arguments or {}).get("purpose", "") or "").casefold()
+    validation_call = bool(caps & {
+        "test.run", "process.run", "validation.static_web",
+        "validation.browser", "service.validate", "validation.semantic",
+    })
+    current = getattr(agent, "current_validator_resolution", None)
+    status = getattr(getattr(current, "status", None), "value", "")
+    matcher = getattr(current, "matches_invocation", None)
+    if (
+        validation_call
+        and purpose in {"acceptance", "regression"}
+        and status == "resolved"
+        and callable(matcher)
+        and not matcher(tool_name, arguments or {})
+    ):
+        expected_tool = str(getattr(current, "tool_name", "") or "")
+        expected_target = str(getattr(current, "target", "") or "")
+        return ToolRestriction(
+            "validation_target_mismatch",
+            (
+                "当前必需检查已有 Harness 绑定的精确验证器"
+                f"（{expected_tool}: {expected_target}）。"
+                "请先修改代码，或执行该精确验证；自选命令只能使用 purpose='diagnostic'。"
+            ),
+            {
+                "expected_tool": expected_tool,
+                "expected_target": expected_target,
+                "validation_check": str(getattr(current, "check_id", "") or ""),
+            },
+            ReasonCode.VALIDATION_TARGET_MISMATCH,
+        )
+
     retry = getattr(agent, "edit_retry", None)
     edit_retry_needs_read = False
     edit_retry_path = ""

@@ -208,6 +208,8 @@ DiffQualityGate 会检查：
 
 第二轮 6 题定向在线复测基于 commit `0ec76cf`，结果提升为 4/6。三个已修复的 Flask/折扣场景通过；Node test-script 从 17 agent step、88,898 tokens 降为 2 step、6,189 tokens，证明 workspace profile 刷新顺序修复生效。剩余 `fix_flask_missing_query` 因 Planner/requirements 臆造 Express 文件而在错误技术栈耗尽 20 步；`followup_calculator_subtract` 的 Python 契约与 oracle 均通过，但 Planner 把不存在的 `calculator.js` 重新注入 relevant paths，造成 wrong-file。当前已将 Planner 路径降级为“仅可引用已有文件”的建议，并让 HTTP 契约从现有应用入口/路由源码确定编辑范围；用户显式路径和 typed file contract 仍可授权创建新文件。结果位于 `benchmark_results/minicodex-bench-v1-r2/product_r2_targeted_after_boundary_fix_v2/`；该最新路径权限修复尚未在线复测。
 
+第三轮仅复测上述两个失败场景，基于 commit `167ef58` 获得 2/2，隐藏 oracle、wrong-file、越权编辑和 step exhaustion 均为 0。`fix_flask_missing_query` 只编辑 `app.py`，2 step / 6,138 tokens；`followup_calculator_subtract` 只编辑两个真实 Python 包文件，功能通过，但在包导出检查失败后运行了两个仅验证 service 模块的自选 acceptance 命令，因此仍产生一次 wrong-validation-target 信号并使用 7 step / 24,286 tokens。当前执行边界已增加精确验证目标门禁：Harness 存在 resolved validator 时，acceptance/regression 调用必须与其完全一致；自选诊断仍可使用 `purpose=diagnostic`。结果位于 `benchmark_results/minicodex-bench-v1-r2/product_r2_targeted_scope_fix_v3/`；该最新目标门禁尚未在线复测。
+
 ### 行动效率指标
 
 记录首次编辑时间、前置检查 / 搜索数、工具 / 模型调用、token、重复读取 / 搜索、错文件 / 错验证目标、验证 / 编辑比、无进展、耗尽、回滚、恢复和可选美元成本。
@@ -261,6 +263,7 @@ python -m minicodex.evaluation.vibebench
 | 定向 R2 反馈修复 | **668 passed / 24.36s** | backend 元数据隔离、混合幻觉路径清理、服务进程竞态回收；离线 VibeBench 15/15 |
 | 回归发现顺序修复 | **669 passed / 20.69s** | 当前最新；编辑后先刷新 workspace profile，再生成回归检查 |
 | 路径权限来源收紧 | **672 passed / 20.10s** | 当前最新；Planner 不再授权不存在路径，HTTP scope 锚定现有服务入口；离线 VibeBench 15/15 |
+| 精确验证目标门禁 | **673 passed / 20.17s** | 当前最新；阻止替代 acceptance/regression 命令，保留 diagnostic；离线 VibeBench 15/15 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 
@@ -268,7 +271,7 @@ CI 只跑确定性 pytest / compileall，不调用真实模型。
 
 ## 9. 真实剩余边界
 
-- 已做一次 30 题真实模型实验及两次 6 题定向复测，但最新路径权限修复尚未在线复测，也尚未做 3 次重复稳定性实验；未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
+- 已做一次 30 题真实模型实验、两次 6 题定向复测及一次 2 题收敛复测；最新精确验证目标门禁尚未在线复测，也尚未做 3 次重复稳定性实验；未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
 - 需求提取与验证目标选择仍依赖模型 / 有限启发式；显式绑定与强度是确定性门禁，但不能自动证明任意文档语义正确
 - 导航有规模界限：session 扫描最多约 1500 文件，约定 / 依赖扫描最多约 80 源文件，TestIndex 最多约 2000 文件
 - 外部变更检测是 stat 指纹，不是文件系统事务 / 锁；整任务撤销仅覆盖检查点化编辑

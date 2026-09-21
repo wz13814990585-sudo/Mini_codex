@@ -302,6 +302,52 @@ def test_milestone_due_hides_edit_keeps_validator():
     assert blocked.failure_type == "validation_milestone"
 
 
+def test_bound_validator_rejects_alternative_acceptance_command_but_allows_diagnostic():
+    agent = _agent(
+        phase=AgentPhase.FIXING,
+        contract="python_behavior",
+        validator_status="resolved",
+    )
+    expected = {
+        "command": "python -c 'from calculator import subtract'",
+        "purpose": "acceptance",
+    }
+    agent.current_validator_resolution = SimpleNamespace(
+        status=SimpleNamespace(value="resolved"),
+        tool_name="run_command",
+        target="from calculator import subtract",
+        check_id="check-1",
+        matches_invocation=lambda name, arguments: (
+            name == "run_command" and arguments == expected
+        ),
+    )
+    from minicodex.agent.orchestration.tool_batch import resolve_tool_restriction
+
+    mismatch = resolve_tool_restriction(
+        agent,
+        "run_command",
+        {
+            "command": "python -c 'from calculator.service import subtract'",
+            "purpose": "acceptance",
+        },
+    )
+    diagnostic = resolve_tool_restriction(
+        agent,
+        "run_command",
+        {
+            "command": "python -c 'from calculator.service import subtract'",
+            "purpose": "diagnostic",
+        },
+    )
+    exact = resolve_tool_restriction(agent, "run_command", expected)
+
+    assert mismatch is not None
+    assert mismatch.failure_type == "validation_target_mismatch"
+    assert mismatch.reason_code.value == "validation_target_mismatch"
+    assert diagnostic is None
+    assert exact is None
+
+
 def test_edit_retry_pending_allows_read_under_action_required():
     agent = _agent(
         phase=AgentPhase.ACTING,
