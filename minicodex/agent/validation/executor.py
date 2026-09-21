@@ -61,6 +61,13 @@ class ValidationExecutor:
                 for item in ledger.evidence_history
             )
             if attempts >= 2:
+                if check.contract_type == "semantic":
+                    # Preserve-X semantic claims often lack a baseline and cannot
+                    # be decided; do not hard-block an otherwise solvable task.
+                    return ValidationExecutionResult(
+                        ValidationExecutionState.SKIPPED, check.id, resolution,
+                        prior_evidence, reason="semantic_inconclusive_non_blocking",
+                    )
                 ledger.mark_blocked(check.id, "验证器连续两次执行仍无定论。")
                 return ValidationExecutionResult(
                     ValidationExecutionState.BLOCKED, check.id, resolution,

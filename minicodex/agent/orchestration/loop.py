@@ -198,11 +198,18 @@ def run_agent_loop(agent, user_input: str) -> str:
                 continue
             reported_validation_attempts.add(key)
             if execution.state.value == "failed":
+                path_nudge = ""
+                controller = getattr(agent, "action_controller", None)
+                if controller is not None:
+                    force = controller.force_edit_instruction()
+                    if force:
+                        path_nudge = f"\n{force}"
                 messages.append({
                     "role": "user",
                     "content": (
                         f"Harness 已执行必需检查 {execution.check_id}，验证失败。"
                         f"请根据以下实际结果做针对性修复：{execution.reason}"
+                        f"{path_nudge}"
                     ),
                 })
             elif execution.state.value == "inconclusive":
@@ -275,6 +282,11 @@ def run_agent_loop(agent, user_input: str) -> str:
             if handled.followup_instruction:
                 messages.append({"role": "user", "content": handled.followup_instruction})
             continue
+
+        # A real tool turn resets idle-text pressure.
+        handler = getattr(agent, "completion_handler", None)
+        if handler is not None:
+            handler.idle_text_turns = 0
 
         batch = agent.tool_batch_runner.run(
             agent, response, messages, current_plan_step=prepared.current_plan_step

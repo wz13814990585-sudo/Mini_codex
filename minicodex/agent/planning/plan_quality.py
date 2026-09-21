@@ -50,6 +50,12 @@ class PlanQualityValidator:
         r"^\s*(检查|读取|搜索|审查|查看|确认|验证|测试|再次验证)",
         re.IGNORECASE,
     )
+    _PERMISSION_SEEKING = re.compile(
+        r"探查权限|获取一次.*权限|由用户直接提供|请用户提供|"
+        r"ask the user|provide (?:the )?(?:file )?path|permission to inspect|"
+        r"用户直接提供登录|获取一次针对性源码",
+        re.IGNORECASE,
+    )
     _VERIFICATION = re.compile(
         r"\b(check|verify|confirm|validate|test)\b|检查|确认|验证|测试",
         re.IGNORECASE,
@@ -89,14 +95,17 @@ class PlanQualityValidator:
         for step in steps:
             criteria = list(getattr(step, "acceptance_criteria", []) or [])
             description = str(getattr(step, "description", ""))
-            if not criteria and self._PROCESS_ONLY.search(description):
+            if not criteria and (
+                self._PROCESS_ONLY.search(description)
+                or self._PERMISSION_SEEKING.search(description)
+            ):
                 issues.append(
                     PlanQualityIssue(
                         step_id=step.id,
                         code="process_only",
                         message=(
                             "计划步骤必须描述结果，"
-                            "而不能仅是检查或确认活动。"
+                            "而不能仅是检查、确认或索要探查权限/用户路径。"
                         ),
                     )
                 )

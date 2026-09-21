@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import sys
 
@@ -143,7 +144,7 @@ class ValidatorResolver:
                               {**common, "command": command}, contract.code)
 
         if isinstance(contract, NodeBehaviorContract):
-            command = f"node --input-type=module -e {shlex.quote(contract.code)}"
+            command = self._node_command(contract.code)
             return self._tool(registry, check, "process.run", "run_command",
                               {**common, "command": command}, contract.code)
 
@@ -281,6 +282,42 @@ class ValidatorResolver:
             f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
         )
 
+    _TS_IMPORT_RE = re.compile(
+        r"import\s+(?P<clause>\{[^}]+\}|\*\s+as\s+\w+|\w+)\s+from\s+"
+        r"(?P<q>['\"])(?P<path>[^'\"]+\.ts)(?P=q)\s*;?",
+        re.MULTILINE,
+    )
+
+    def _node_command(self, code: str) -> str:
+        # Oracle loads .ts via data:text/javascript (no type stripping). Match that
+        # so typed TypeScript fails agent acceptance the same way as the oracle.
+        return f"node --input-type=module -e {shlex.quote(self._rewrite_ts_imports(code))}"
+
+    @classmethod
+    def _rewrite_ts_imports(cls, code: str) -> str:
+        matches = list(cls._TS_IMPORT_RE.finditer(code))
+        if not matches:
+            return code
+        rewritten = code
+        for match in reversed(matches):
+            path = match.group("path").lstrip("./")
+            clause = match.group("clause").strip()
+            loader = (
+                "await import('data:text/javascript;base64,' + "
+                f"Buffer.from(readFileSync({json.dumps(path)})).toString('base64'))"
+            )
+            if clause.startswith("{"):
+                replacement = f"const {clause} = {loader};"
+            elif clause.startswith("*"):
+                name = clause.split()[-1]
+                replacement = f"const {name} = {loader};"
+            else:
+                replacement = f"const {clause} = (await {loader}).default;"
+            rewritten = rewritten[: match.start()] + replacement + rewritten[match.end() :]
+        if "readFileSync" not in code:
+            rewritten = "import {readFileSync} from 'node:fs';\n" + rewritten
+        return rewritten
+
     @staticmethod
     def _service_arguments(contract: HttpContract, profile):
         commands = dict(getattr(profile, "commands", ()) or ())
@@ -417,12 +454,13 @@ await import('data:text/javascript;base64,' + Buffer.from(source).toString('base
 const perform = (type, selector, value, missingCode) => {{
   const target = node(selector);
   const cb = type === 'click'
-    ? (target._listeners?.click || target.onclick)
+    ? target._listeners?.click
     : (documentListeners.keydown || target._listeners?.keydown);
   if (typeof cb !== 'function') {{
     console.error(
       'Missing ' + type + ' handler on ' + selector
-      + '; fix the referenced script (for example app.js). '
+      + '; register addEventListener for ' + type
+      + ' on the referenced script (for example app.js). '
       + 'Do not replace browser proof with validate_static_web/require_inline_script.'
     );
     process.exit(missingCode);

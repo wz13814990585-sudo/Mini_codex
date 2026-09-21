@@ -236,6 +236,21 @@ class ValidationOrchestrator:
             next_check=decision_policy.next_required_check(),
         )
         if ordinary is not None:
+            hints = [
+                hint for hint in (
+                    _typescript_type_annotation_hint(evidence),
+                    _missing_target_file_hint(evidence),
+                    _wrong_module_edit_hint(evidence),
+                ) if hint
+            ]
+            if hints and ordinary.followup_message:
+                return ControlDecision(
+                    restart=ordinary.restart,
+                    early_stop=ordinary.early_stop,
+                    followup_message=ordinary.followup_message + "\n" + "\n".join(hints),
+                    skipped_reason=ordinary.skipped_reason or "validation_repair_hint",
+                    reason_code=ordinary.reason_code,
+                )
             return ordinary
 
         reason = f"验证反复失败且无明显改善。{progress.message}"
@@ -261,6 +276,61 @@ class ValidationOrchestrator:
             followup_message=recovery_message,
             skipped_reason="验证恢复已重启循环",
         )
+
+
+def _typescript_type_annotation_hint(evidence: ValidationEvidence) -> str:
+    blob = f"{evidence.path or ''}\n{evidence.summary or ''}"
+    if ".ts" not in blob:
+        return ""
+    return (
+        "若验收通过 data:text/javascript 加载 .ts 失败，请去掉 TypeScript 类型注解后重写文件；"
+        "不要使用 --experimental-strip-types 绕过（隐藏 oracle 不会剥类型）。"
+    )
+
+
+def _missing_target_file_hint(evidence: ValidationEvidence) -> str:
+    blob = f"{evidence.path or ''}\n{evidence.summary or ''}\n{evidence.details!s}"
+    paths = []
+    for match in re.finditer(r"Path\(\s*['\"]([^'\"]+)['\"]\s*\)", blob):
+        paths.append(match.group(1))
+    paths = tuple(dict.fromkeys(paths))
+    path_clause = f"（{', '.join(paths)}）" if paths else ""
+    if not re.search(r"No such file|FileNotFoundError|不能找到|不存在", blob, re.I):
+        # file_contains contracts put the path in the python snippet
+        if ("Path(" in blob or paths) and evidence.outcome == ValidationOutcome.FAILED:
+            return (
+                f"若目标路径{path_clause}尚不存在，请立刻用 write_file 创建该文件并写入所需定义，"
+                "然后再跑同一验收命令；不要只重复 read/search 或空回复。"
+            )
+        return ""
+    return (
+        f"目标文件{path_clause}不存在。请立刻用 write_file 创建缺失路径并写入实现，"
+        "然后再运行同一验收命令。"
+    )
+
+
+def _wrong_module_edit_hint(evidence: ValidationEvidence) -> str:
+    blob = f"{evidence.path or ''}\n{evidence.summary or ''}\n{evidence.details!s}"
+    imports = re.findall(r"from\s+(\w+)\s+import\s+(\w+)", blob)
+    if not imports:
+        return ""
+    module, symbol = imports[0]
+    if module in {"pathlib", "pytest", "sys", "os"}:
+        return ""
+    if evidence.outcome != ValidationOutcome.FAILED:
+        return ""
+    if not re.search(
+        r"ModuleNotFoundError|ImportError|cannot import|No module named|AssertionError",
+        blob,
+        re.I,
+    ) and "assert" not in blob:
+        return ""
+    return (
+        f"验收从 `{module}` 导入 `{symbol}`。"
+        f"请直接修改 `{module}.py`（或该模块对应路径），"
+        f"不要新建平行模块（例如 login.py）或只改测试文件。"
+    )
+
 
 _DEFAULT = ValidationOrchestrator()
 

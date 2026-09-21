@@ -13,6 +13,7 @@ from ..agent.safety import SafetyPolicy
 from ..agent.validation import (
     BrowserInteractionContract,
     FailureDelta, RegressionClassification, RegressionRecoveryPolicy,
+    FileContainsContract, HttpContract, PythonBehaviorContract,
     SemanticContract, SemanticRegressionJudge, TaskCompletionPolicy, ValidationPipeline,
     TestTargetContract,
 )
@@ -152,6 +153,150 @@ def test_requirements_extracts_explicit_dom_interaction_as_browser_contract():
     assert requirements.items[0].contract.path == "app.js"
     assert "不能降级为 semantic" in RequirementsExtractor.SYSTEM_PROMPT
     assert "优先使用 pytest" in RequirementsExtractor.SYSTEM_PROMPT
+    assert "仓库事实" in RequirementsExtractor.SYSTEM_PROMPT
+    assert "addEventListener" in RequirementsExtractor.SYSTEM_PROMPT
+
+
+def test_requirements_user_message_includes_workspace_facts(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "pricing.py").write_text(
+        "def apply_discount(price, percent):\n    return price - price * percent / 100\n",
+        encoding="utf-8",
+    )
+    llm = StubLLM({
+        "requirements": [{
+            "description": "折扣边界",
+            "category": "behavior",
+            "paths": ["src/pricing.py"],
+            "contract": {
+                "type": "python_behavior",
+                "code": (
+                    "import pytest\nfrom pricing import apply_discount\n"
+                    "assert apply_discount(100, 25) == 75\n"
+                    "with pytest.raises(ValueError):\n    apply_discount(10, 101)\n"
+                ),
+            },
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    RequirementsExtractor(llm).extract(
+        "Change src/pricing.py so apply_discount rejects percent outside 0..100 with ValueError.",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("src/pricing.py",),
+        workspace=tmp_path,
+    )
+    user_content = llm.calls[0][0][1]["content"]
+    assert "仓库事实" in user_content
+    assert "def apply_discount" in user_content
+
+
+def test_http_contract_demoted_for_plain_login_module(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "def login(user, password):\n"
+        "    return (200, {'token': 'demo-token'}) if (user, password) == ('demo', 'demo') "
+        "else (401, {'error': 'invalid'})\n",
+        encoding="utf-8",
+    )
+    llm = StubLLM({
+        "requirements": [{
+            "description": "成功登录响应包含 expires_in=3600",
+            "category": "behavior",
+            "paths": ["app.py"],
+            "contract": {
+                "type": "http_response",
+                "method": "POST",
+                "path": "/login",
+                "expected_status": 200,
+                "json_body": {"username": "demo", "password": "demo"},
+                "expected_text": "expires_in",
+            },
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    requirements = RequirementsExtractor(llm).extract(
+        "Follow up on login: add expires_in=3600 to the successful token response only.",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("app.py",),
+        workspace=tmp_path,
+    )
+    assert len(requirements.items) == 1
+    assert isinstance(requirements.items[0].contract, PythonBehaviorContract)
+    assert "expires_in" in requirements.items[0].contract.code
+    assert not isinstance(requirements.items[0].contract, HttpContract)
+
+
+def test_sanitize_normalizes_src_imports_and_valueerror_asserts():
+    items = [
+        TaskRequirement(
+            "R1", "折扣拒绝越界百分比", RequirementCategory.BEHAVIOR, ("src/pricing.py",),
+            PythonBehaviorContract(
+                "from src.pricing import apply_discount; "
+                "assert apply_discount(100, 50) == 50; "
+                "assert apply_discount(100, 150) >= 0"
+            ),
+        )
+    ]
+    fixed = RequirementsExtractor._sanitize_contracts(
+        items,
+        "Change apply_discount to reject percentage values outside 0..100 with ValueError.",
+    )
+    code = fixed[0].contract.code
+    assert "from pricing import" in code
+    assert "from src.pricing" not in code
+    assert "pytest.raises(ValueError)" in code
+    assert "apply_discount(100, 150) >= 0" not in code
+
+
+def test_sanitize_does_not_require_valueerror_on_boundary_percent():
+    items = [
+        TaskRequirement(
+            "R1", "100% 折扣返回 0", RequirementCategory.BEHAVIOR, ("src/pricing.py",),
+            PythonBehaviorContract(
+                "from pricing import apply_discount\n"
+                "import pytest\n"
+                "with pytest.raises(ValueError):\n"
+                "    apply_discount(100, 100)\n"
+            ),
+        )
+    ]
+    fixed = RequirementsExtractor._sanitize_contracts(
+        items,
+        "rejects percentage values outside 0..100 with ValueError",
+    )
+    code = fixed[0].contract.code
+    assert "apply_discount(100, 100) == 0" in code
+    assert "raises(ValueError):\n    apply_discount(100, 100)" not in code
+
+
+def test_sanitize_inverts_absence_file_contains():
+    items = [
+        TaskRequirement(
+            "R1", "src/api.py 中不再定义 _clean 函数", RequirementCategory.FILE, ("src/api.py",),
+            FileContainsContract("src/api.py", "def _clean(value):"),
+        )
+    ]
+    fixed = RequirementsExtractor._sanitize_contracts(items, "Rename _clean to _normalize")
+    assert isinstance(fixed[0].contract, PythonBehaviorContract)
+    assert "not in text" in fixed[0].contract.code
+    assert "def _clean(value):" in fixed[0].contract.code
+
+
+def test_ensure_move_symbol_contracts_covers_import_and_behavior():
+    items = [
+        TaskRequirement(
+            "R1", "parser 中有定义", RequirementCategory.FILE, ("src/parser.py",),
+            FileContainsContract("src/parser.py", "def parse_record"),
+        )
+    ]
+    fixed = RequirementsExtractor._ensure_move_symbol_contracts(
+        items,
+        "Move parse_record from src/service.py to src/parser.py, import it back.",
+    )
+    assert len(fixed) == 1
+    code = fixed[0].contract.code
+    assert "from service import parse_record" in code
+    assert "Path('src/parser.py')" in code or 'Path("src/parser.py")' in code
+    assert "def parse_record' not in src" in code or 'def parse_record" not in src' in code
 
 
 def test_existing_pytest_contract_drops_conflicting_python_behavior(tmp_path):

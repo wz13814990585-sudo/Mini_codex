@@ -20,6 +20,46 @@ class ActionController:
     )
     UNRESOLVED_INSPECTION_LIMIT = 1
 
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        raw = str(path or "").strip().replace("\\", "/")
+        while raw.startswith("./"):
+            raw = raw[2:]
+        return raw.strip("/")
+
+    def allowed_edit_paths(self) -> tuple[str, ...]:
+        """Deterministic edit targets from the current obligation / task paths."""
+
+        paths = tuple(
+            dict.fromkeys(
+                self._normalize_path(path)
+                for path in (self.validation_paths or self.target_paths or ())
+                if self._normalize_path(path)
+            )
+        )
+        return paths
+
+    def force_edit_instruction(self) -> str:
+        """Path-named instruction used when the model replies without tools."""
+
+        paths = self.allowed_edit_paths()
+        if paths:
+            create_hint = ""
+            if self.next_contract_type in {"file_contains", "file_exists"} or not self.has_edit:
+                create_hint = (
+                    "若某目标路径尚不存在，先用 write_file 创建并写入所需定义；"
+                )
+            return (
+                f"不要只回复文字。请立刻用 write_file/patch_file 修改这些验收路径："
+                f"{', '.join(paths)}。"
+                f"{create_hint}"
+                "改完后立即再跑同一验收命令。"
+            )
+        return (
+            "不要只回复文字。请立刻用 write_file/patch_file 做具体代码修改，"
+            "然后运行验收；禁止空回复。"
+        )
+
     def __init__(self, registry=None) -> None:
         self.registry = registry
         self.reset()
@@ -79,7 +119,10 @@ class ActionController:
         self.has_edit = state.edit_revision > 0
         # This is retained only for UI/legacy callers. A materialized plan is
         # represented below by its exact next required check.
-        self.acceptance_missing = bool(acceptance_missing)
+        if acceptance_missing is not None:
+            self.acceptance_missing = bool(acceptance_missing)
+        elif next_required_check_id:
+            self.acceptance_missing = True
         self.current_mode = getattr(policy, "mode", None)
         self.remaining_budget = max(0, int(remaining_budget))
         self.phase = state.phase
@@ -187,9 +230,16 @@ class ActionController:
                     "不允许大范围侦察。"
                 )
             if is_read and self.consecutive_inspections >= 1:
+                if self.next_contract_type in {"file_contains", "file_exists"}:
+                    return (
+                        "目标结构文件可能尚不存在。"
+                        "请立即用 write_file 创建缺失路径并写入所需定义，"
+                        "不要继续 read/search。"
+                    )
                 return (
                     "针对性失败上下文已探查过。"
-                    "请做具体修复，或报告阻塞原因。"
+                    "请用 write_file/patch_file 做具体修复（若目标文件不存在请先创建），"
+                    "或报告阻塞原因。"
                 )
             if is_read and self.target_paths:
                 path = str((arguments or {}).get("path", "") or "").strip()
@@ -197,6 +247,18 @@ class ActionController:
                     return (
                         "FIXING 阶段仅允许读取一个相关失败路径"
                         f"（{', '.join(self.target_paths)}），不允许 {path or '未指定路径'}。"
+                    )
+
+        # Pin edits to the current obligation paths so models cannot invent
+        # parallel modules (e.g. login.py) while acceptance imports app.py.
+        if capabilities & {"code.edit"}:
+            allowed = self.allowed_edit_paths()
+            if allowed:
+                path = self._normalize_path(str((arguments or {}).get("path", "") or ""))
+                if path and path not in allowed:
+                    return (
+                        f"当前验收路径为 {', '.join(allowed)}。"
+                        f"请编辑这些文件，不要写入 {path}。"
                     )
 
         if tool_name == "replan" and not getattr(policy, "enable_replan", False):

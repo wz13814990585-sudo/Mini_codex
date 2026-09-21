@@ -704,3 +704,49 @@ def test_python_behavior_resolves_src_layout_without_cd(tmp_path):
     )
     assert result.data["command_succeeded"] is True
     assert result.data["exit_code"] == 0
+
+
+def test_node_behavior_loads_typescript_via_data_uri_like_oracle(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "range.ts").write_text(
+        "export function inclusiveRange(start: number, end: number): number[] {\n"
+        "  const out = [];\n"
+        "  for (let i = start; i <= end; i++) out.push(i);\n"
+        "  return out;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    contract = NodeBehaviorContract(
+        "import { inclusiveRange } from './src/range.ts';\n"
+        "if (JSON.stringify(inclusiveRange(2, 4)) !== '[2,3,4]') process.exit(2);\n"
+    )
+    check = ValidationPlanner().build(requirements(contract)).checks[0]
+    registry = ToolRegistry()
+    registry.register(RunCommandTool(tmp_path))
+    resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
+    command = resolution.arguments["command"]
+    assert "data:text/javascript;base64" in command
+    assert "readFileSync" in command
+    result = RunCommandTool(tmp_path).execute(command, purpose="acceptance")
+    # Typed TS must fail under oracle-equivalent data: loading.
+    assert result.data["exit_code"] != 0
+
+
+def test_browser_node_fallback_rejects_onclick_like_oracle(tmp_path):
+    completed = _execute_browser_fallback(
+        tmp_path,
+        """\
+<button id="move">Move</button>
+<div id="state">idle</div>
+<script type="module" src="./app.js"></script>
+""",
+        """\
+document.getElementById("move").onclick = () => {
+  document.getElementById("state").textContent = "moved";
+};
+""",
+        BrowserAction("click", "#move"),
+        BrowserAssertion("text_equals", "#state", "moved"),
+    )
+    assert completed.returncode != 0
+    assert "addEventListener" in (completed.stderr or "")

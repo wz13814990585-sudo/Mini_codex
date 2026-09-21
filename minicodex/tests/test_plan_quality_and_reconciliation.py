@@ -79,6 +79,22 @@ def test_process_only_plan_uses_fallback_after_one_regeneration():
     assert "实现结果" in plan.steps[0].description
 
 
+def test_permission_seeking_plan_step_is_process_only():
+    from types import SimpleNamespace
+    step = SimpleNamespace(
+        id=4,
+        description=(
+            "获取一次针对性源码探查权限，或由用户直接提供登录处理器所在文件路径"
+        ),
+        acceptance_criteria=[],
+        requires_semantic_completion=False,
+        quality_warnings=[],
+    )
+    report = PlanQualityValidator().validate([step])
+    assert any(issue.code == "process_only" for issue in report.issues)
+    assert report.should_regenerate is True
+
+
 def test_semantic_completion_requires_fresh_current_revision_evidence():
     agent = MiniCodexAgent(
         llm=None,

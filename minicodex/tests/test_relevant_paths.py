@@ -57,6 +57,59 @@ def test_fixing_allows_targeted_read_of_traceback_path():
     ) is not None
 
 
+def test_edit_paths_pinned_to_validation_targets():
+    state = TaskState(
+        mode=ExecutionMode.STANDARD,
+        phase=AgentPhase.FIXING,
+        target_paths=("app.py",),
+        relevant_paths=("app.py",),
+    )
+    controller = ActionController()
+    controller.reset(state)
+    controller.update_context(
+        state=state,
+        policy=policy_for(ExecutionMode.STANDARD),
+        remaining_budget=8,
+        acceptance_missing=True,
+        validation_paths=("app.py",),
+    )
+    policy = policy_for(ExecutionMode.STANDARD)
+    assert controller.restriction_reason("write_file", {"path": "app.py"}, policy) is None
+    reason = controller.restriction_reason("write_file", {"path": "login.py"}, policy)
+    assert reason is not None
+    assert "app.py" in reason
+    assert "login.py" in reason
+    force = controller.force_edit_instruction()
+    assert "app.py" in force
+    assert "write_file" in force
+
+
+def test_force_edit_lists_move_symbol_paths():
+    state = TaskState(
+        mode=ExecutionMode.STANDARD,
+        phase=AgentPhase.ACTING,
+        target_paths=("src/service.py", "src/parser.py"),
+        relevant_paths=("src/service.py", "src/parser.py"),
+    )
+    controller = ActionController()
+    controller.reset(state)
+    controller.update_context(
+        state=state,
+        policy=policy_for(ExecutionMode.STANDARD),
+        remaining_budget=10,
+        next_required_check_id="V1",
+        validation_paths=("src/service.py", "src/parser.py"),
+    )
+    force = controller.force_edit_instruction()
+    assert "src/parser.py" in force and "src/service.py" in force
+    assert controller.restriction_reason(
+        "write_file", {"path": "src/parser.py"}, policy_for(ExecutionMode.STANDARD)
+    ) is None
+    assert controller.restriction_reason(
+        "write_file", {"path": "other.py"}, policy_for(ExecutionMode.STANDARD)
+    ) is not None
+
+
 def test_relevant_paths_add_manifest_only_for_dependency_evidence(tmp_path):
     for relative in ("src/app.py", "pyproject.toml"):
         path = tmp_path / relative

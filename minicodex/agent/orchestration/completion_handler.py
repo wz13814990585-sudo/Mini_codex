@@ -38,6 +38,7 @@ class CompletionHandler:
 
     def reset(self) -> None:
         self.execution_correction_issued = False
+        self.idle_text_turns = 0
 
     @staticmethod
     def response_mode(agent) -> FinalResponseMode:
@@ -110,11 +111,12 @@ class CompletionHandler:
             )
 
         if remaining_steps > 0:
-            if not self.execution_correction_issued:
-                self.execution_correction_issued = True
-                instruction = self.EXECUTION_CORRECTION
-            else:
-                instruction = self._missing_evidence_instruction(transition.decision.status.value)
+            self.idle_text_turns += 1
+            instruction = self._tool_followup_instruction(
+                agent,
+                status=transition.decision.status.value,
+                empty_content=not str(content or "").strip(),
+            )
             return CompletionHandleResult(False, followup_instruction=instruction)
 
         return self.handle_budget_exhausted(
@@ -229,10 +231,39 @@ class CompletionHandler:
             return None
         return reason
 
+    def _tool_followup_instruction(
+        self,
+        agent,
+        *,
+        status: str,
+        empty_content: bool,
+    ) -> str:
+        controller = getattr(agent, "action_controller", None)
+        force = ""
+        if controller is not None:
+            force = controller.force_edit_instruction()
+            if self.idle_text_turns >= 1 or empty_content or not getattr(
+                controller, "has_edit", False
+            ):
+                controller._activate()
+        if force and (
+            empty_content
+            or self.idle_text_turns >= 1
+            or status in {"needs_acceptance", "needs_relevant_validation"}
+        ):
+            if not self.execution_correction_issued:
+                self.execution_correction_issued = True
+                return f"{self.EXECUTION_CORRECTION}\n{force}"
+            return force
+        if not self.execution_correction_issued:
+            self.execution_correction_issued = True
+            return self.EXECUTION_CORRECTION
+        return self._missing_evidence_instruction(status)
+
     @staticmethod
     def _missing_evidence_instruction(status: str) -> str:
         if status == "needs_acceptance":
-            return "请继续编码任务，并获取针对性验收证据。"
+            return "请继续编码任务，并获取针对性验收证据。必须调用工具，禁止空回复。"
         if status == "needs_relevant_validation":
             return "请运行当前变更所需的相关回归验证。"
         if status == "needs_full_validation":
