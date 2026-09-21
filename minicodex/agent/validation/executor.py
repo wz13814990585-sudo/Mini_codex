@@ -79,6 +79,20 @@ class ValidationExecutor:
                 prior_evidence, reason="awaiting_repair_or_fresh_revision",
             )
         if resolution.status != ResolutionStatus.RESOLVED:
+            # A semantic fallback is intentionally provider-neutral: an agent
+            # may still prove it with an explicitly bound test/command. Do not
+            # terminate the task merely because the optional semantic judge is
+            # absent. Strong typed contracts keep their blocker below.
+            if (
+                resolution.status == ResolutionStatus.CAPABILITY_MISSING
+                and check.contract_type == "semantic"
+            ):
+                return ValidationExecutionResult(
+                    ValidationExecutionState.SKIPPED,
+                    check.id,
+                    resolution,
+                    reason="semantic_validator_optional_provider_evidence_allowed",
+                )
             state = (
                 ValidationExecutionState.BLOCKED
                 if resolution.status in {ResolutionStatus.CAPABILITY_MISSING, ResolutionStatus.UNSUPPORTED}

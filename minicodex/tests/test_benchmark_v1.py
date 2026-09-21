@@ -101,6 +101,74 @@ def test_catalog_oracles_reject_broken_seeds_and_accept_satisfied_seeds(tmp_path
         assert result.passed is (fixture.case.category == "already_satisfied"), fixture.case.case_id
 
 
+@pytest.mark.parametrize(
+    ("case_id", "implementation"),
+    [
+        (
+            "create_typescript_range",
+            {
+                "src/range.ts": (
+                    "export function inclusiveRange(start: number, end: number): number[] {\n"
+                    "  const result: number[] = [];\n"
+                    "  for (let value = start; value <= end; value++) result.push(value);\n"
+                    "  return result;\n"
+                    "}\n"
+                ),
+            },
+        ),
+        (
+            "modify_web_keyboard",
+            {
+                "app.js": (
+                    "document.addEventListener('keydown', event => {\n"
+                    "  if (event.key === 'ArrowLeft') "
+                    "document.querySelector('#state').textContent = 'left';\n"
+                    "});\n"
+                ),
+            },
+        ),
+        (
+            "refactor_extract_web_script",
+            {
+                "index.html": (
+                    "<button id='move'>Move</button><div id='state'>idle</div>"
+                    "<script src='app.js'></script>\n"
+                ),
+                "app.js": (
+                    "document.getElementById('move').onclick = () => {\n"
+                    "  document.getElementById('state').textContent = 'moved';\n"
+                    "};\n"
+                ),
+            },
+        ),
+    ],
+)
+def test_oracles_accept_standard_typescript_and_dom_apis(tmp_path, case_id, implementation):
+    fixture = catalog_by_id()[case_id]
+    workspace = tmp_path / "workspaces" / case_id
+    oracle = tmp_path / "oracles" / case_id
+    for relative, content in fixture.workspace_files:
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    for relative, content in implementation.items():
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    for relative, content in fixture.oracle_files:
+        target = oracle / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    result = EvaluationCheckRunner().run(
+        check=fixture.case.checks[0],
+        workspace=workspace,
+        output="",
+        oracle_root=oracle,
+    )
+    assert result.passed, result.actual or result.error
+
+
 def test_workspace_tool_cannot_escape_to_hidden_oracle(tmp_path):
     workspace = tmp_path / "workspace"
     oracle = tmp_path / "oracle"

@@ -275,7 +275,7 @@ def test_benchmark_v1_prompt_english_and_version_constant():
     prompt = fixture.case.prompt
     assert "Fix src/pkg/maths.py" in prompt
     assert prompt.isascii()
-    assert BENCHMARK_VERSION == "minicodex-bench-v1"
+    assert BENCHMARK_VERSION == "minicodex-bench-v1-r2"
 
 
 def test_system_prompt_is_chinese():

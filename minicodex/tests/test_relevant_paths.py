@@ -112,7 +112,7 @@ def test_python_behavior_blocks_validate_service_drift():
     assert "validate_service" in reason
 
 
-def test_blocks_typed_typescript_and_fastapi_framework_rewrite():
+def test_allows_normal_typescript_and_blocks_fastapi_framework_rewrite():
     state = TaskState(
         mode=ExecutionMode.STANDARD,
         phase=AgentPhase.ACTING,
@@ -138,7 +138,7 @@ def test_blocks_typed_typescript_and_fastapi_framework_rewrite():
         },
         policy,
     )
-    assert typed is not None and "类型注解" in typed
+    assert typed is None
     plain = controller.restriction_reason(
         "write_file",
         {

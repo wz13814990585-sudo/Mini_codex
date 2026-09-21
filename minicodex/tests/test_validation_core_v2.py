@@ -33,13 +33,14 @@ from ..agent.validation import (
     ValidationPurpose,
     ValidationScope,
     ValidatorResolver,
+    RegressionRequirement,
 )
 from ..evaluation.harness import EvaluationHarness
 from ..agent.observability.trace import TraceEventType, TraceRecorder
 from ..agent.observability.metrics import ExecutionMetrics
 from ..agent.orchestration.tool_result_handlers import ValidationResultHandler
 from ..agent.validation.executor import ValidationExecutionState
-from ..agent.validation.plan import ValidationPlanner
+from ..agent.validation.plan import EvidenceStrength, ValidationPlanner
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolution
 from ..tools.registry import ToolRegistry
 from ..tools.results import ToolResult
@@ -460,9 +461,10 @@ def test_wrong_validation_target_counts_only_explicit_proof_attempts():
         capabilities=frozenset({"process.run"}), metrics=metrics,
         emit=lambda *_args, **_kwargs: None,
     )
-    assert metrics.wrong_validation_target_count == 0
+    assert metrics.wrong_validation_target_count == 1
     assert bound.evidence is not None
-    assert bound.evidence.check_id == "V1"
+    assert bound.evidence.check_id == ""
+    assert pipeline.state.proof("V1") is None
 
     handler.apply(
         agent, tool_name="run_command",
@@ -478,10 +480,10 @@ def test_wrong_validation_target_counts_only_explicit_proof_attempts():
         capabilities=frozenset({"process.run"}), metrics=metrics,
         emit=lambda *_args, **_kwargs: None,
     )
-    assert metrics.wrong_validation_target_count == 1
+    assert metrics.wrong_validation_target_count == 2
 
 
-def test_llm_validation_binds_via_current_prepared_check():
+def test_unrelated_llm_validation_cannot_prove_current_prepared_check():
     pipeline = planned(FileExistsContract("app.py"))
     metrics = ExecutionMetrics()
     check = pipeline.state.plan.checks[0]
@@ -509,8 +511,54 @@ def test_llm_validation_binds_via_current_prepared_check():
     )
     assert metrics.wrong_validation_target_count == 0
     assert handled.evidence is not None
+    assert handled.evidence.check_id == ""
+    assert pipeline.state.proof("V1") is None
+
+
+def test_exact_prepared_llm_validation_can_prove_current_check():
+    pipeline = planned(FileExistsContract("app.py"))
+    metrics = ExecutionMetrics()
+    check = pipeline.state.plan.checks[0]
+    arguments = {
+        "command": "python -c \"from pathlib import Path; assert Path('app.py').is_file()\"",
+        "purpose": "acceptance",
+        "validation_check": "V1",
+    }
+    resolution = ValidatorResolution(
+        check.id,
+        ResolutionStatus.RESOLVED,
+        tool_name="run_command",
+        arguments=arguments,
+        capability="process.run",
+        target="app.py",
+        validation_key="file_exists|app.py",
+    )
+    agent = SimpleNamespace(
+        validation_pipeline=pipeline,
+        checkpoint_manager=SimpleNamespace(all_checkpoints=lambda: ()),
+        task_state=SimpleNamespace(work_unit=None, recovery_level=0),
+        workspace=".",
+        sync_requirements_state=lambda: None,
+        plan_orchestrator=SimpleNamespace(reconcile=lambda _agent: (None, False)),
+        validation_orchestrator=SimpleNamespace(apply=lambda **_kwargs: None),
+        latest_progress_signal=None,
+        current_validation_check=check,
+        current_validator_resolution=resolution,
+    )
+
+    handled = ValidationResultHandler().apply(
+        agent,
+        tool_name="run_command",
+        arguments=arguments,
+        result=ToolResult(True, "ok", {"command_succeeded": True}),
+        capabilities=frozenset({"process.run"}),
+        metrics=metrics,
+        emit=lambda *_args, **_kwargs: None,
+    )
+
+    assert handled.evidence is not None
     assert handled.evidence.check_id == "V1"
-    assert pipeline.state.proof("V1") is not None
+    assert pipeline.state.proof("V1") is handled.evidence
 
 
 def test_resolved_executor_runs_without_llm_decision(tmp_path):
@@ -579,6 +627,131 @@ def test_no_edit_acceptance_pass_is_already_satisfied():
     decision = TaskCompletionPolicy().evaluate(SimpleNamespace(validation_pipeline=pipeline))
     assert decision.status == CompletionStatus.READY
     assert decision.outcome == TaskOutcome.ALREADY_SATISFIED
+
+
+def test_no_edit_completion_respects_explicit_change_policy():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    pipeline.observe(
+        "run_tests",
+        {"path": "tests/test_x.py", "purpose": "acceptance"},
+        ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+        resolution=resolution,
+    )
+    required_change = SimpleNamespace(
+        validation_pipeline=pipeline,
+        task_requirements=TaskRequirements(
+            requirements(TestTargetContract("tests/test_x.py")).items,
+            no_edit_if_already_satisfied=False,
+        ),
+    )
+    decision = TaskCompletionPolicy().evaluate(required_change)
+    assert decision.status == CompletionStatus.NOT_READY
+    assert decision.can_complete is False
+    assert "要求实施变更" in decision.reason
+
+
+def test_no_edit_completion_is_allowed_only_when_policy_opts_in():
+    pipeline = planned(TestTargetContract("tests/test_x.py"))
+    resolution = ValidatorResolution(
+        "V1", ResolutionStatus.RESOLVED, "run_tests", {},
+        "test.run", "tests/test_x.py", "pytest|tests/test_x.py",
+    )
+    pipeline.observe(
+        "run_tests",
+        {"path": "tests/test_x.py", "purpose": "acceptance"},
+        ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+        resolution=resolution,
+    )
+    opt_in = SimpleNamespace(
+        validation_pipeline=pipeline,
+        task_requirements=TaskRequirements(
+            requirements(TestTargetContract("tests/test_x.py")).items,
+            no_edit_if_already_satisfied=True,
+        ),
+    )
+    assert TaskCompletionPolicy().evaluate(opt_in).outcome == TaskOutcome.ALREADY_SATISFIED
+
+
+def test_completion_requires_policy_regression_obligation_after_edit():
+    pipeline = planned(FileExistsContract("app.py"))
+    pipeline.record_edit()
+    acceptance = pipeline.state.plan.checks[0]
+    resolution = ValidatorResolution(
+        acceptance.id,
+        ResolutionStatus.RESOLVED,
+        "run_command",
+        {},
+        "process.run",
+        "app.py",
+        "file_exists|app.py",
+    )
+    pipeline.observe(
+        "run_command",
+        {"command": "check app.py", "purpose": "acceptance"},
+        ToolResult(True, "pass", {"command_succeeded": True}),
+        resolution=resolution,
+    )
+    agent = SimpleNamespace(
+        validation_pipeline=pipeline,
+        current_regression_requirement=lambda: RegressionRequirement.RELEVANT_ONLY,
+    )
+
+    decision = TaskCompletionPolicy().evaluate(agent)
+
+    assert decision.status == CompletionStatus.NEEDS_RELEVANT_VALIDATION
+    assert decision.can_complete is False
+
+
+def test_completion_requires_full_check_for_required_regression():
+    pipeline = planned(FileExistsContract("app.py"))
+    pipeline.record_edit()
+    checks = list(pipeline.state.plan.checks)
+    checks.append(type(checks[0])(
+        id="V2",
+        requirement_ids=(),
+        purpose=ValidationPurpose.REGRESSION,
+        contract=TestTargetContract("tests/test_app.py"),
+        strength=EvidenceStrength.REGRESSION,
+        revision=pipeline.state.edit_revision,
+    ))
+    pipeline.state.plan = type(pipeline.state.plan)(tuple(checks))
+    for check in pipeline.state.plan.checks:
+        resolution = ValidatorResolution(
+            check.id,
+            ResolutionStatus.RESOLVED,
+            "run_tests" if check.id == "V2" else "run_command",
+            {},
+            "test.run" if check.id == "V2" else "process.run",
+            "tests/test_app.py" if check.id == "V2" else "app.py",
+            f"proof|{check.id}",
+        )
+        if check.id == "V2":
+            pipeline.observe(
+                "run_tests",
+                {"path": "tests/test_app.py", "purpose": "regression"},
+                ToolResult(True, "pass", {"tests_passed": True, "passed": 1}),
+                resolution=resolution,
+            )
+        else:
+            pipeline.observe(
+                "run_command",
+                {"command": "check app.py", "purpose": "acceptance"},
+                ToolResult(True, "pass", {"command_succeeded": True}),
+                resolution=resolution,
+            )
+    agent = SimpleNamespace(
+        validation_pipeline=pipeline,
+        current_regression_requirement=lambda: RegressionRequirement.REQUIRED,
+    )
+
+    decision = TaskCompletionPolicy().evaluate(agent)
+
+    assert decision.status == CompletionStatus.NEEDS_FULL_VALIDATION
+    assert decision.can_complete is False
 
 
 def test_edit_invalidates_previous_proof():
@@ -706,7 +879,7 @@ def test_python_behavior_resolves_src_layout_without_cd(tmp_path):
     assert result.data["exit_code"] == 0
 
 
-def test_node_behavior_loads_typescript_via_data_uri_like_oracle(tmp_path):
+def test_node_behavior_uses_repository_runtime_without_oracle_rewrite(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "range.ts").write_text(
         "export function inclusiveRange(start: number, end: number): number[] {\n"
@@ -725,14 +898,11 @@ def test_node_behavior_loads_typescript_via_data_uri_like_oracle(tmp_path):
     registry.register(RunCommandTool(tmp_path))
     resolution = ValidatorResolver(tmp_path).resolve(check, registry=registry)
     command = resolution.arguments["command"]
-    assert "data:text/javascript;base64" in command
-    assert "readFileSync" in command
-    result = RunCommandTool(tmp_path).execute(command, purpose="acceptance")
-    # Typed TS must fail under oracle-equivalent data: loading.
-    assert result.data["exit_code"] != 0
+    assert "data:text/javascript;base64" not in command
+    assert "inclusiveRange" in command
 
 
-def test_browser_node_fallback_rejects_onclick_like_oracle(tmp_path):
+def test_browser_node_fallback_accepts_standard_onclick_handler(tmp_path):
     completed = _execute_browser_fallback(
         tmp_path,
         """\
@@ -748,5 +918,4 @@ document.getElementById("move").onclick = () => {
         BrowserAction("click", "#move"),
         BrowserAssertion("text_equals", "#state", "moved"),
     )
-    assert completed.returncode != 0
-    assert "addEventListener" in (completed.stderr or "")
+    assert completed.returncode == 0, completed.stderr

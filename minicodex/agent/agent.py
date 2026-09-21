@@ -19,6 +19,7 @@ from .progress import ActionController, FinalizationController
 from .validation import (
     JudgeContextBuilder,
     RegressionPolicy,
+    RegressionRequirement,
     RegressionRecoveryPolicy,
     RelevantPathResolver,
     TaskCompletionPolicy,
@@ -28,7 +29,7 @@ from .validation import (
     SemanticRegressionJudge,
 )
 from .dependency import DependencyResolver
-from .routing import ExecutionMode, ExecutionPolicy, TaskIntent, TaskRouter, policy_for
+from .routing import ExecutionPolicy, TaskIntent, TaskRouter, policy_for
 from .runtime import (
     GitAwareness,
     GitRepositoryInspector,
@@ -46,6 +47,7 @@ from .orchestration import (
     ValidationOrchestrator,
     PlanOrchestrator,
 )
+from .orchestration.task_start import TaskBootstrapper
 from .observability import (
     ExecutionMetrics,
     OutputLevel,
@@ -62,8 +64,8 @@ from .safety import (
     SafetyToolExecutor,
 )
 from .task_state import AgentPhase, RuntimeEventType, TaskRuntime, TaskState
-from .validation.contracts import TestTargetContract
-from .validation.plan import EvidenceStrength, ValidationCheck, ValidationPlan, ValidationPlanner
+from .validation.contracts import CommandContract, TestTargetContract
+from .validation.plan import EvidenceStrength, ValidationCheck, ValidationPlan
 from .validation.evidence import ValidationPurpose
 from .validation.decision_policy import ValidationDecisionPolicy
 from .context.workspace_session import ChangeImpactResolver, WorkspaceSession
@@ -359,6 +361,7 @@ class MiniCodexAgent:
                 tool.symbol_index = self.workspace_session.symbol_index
         self.completion_handler = CompletionHandler()
         self.turn_builder = TurnBuilder()
+        self.task_bootstrapper = TaskBootstrapper()
         self.tool_batch_runner = ToolBatchRunner()
         self.rollback_coordinator = RollbackCoordinator()
         self.validation_orchestrator = ValidationOrchestrator(self.rollback_coordinator)
@@ -498,31 +501,77 @@ class MiniCodexAgent:
         return tuple(results)
 
     def materialize_regression_checks(self, changed_path: str = "") -> None:
-        """Add real edit-induced regression obligations exactly once."""
+        """Materialize the policy-required regression obligation after edits.
+
+        Relevant-only tasks prefer tests mapped to the changed source.  When
+        no focused mapping exists, the repository's discovered test command is
+        the deterministic fallback.  Complex tasks always require the full
+        discovered suite.  This keeps the completion policy and the executable
+        validation plan aligned instead of treating an omitted check as proof
+        that regression validation was unnecessary.
+        """
         ledger = self.validation_pipeline.state
-        if not ledger.has_edit or any(
-            check.required and check.purpose == ValidationPurpose.REGRESSION
-            for check in ledger.plan.checks
+        if not ledger.has_edit:
+            return
+        requirement = self.current_regression_requirement()
+        if requirement == RegressionRequirement.NOT_APPLICABLE:
+            return
+
+        existing = tuple(
+            check for check in ledger.plan.checks
+            if check.required and check.purpose == ValidationPurpose.REGRESSION
+        )
+        if requirement == RegressionRequirement.RELEVANT_ONLY and existing:
+            return
+        if requirement == RegressionRequirement.REQUIRED and any(
+            check.strength >= EvidenceStrength.FULL for check in existing
         ):
             return
+
         targets = tuple(dict.fromkeys((
             changed_path,
             *getattr(self.execution_route, "target_paths", ()),
         )))
         impact = ChangeImpactResolver().resolve(self.workspace_session, targets)
-        tests = tuple(test for test in impact.tests if test)
-        if not tests:
+        profile = self.workspace_session.profile
+        focused_tests = tuple(test for test in impact.tests if test)
+        test_command = dict(getattr(profile, "commands", ()) or ()).get("test", "")
+
+        contracts = []
+        if requirement == RegressionRequirement.REQUIRED:
+            if getattr(profile, "test_framework", "unknown") == "pytest":
+                contracts = [TestTargetContract(".")]
+            elif test_command:
+                contracts = [CommandContract(test_command)]
+        elif focused_tests:
+            contracts = [TestTargetContract(target) for target in focused_tests]
+        elif getattr(profile, "test_framework", "unknown") == "pytest":
+            contracts = [TestTargetContract(".")]
+        elif test_command:
+            contracts = [CommandContract(test_command)]
+
+        if not contracts:
             return
+
         checks = list(ledger.plan.checks)
-        for target in tests:
+        for contract in contracts:
+            target = getattr(contract, "target", "") or getattr(contract, "command", "")
             checks.append(ValidationCheck(
                 id=f"V{len(checks) + 1}",
                 requirement_ids=(),
                 purpose=ValidationPurpose.REGRESSION,
-                contract=TestTargetContract(target),
-                strength=EvidenceStrength.REGRESSION,
+                contract=contract,
+                strength=(
+                    EvidenceStrength.FULL
+                    if requirement == RegressionRequirement.REQUIRED
+                    else EvidenceStrength.REGRESSION
+                ),
                 revision=ledger.edit_revision,
-                reason=f"编辑影响了聚焦测试 {target}",
+                reason=(
+                    f"复杂变更需要完整回归：{target}"
+                    if requirement == RegressionRequirement.REQUIRED
+                    else f"编辑影响需要相关回归：{target}"
+                ),
             ))
         ledger.plan = ValidationPlan(tuple(checks))
 
@@ -630,8 +679,6 @@ class MiniCodexAgent:
     def current_regression_requirement(self):
         policy = self.execution_policy
         if policy is None:
-            from .validation import RegressionRequirement
-
             return RegressionRequirement.REQUIRED
 
         touched = ()
@@ -642,11 +689,21 @@ class MiniCodexAgent:
         if not touched and self.execution_route is not None:
             touched = self.execution_route.target_paths
 
-        return self.regression_policy.requirement_for(
+        requirement = self.regression_policy.requirement_for(
             mode=policy.mode,
             changed_paths=touched,
             default=policy.regression_requirement,
         )
+        if requirement == RegressionRequirement.NOT_APPLICABLE:
+            return requirement
+
+        profile = getattr(self.workspace_session, "profile", None)
+        commands = dict(getattr(profile, "commands", ()) or ())
+        has_test_runtime = bool(
+            getattr(profile, "test_framework", "unknown") != "unknown"
+            or commands.get("test")
+        )
+        return requirement if has_test_runtime else RegressionRequirement.NOT_APPLICABLE
 
     # =========================================================
     # Main Entry
@@ -716,223 +773,13 @@ class MiniCodexAgent:
         policy: ExecutionPolicy | None = None,
     ) -> str:
 
-        self.active_user_request = (
-            user_input
-        )
-        self.workspace_session.refresh(full=True)
-        self.baseline_web_framework = self._detect_baseline_web_framework()
-        if hasattr(self, "validator_resolver") and self.validator_resolver is not None:
-            self.validator_resolver.preferred_http_framework = self.baseline_web_framework
-
-        self.active_plan = None
-
-        self.execution_policy = self.resolve_execution_policy(
+        self.task_bootstrapper.start(
+            self,
             user_input,
+            use_planning=use_planning,
             policy=policy,
         )
-        self.task_requires_validation = bool(
-            self.execution_route and self.execution_route.intent == TaskIntent.MODIFY
-        )
-        self.safety_policy.begin_task(
-            user_input,
-            routed_intent=getattr(self.execution_route, "intent", None),
-        )
-        self.final_response_mode = self.completion_handler.response_mode(self)
-        planning_enabled = bool(
-            self.execution_policy.use_plan
-            and use_planning is not False
-            and self.task_requires_validation
-        )
-        self.task_max_steps = min(
-            self.configured_max_steps,
-            self.execution_policy.max_steps,
-        )
-        print(
-            f"\n[执行模式] {self.execution_policy.mode.value.upper()}"
-        )
-        if self.execution_route is not None:
-            print(f"[路由] {self.execution_route.reason}")
-
-        # =====================================================
-        # Reset Task State
-        # =====================================================
-
-        self.progress.reset(
-            new_task=True
-        )
-        self.latest_progress_signal = None
-
-        self.finalization.reset()
-
-        self.step_evidence.reset()
-
-        self.plan_version = 0
-
-        self.rollback_revision = 0
-
-        self.validation_pipeline.reset()
-
-        self.checkpoint_manager.reset()
-
-        self.recovery.reset()
-
-        self.replan_count = 0
-
-        self.token_metrics.reset()
-
-        self.execution_metrics.reset(
-            self.execution_policy.mode.value,
-            intent=self.execution_route.intent.value,
-        )
-        self.execution_metrics.record_routing(self.task_router.last_telemetry)
-
-        self.requirements_extractor.reset()
-        self.task_requirements = (
-            self.requirements_extractor.extract(
-                user_input,
-                mode=self.execution_policy.mode,
-                target_paths=getattr(self.execution_route, "target_paths", ()),
-                workspace=self.workspace,
-            )
-            if self.task_requires_validation
-            else TaskRequirements()
-        )
-        self.execution_metrics.record_requirements(
-            self.requirements_extractor.last_telemetry
-        )
-        change_impact = ChangeImpactResolver().resolve(
-            self.workspace_session, getattr(self.execution_route, "target_paths", ())
-        )
-        self.validation_pipeline.state.plan = ValidationPlanner().build(
-            self.task_requirements, profile=self.workspace_session.profile,
-            paths=getattr(self.execution_route, "target_paths", ()), request=user_input,
-            mode=self.execution_policy.mode, impact=change_impact,
-            available_capabilities=getattr(self.registry, "available_capabilities", ()))
-        self.runtime_control.reset(planning_active=False)
-        self.runtime_control.control_llm_calls = (
-            self.execution_metrics.routing_llm_calls
-            + self.execution_metrics.requirements_llm_calls
-        )
-        self.semantic_judge.reset()
-        self.regression_recovery_policy.reset()
-        self.task_steps_consumed = 0
-        self.concrete_blockers.clear()
-
-        self.edit_retry.reset()
-
-        self.latest_dependency_resolution = None
-
-        self.latest_symbol_recovery_paths = ()
-
-        self.completion_handler.reset()
-
-        self.task_runtime = TaskRuntime()
-        self.task_state = self.task_runtime.state
-        self.apply_runtime_event(
-            RuntimeEventType.TASK_STARTED,
-            mode=self.execution_policy.mode,
-            intent=self.execution_route.intent,
-            user_request=user_input,
-            final_response_mode=self.final_response_mode.value,
-            target_paths=tuple(getattr(self.execution_route, "target_paths", ()) or ()),
-            needs_plan=bool(getattr(self.execution_route, "needs_plan", False)),
-            planning_activated=planning_enabled,
-            requirement_ids=tuple(item.id for item in self.task_requirements.items),
-            satisfied_requirement_ids=(),
-            remaining_steps=self.task_max_steps,
-        )
-
-        self.context_budget.reset()
-
-        self.working_summary.reset()
-
-        # =====================================================
-        # Task-Start Git Baseline
-        # =====================================================
-
-        self.git_awareness.reset_task()
-
-        # =====================================================
-        # Initial Repository Map
-        # =====================================================
-
-        self._repo_map_initialized = False
-        self._repo_map_revision = None
-        fast_mode = self.execution_policy.mode == ExecutionMode.FAST
-        if fast_mode:
-            self.repo_map_text = "FAST 模式下已省略仓库地图。"
-        else:
-            self._refresh_repo_map(force=True)
-
-        # =====================================================
-        # Initial Plan
-        # =====================================================
-
-        if (
-            planning_enabled
-            and self.planner
-        ):
-
-            try:
-
-                self.active_plan = (
-                    self.planner
-                    .create_plan(
-                        user_input,
-                        max_agent_steps=(
-                            self.task_max_steps
-                        ),
-                        max_plan_steps=(
-                            self.execution_policy.max_plan_steps
-                        ),
-                        token_metrics=(
-                            self.token_metrics
-                        ),
-                    )
-                )
-
-                self.apply_runtime_event(
-                    RuntimeEventType.PLAN_ACTIVATED,
-                    plan_revision=self.plan_version,
-                )
-
-                self._print_plan(
-                    self.active_plan
-                )
-
-                initial = self.reconcile_plan_progress()
-                if initial["completed"]:
-                    print("\n[初始计划核对]")
-                    print(
-                        "已满足的步骤："
-                        + ", ".join(
-                            str(item["step_id"])
-                            for item in initial["completed"]
-                        )
-                    )
-
-            except Exception as e:
-
-                print(
-                    f"\n[规划失败] "
-                    f"{type(e).__name__}: "
-                    f"{e}"
-                )
-
-        # =====================================================
-        # Agent Loop
-        # =====================================================
-
-        self.runtime_control.planning_activated = self.active_plan is not None
-        self.refresh_runtime_context()
-        self.action_controller.reset(self.task_progress_state())
-
-        return (
-            run_agent_loop(
-                self,
-                user_input,
-            )
-        )
+        return run_agent_loop(self, user_input)
 
     def resolve_execution_policy(
         self,
@@ -977,8 +824,8 @@ class MiniCodexAgent:
         self._print_plan(self.active_plan)
         return True
 
-    def get_tool_schemas(self) -> list[dict]:
-        """Expose only currently executable tools without mutating the Registry."""
+    def get_base_tool_schemas(self) -> list[dict]:
+        """Return intent/mode-scoped schemas before turn-phase filtering."""
 
         intent = getattr(self.execution_route, "intent", TaskIntent.MODIFY)
         if intent == TaskIntent.INFORMATIONAL:
@@ -1011,10 +858,17 @@ class MiniCodexAgent:
                 or (schema.get("function", {}).get("name") in getattr(self.registry, "_tools", {})
                     and bool(self.registry.capabilities_for(schema["function"]["name"]) & allowed_capabilities))
             ]
-        # Phase/action/contract-aware pre-filter. ActionController remains the
-        # final deterministic guard for argument-specific restrictions.
-        from .orchestration.tool_availability import ToolAvailabilityResolver
-        return ToolAvailabilityResolver().filter_schemas(self, schemas)
+        return schemas
+
+    def get_tool_schemas(self) -> list[dict]:
+        """Compatibility API returning the schemas executable this turn."""
+
+        from .orchestration.turn_builder import ToolAvailabilityResolver
+
+        return ToolAvailabilityResolver().filter_schemas(
+            self,
+            self.get_base_tool_schemas(),
+        )
 
     def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
         """Filter through tool-owned capability declarations."""

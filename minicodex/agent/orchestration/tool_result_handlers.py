@@ -8,7 +8,7 @@ from pathlib import Path
 from ..editing.edit_verifier import EditVerifier
 from ..progress import ProgressKind, ProgressSignal
 from ..task_state import RuntimeEventType
-from ..validation.validator_resolver import ResolutionStatus, ValidatorResolution
+from ..validation.validator_resolver import ValidatorResolution
 
 
 class EditResultHandler:
@@ -77,12 +77,21 @@ class ValidationResultHandler:
 
         checks = agent.validation_pipeline.state.plan.checks
         attempted_check = str(arguments.get("validation_check", "")).strip()
-        resolution = self._resolve_binding(agent, attempted_check, checks)
+        resolution = self._resolve_binding(
+            agent,
+            attempted_check,
+            checks,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
         known_ids = {check.id for check in checks}
         if (
             metrics is not None
             and attempted_check
-            and attempted_check not in known_ids
+            and (
+                attempted_check not in known_ids
+                or resolution is None
+            )
         ):
             # Explicit proof attempt aimed at a check that is not in the plan.
             metrics.wrong_validation_target_count += 1
@@ -115,35 +124,34 @@ class ValidationResultHandler:
         return ValidationHandled(evidence, signal, decision, completed)
 
     @staticmethod
-    def _resolve_binding(agent, attempted_check: str, checks) -> ValidatorResolution | None:
-        """Bind LLM-driven validation to a plan check without inventing targets."""
+    def _resolve_binding(
+        agent,
+        attempted_check: str,
+        checks,
+        *,
+        tool_name: str,
+        arguments: dict,
+    ) -> ValidatorResolution | None:
+        """Bind only an exact Harness-prepared validator invocation.
+
+        A check id names an obligation; it does not attest that an arbitrary
+        command or test actually exercised that obligation.  Provider-driven
+        validation therefore remains diagnostic unless its tool and executable
+        arguments exactly match the current resolver output.
+        """
 
         current = getattr(agent, "current_validator_resolution", None)
-        if (
-            attempted_check
-            and current is not None
-            and getattr(current, "check_id", "") == attempted_check
-        ):
-            return current
-
-        check = None
-        if attempted_check:
-            check = next((item for item in checks if item.id == attempted_check), None)
-        if check is None and not attempted_check:
-            prepared = getattr(agent, "current_validation_check", None)
-            if prepared is not None and any(item.id == prepared.id for item in checks):
-                check = prepared
-                if current is not None and getattr(current, "check_id", "") == prepared.id:
-                    return current
-        if check is None:
+        prepared = getattr(agent, "current_validation_check", None)
+        if current is None or prepared is None:
             return None
-        return ValidatorResolution(
-            check.id,
-            ResolutionStatus.RESOLVED,
-            target=str(getattr(getattr(check, "contract", None), "path", "")
-                       or getattr(getattr(check, "contract", None), "target", "")
-                       or getattr(getattr(check, "contract", None), "code", "")
-                       or check.id),
-            validation_key=f"{check.contract_type}|{check.id}",
-            reason="LLM 工具结果已绑定到当前计划检查。",
-        )
+        check_id = str(getattr(prepared, "id", "") or "")
+        if not check_id or not any(item.id == check_id for item in checks):
+            return None
+        if attempted_check and attempted_check != check_id:
+            return None
+        if getattr(current, "check_id", "") != check_id:
+            return None
+        matcher = getattr(current, "matches_invocation", None)
+        if not callable(matcher) or not matcher(tool_name, arguments):
+            return None
+        return current

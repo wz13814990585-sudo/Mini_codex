@@ -1,6 +1,6 @@
 from minicodex.tests.evidence_fixtures import record_evidence
 from ..agent.agent import MiniCodexAgent
-from ..agent.validation import CompletionStatus
+from ..agent.validation import CompletionStatus, RegressionRequirement
 from ..agent.orchestration.validation_orchestrator import evaluate_completion
 from ..agent.orchestration.loop import run_agent_loop
 from ..agent.planning import PlanProgressReconciler
@@ -129,6 +129,9 @@ def test_local_step_completion_does_not_bypass_global_gate(tmp_path):
         steps=[PlanStep(id=1, description="Create skeleton")],
     )
     agent.validation_pipeline.record_edit()
+    # This test isolates plan/global acceptance interaction. Regression
+    # materialization is covered by the completion-policy tests.
+    agent.current_regression_requirement = lambda: RegressionRequirement.NOT_APPLICABLE
 
     completed = agent.plan_orchestrator.complete_step(agent)
     completion = evaluate_completion(agent)

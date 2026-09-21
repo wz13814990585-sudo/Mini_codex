@@ -8,11 +8,14 @@ from ..workspace import WorkspaceConfig
 from ..agent.planning.requirements import RequirementCategory, TaskRequirement, TaskRequirements
 from ..agent.validation import (
     BrowserAction, BrowserAssertion, BrowserInteractionContract, HttpContract,
-    TestTargetContract,
+    SemanticContract, TestTargetContract,
 )
 from ..agent.validation.plan import EvidenceStrength, ValidationCheck, ValidationPlanner
+from ..agent.validation.pipeline import ValidationPipeline
 from ..agent.validation.evidence import ValidationPurpose
 from ..agent.validation.validator_resolver import ResolutionStatus, ValidatorResolver
+from ..agent.validation.executor import ValidationExecutionState, ValidationExecutor
+from ..agent.validation.validator_resolver import ValidatorResolution
 from ..evaluation.real_repo_bench import fixtures, run_real_repo_bench
 from ..evaluation.checks import EvaluationCheckRunner
 from ..evaluation.models import EvaluationCheck
@@ -66,6 +69,37 @@ def test_required_runtime_check_survives_missing_browser_capability():
     assert runtime.required and runtime.contract_type == "browser_interaction"
     resolved = ValidatorResolver().resolve(runtime, registry=ToolRegistry(), profile=profile, paths=("game.html",))
     assert resolved.status == ResolutionStatus.CAPABILITY_MISSING
+
+
+def test_optional_semantic_validator_allows_bound_provider_evidence():
+    """Fallback semantic checks must not deadlock without an optional judge."""
+
+    requirements = TaskRequirements([
+        TaskRequirement(
+            "R1",
+            "set VALUE to 2",
+            paths=("value.py",),
+            contract=SemanticContract("value.py", "set VALUE to 2"),
+        )
+    ])
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(requirements)
+    check = pipeline.state.plan.checks[0]
+    resolution = ValidatorResolution(
+        check.id,
+        ResolutionStatus.CAPABILITY_MISSING,
+        capability="validation.semantic",
+        reason="semantic validator unavailable",
+    )
+
+    result = ValidationExecutor().execute(
+        SimpleNamespace(validation_pipeline=pipeline),
+        check,
+        resolution,
+    )
+
+    assert result.state == ValidationExecutionState.SKIPPED
+    assert not pipeline.state.blocked_checks
 
 
 def test_typed_http_and_browser_specs_do_not_copy_observable_to_tool_arguments(tmp_path):

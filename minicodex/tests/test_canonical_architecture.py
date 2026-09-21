@@ -11,6 +11,7 @@ import pytest
 @pytest.mark.parametrize("module", [
     "minicodex.agent.progress", "minicodex.agent.runtime", "minicodex.agent.task_state",
     "minicodex.agent.context.workspace_session", "minicodex.agent.validation.test_index",
+    "minicodex.agent.orchestration.task_start",
 ])
 def test_domain_imports_in_fresh_interpreter(module):
     result = subprocess.run([sys.executable, "-c", f"import {module}"], capture_output=True, text=True, timeout=15)
@@ -92,6 +93,48 @@ def test_verification_and_batch_have_one_canonical_path():
     batch = (root / "agent/orchestration/tool_batch_runner.py").read_text()
     assert "task_requirements" not in batch and "validation_pipeline" not in batch
     assert len(batch.splitlines()) < 60
+
+
+def test_turn_construction_has_one_canonical_module():
+    root = Path(__file__).parents[1] / "agent" / "orchestration"
+    assert not (root / "prompt_builder.py").exists()
+    assert not (root / "tool_schema_provider.py").exists()
+    assert not (root / "tool_availability.py").exists()
+    source = (root / "turn_builder.py").read_text()
+    for owner in (
+        "class PromptBuilder",
+        "class ToolSchemaProvider",
+        "class ToolAvailabilityResolver",
+        "class TurnBuilder",
+    ):
+        assert source.count(owner) == 1
+
+
+def test_agent_facade_delegates_task_startup_to_one_owner():
+    root = Path(__file__).parents[1] / "agent"
+    source = (root / "agent.py").read_text()
+    tree = ast.parse(source)
+    agent_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "MiniCodexAgent"
+    )
+    run_impl = next(
+        node
+        for node in agent_class.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_impl"
+    )
+    calls = {
+        ast.unparse(node.func)
+        for node in ast.walk(run_impl)
+        if isinstance(node, ast.Call)
+    }
+
+    assert (root / "orchestration" / "task_start.py").exists()
+    assert "self.task_bootstrapper.start" in calls
+    assert "run_agent_loop" in calls
+    assert "ValidationPlanner" not in source
+    assert "requirements_extractor.extract" not in ast.unparse(run_impl)
 
 
 def test_workspace_intelligence_is_task_independent():

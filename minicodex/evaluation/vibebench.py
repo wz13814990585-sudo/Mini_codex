@@ -14,6 +14,18 @@ from types import SimpleNamespace
 from .harness import EvaluationHarness
 from .models import EvaluationCase, EvaluationCheck
 from ..agent.agent import MiniCodexAgent
+from ..agent.planning.requirements import (
+    RequirementCategory,
+    RequirementsTelemetry,
+    TaskRequirement,
+    TaskRequirements,
+)
+from ..agent.validation.contracts import (
+    FileContainsContract,
+    PythonBehaviorContract,
+    TestTargetContract,
+    VerificationContract,
+)
 from ..agent.orchestration.message_protocol import validate_tool_message_protocol
 from ..llm.types import LLMResponse, TokenUsage
 from ..tools.registry import ToolRegistry
@@ -49,6 +61,47 @@ class Scenario:
     script: tuple[tuple[str, dict], ...]
     warmup_script: tuple[tuple[str, dict], ...] = ()
     warmup_prompt: str = ""
+    contracts: tuple[VerificationContract, ...] = ()
+    warmup_contracts: tuple[VerificationContract, ...] = ()
+    allow_already_satisfied: bool = False
+
+
+class ScenarioRequirementsExtractor:
+    """Supply benchmark-owned contracts without impersonating a control LLM.
+
+    HarnessBench replaces only provider decisions.  Its proof obligations are
+    declared independently so the runtime can resolve and execute validators
+    through the same canonical path used in production.
+    """
+
+    def __init__(self, scenario: Scenario) -> None:
+        self.scenario = scenario
+        self.last_telemetry = RequirementsTelemetry()
+
+    def reset(self) -> None:
+        self.last_telemetry = RequirementsTelemetry()
+
+    def extract(self, user_request, **_kwargs) -> TaskRequirements:
+        contracts = self.scenario.contracts
+        if self.scenario.warmup_prompt and user_request == self.scenario.warmup_prompt:
+            contracts = self.scenario.warmup_contracts or contracts
+        if not contracts:
+            contracts = tuple(
+                FileContainsContract(check.path, check.expected)
+                for check in self.scenario.case.checks
+                if check.kind == "file_contains" and check.path and check.expected
+            )
+        return TaskRequirements([
+            TaskRequirement(
+                f"R{index}",
+                f"Benchmark contract {index}",
+                RequirementCategory.TEST
+                if isinstance(contract, TestTargetContract)
+                else RequirementCategory.BEHAVIOR,
+                contract=contract,
+            )
+            for index, contract in enumerate(contracts, 1)
+        ], no_edit_if_already_satisfied=self.scenario.allow_already_satisfied)
 
 
 def assertion(path, expected, check="V1"):
@@ -76,20 +129,19 @@ def scenarios():
     calc = "examples/calc.py"
     base = (
         Scenario(case("tiny_edit", f"Set VALUE to 2 in {a}."), ((a, "VALUE = 1\n"),),
-                 (patch(a, "VALUE = 1", "VALUE = 2"), assertion(a, "VALUE = 2"))),
+                 (patch(a, "VALUE = 1", "VALUE = 2"),)),
         Scenario(case("already_satisfied", f"Set VALUE to 2 in {a}."), ((a, "VALUE = 2\n"),),
-                 (assertion(a, "VALUE = 2"),)),
+                 (), allow_already_satisfied=True),
         Scenario(case("create_file", f"Create {a} with VALUE = 2."), (),
-                 (("write_file", {"path": a, "content": "VALUE = 2\n"}), assertion(a, "VALUE = 2"))),
+                 (("write_file", {"path": a, "content": "VALUE = 2\n"}),)),
         Scenario(case("unknown_repository", f"Fix VALUE to 2 in {a}."), ((a, "VALUE = 1\n"),),
-                 (("read_file", {"path": a}), patch(a, "VALUE = 1", "VALUE = 2"), assertion(a, "VALUE = 2"))),
+                 (("read_file", {"path": a}), patch(a, "VALUE = 1", "VALUE = 2"))),
         Scenario(case("local_repair", f"Fix VALUE to 2 in {a}."), ((a, "VALUE = 1\n"),),
-                 (patch(a, "VALUE = 1", "VALUE = 3"), assertion(a, "VALUE = 2"),
-                  patch(a, "VALUE = 3", "VALUE = 2"), assertion(a, "VALUE = 2"))),
+                 (patch(a, "VALUE = 1", "VALUE = 3"),
+                  patch(a, "VALUE = 3", "VALUE = 2"))),
         Scenario(case("multifile_requirements", f"Set VALUE to 2 in {a}; set VALUE to 3 in {b}.", ((a, "VALUE = 2"), (b, "VALUE = 3"))),
                  ((a, "VALUE = 1\n"), (b, "VALUE = 1\n")),
-                 (patch(a, "VALUE = 1", "VALUE = 2"), patch(b, "VALUE = 1", "VALUE = 3"),
-                  assertion(a, "VALUE = 2"), assertion(b, "VALUE = 3", "V2"), regression(a, "VALUE = 2", "V3"))),
+                 (patch(a, "VALUE = 1", "VALUE = 2"), patch(b, "VALUE = 1", "VALUE = 3"))),
     )
     server = ("from http.server import BaseHTTPRequestHandler, HTTPServer\nimport sys\n"
               "class Handler(BaseHTTPRequestHandler):\n"
@@ -99,43 +151,48 @@ def scenarios():
     return base + (
         Scenario(case("local_bug", f"Fix double in {calc} to multiply by two.", ((calc, "value * 2"),)),
                  ((calc, "def double(value):\n    return value + 2\n"),),
-                 (patch(calc, "value + 2", "value * 2"), behavior("from examples.calc import double; assert double(3) == 6"))),
+                 (patch(calc, "value + 2", "value * 2"),),
+                 contracts=(PythonBehaviorContract("from examples.calc import double; assert double(3) == 6"),)),
         Scenario(case("small_feature", f"Add zero handling to {calc} reciprocal.", ((calc, "if value == 0"),)),
                  ((calc, "def reciprocal(value):\n    return 1 / value\n"),),
-                 (patch(calc, "    return 1 / value", "    if value == 0:\n        return None\n    return 1 / value"),
-                  behavior("from examples.calc import reciprocal; assert reciprocal(0) is None; assert reciprocal(2) == .5"))),
+                 (patch(calc, "    return 1 / value", "    if value == 0:\n        return None\n    return 1 / value"),),
+                 contracts=(PythonBehaviorContract(
+                     "from examples.calc import reciprocal; assert reciprocal(0) is None; assert reciprocal(2) == .5"
+                 ),)),
         Scenario(case("python_cli", "Create examples/cli.py to print hello.", (("examples/cli.py", "print('hello')"),)), (),
-                 (("write_file", {"path": "examples/cli.py", "content": "print('hello')\n"}),
-                  behavior("import subprocess,sys; assert subprocess.check_output([sys.executable,'examples/cli.py']).strip() == b'hello'"))),
+                 (("write_file", {"path": "examples/cli.py", "content": "print('hello')\n"}),),
+                 contracts=(PythonBehaviorContract(
+                     "import subprocess,sys; assert subprocess.check_output([sys.executable,'examples/cli.py']).strip() == b'hello'"
+                 ),)),
         Scenario(case("refactor", "Create examples/core.py with double; update examples/client.py to use it.",
                       (("examples/core.py", "def double"), ("examples/client.py", "from examples.core import double"))),
                  (("examples/client.py", "def run():\n    return 3 * 2\n"),),
                  (("write_file", {"path": "examples/core.py", "content": "def double(x):\n    return x * 2\n"}),
-                  ("write_file", {"path": "examples/client.py", "content": "from examples.core import double\ndef run():\n    return double(3)\n"}),
-                  behavior("from examples.core import double; assert double(3) == 6"),
-                  behavior("from examples.client import run; assert run() == 6", "V2"),
-                  regression("examples/client.py", "from examples.core import double\ndef run():\n    return double(3)", "V3"))),
+                  ("write_file", {"path": "examples/client.py", "content": "from examples.core import double\ndef run():\n    return double(3)\n"})),
+                 contracts=(
+                     FileContainsContract("examples/core.py", "def double"),
+                     FileContainsContract("examples/client.py", "from examples.core import double"),
+                     PythonBehaviorContract("from examples.core import double; assert double(3) == 6"),
+                     PythonBehaviorContract("from examples.client import run; assert run() == 6"),
+                 )),
         Scenario(case("api_service", "Fix examples/server.py HTTP response to ready.", (("examples/server.py", "b'ready'"),)),
                  (("examples/server.py", server),),
-                 (patch("examples/server.py", "b'old'", "b'ready'"),
-                  ("validate_service", {"argv": ["python", "examples/server.py", "{port}"], "port": 0,
-                                        "path": "/", "expected_text": "ready", "validation_check": "V1"}))),
+                 (patch("examples/server.py", "b'old'", "b'ready'"),)),
         Scenario(case("html_page", "Create examples/hello.html with a Hello heading.", (("examples/hello.html", "<h1>Hello</h1>"),)), (),
-                 (("write_file", {"path": "examples/hello.html", "content": "<!doctype html><html><head><title>Hello</title></head><body><h1>Hello</h1></body></html>"}),
-                  ("validate_static_web", {"path": "examples/hello.html", "expected_text": "<h1>Hello</h1>", "validation_check": "V1"}))),
+                 (("write_file", {"path": "examples/hello.html", "content": "<!doctype html><html><head><title>Hello</title></head><body><h1>Hello</h1></body></html>"}),)),
         Scenario(case("dependency_constraint", "Update examples/requirements.txt dependency pin to examplelib==2 without installing dependencies.", (("examples/requirements.txt", "examplelib==2"),)),
                  (("examples/requirements.txt", "examplelib==1\n"),),
-                 (patch("examples/requirements.txt", "examplelib==1", "examplelib==2"), assertion("examples/requirements.txt", "examplelib==2"))),
+                 (patch("examples/requirements.txt", "examplelib==1", "examplelib==2"),)),
         Scenario(case("failing_test", f"Fix failing double behavior in {calc}.", ((calc, "value * 2"),)),
                  ((calc, "def double(value):\n    return value + 2\n"),
                   ("tests/test_calc.py", "from examples.calc import double\ndef test_double():\n    assert double(3) == 6\n")),
-                 (("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "acceptance", "validation_check": "V1"}),
-                  patch(calc, "value + 2", "value * 2"),
-                  ("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "acceptance", "validation_check": "V1"}),
-                  ("run_tests", {"path": "tests/test_calc.py::test_double", "purpose": "regression", "validation_check": "V2"}))),
+                 (patch(calc, "value + 2", "value * 2"),),
+                 contracts=(TestTargetContract("tests/test_calc.py::test_double"),)),
         Scenario(case("followup", f"Set VALUE to 3 in {a}.", ((a, "VALUE = 3"),)), ((a, "VALUE = 1\n"),),
-                 (patch(a, "VALUE = 2", "VALUE = 3"), assertion(a, "VALUE = 3")),
-                 (patch(a, "VALUE = 1", "VALUE = 2"), assertion(a, "VALUE = 2")), f"Set VALUE to 2 in {a}."),
+                 (patch(a, "VALUE = 2", "VALUE = 3"),),
+                 (patch(a, "VALUE = 1", "VALUE = 2"),), f"Set VALUE to 2 in {a}.",
+                 contracts=(FileContainsContract(a, "VALUE = 3"),),
+                 warmup_contracts=(FileContainsContract(a, "VALUE = 2"),)),
     )
 
 
@@ -156,14 +213,16 @@ def run_vibebench(root, *, model_factory=None, output_level="normal"):
         script = []
         for name, arguments in scenario.script:
             arguments = dict(arguments)
-            if name == "validate_service" and arguments.get("port") == 0:
-                import socket
-                with socket.socket() as sock:
-                    sock.bind(("127.0.0.1", 0))
-                    arguments["port"] = sock.getsockname()[1]
             script.append((name, arguments))
         model = model_factory(case) if model_factory else ScriptedModel(script)
-        agent = MiniCodexAgent(llm=model, registry=registry, planner=None, status_interval_seconds=0, output_level=output_level)
+        agent = MiniCodexAgent(
+            llm=model,
+            registry=registry,
+            planner=None,
+            requirements_extractor=ScenarioRequirementsExtractor(scenario),
+            status_interval_seconds=0,
+            output_level=output_level,
+        )
         if scenario.warmup_script:
             agent.llm = model_factory(case) if model_factory else ScriptedModel(scenario.warmup_script)
             agent.run(scenario.warmup_prompt)

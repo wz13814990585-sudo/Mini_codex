@@ -306,31 +306,16 @@ class ActionController:
                 "当前修订已有可执行的验证目标。请运行相关验证器，"
                 "不要做无关探查。"
             )
-        if self.phase == AgentPhase.FIXING:
-            if self._inspection(tool_name) and not is_read:
+        # Capability/phase/budget decisions above come exclusively from
+        # ExecutableToolPolicy.  Only argument-sensitive path checks remain
+        # here because schema filtering cannot inspect call arguments.
+        if self.phase == AgentPhase.FIXING and is_read and self.target_paths:
+            path = str((arguments or {}).get("path", "") or "").strip()
+            if path not in self.target_paths:
                 return (
-                    "验证失败。最多探查一个针对性源码区域，然后修复。"
-                    "不允许大范围侦察。"
+                    "FIXING 阶段仅允许读取一个相关失败路径"
+                    f"（{', '.join(self.target_paths)}），不允许 {path or '未指定路径'}。"
                 )
-            if is_read and self.consecutive_inspections >= 1:
-                if self.next_contract_type in {"file_contains", "file_exists"}:
-                    return (
-                        "目标结构文件可能尚不存在。"
-                        "请立即用 write_file 创建缺失路径并写入所需定义，"
-                        "不要继续 read/search。"
-                    )
-                return (
-                    "针对性失败上下文已探查过。"
-                    "请用 write_file/patch_file 做具体修复（若目标文件不存在请先创建），"
-                    "或报告阻塞原因。"
-                )
-            if is_read and self.target_paths:
-                path = str((arguments or {}).get("path", "") or "").strip()
-                if path not in self.target_paths:
-                    return (
-                        "FIXING 阶段仅允许读取一个相关失败路径"
-                        f"（{', '.join(self.target_paths)}），不允许 {path or '未指定路径'}。"
-                    )
 
         # Pin edits to the current obligation paths so models cannot invent
         # parallel modules (e.g. login.py) while acceptance imports app.py.
@@ -346,39 +331,6 @@ class ActionController:
             edit_block = self._edit_content_restriction(tool_name, arguments or {})
             if edit_block:
                 return edit_block
-
-        if tool_name == "replan" and not getattr(policy, "enable_replan", False):
-            return "FAST 模式无计划；replan 不可用。"
-
-        if (
-            tool_name == "validate_static_web"
-            and self.next_contract_type == "browser_interaction"
-        ):
-            return (
-                f"当前必需检查 {self.next_required_check_id or 'browser_interaction'} "
-                "是浏览器交互契约。请修复 HTML 引用的脚本中的事件监听，"
-                "不要用 validate_static_web / require_inline_script 替代。"
-            )
-
-        # Required contract is source of truth: do not chase workspace-shaped HTTP
-        # validators when acceptance is a plain python_behavior/pytest check.
-        if (
-            tool_name == "validate_service"
-            or "service.validate" in capabilities
-        ) and self.next_contract_type in {
-            "python_behavior",
-            "node_behavior",
-            "pytest",
-            "file_contains",
-            "file_exists",
-            "command",
-        }:
-            return (
-                f"当前必需检查 {self.next_required_check_id or 'current'} 的契约是 "
-                f"{self.next_contract_type}，不是 HTTP 服务。"
-                "请修复实现使原 python/文件验收通过；"
-                "不要用 validate_service 或 Web endpoint 替代该契约。"
-            )
 
         if (
             "test.run" in capabilities
@@ -398,32 +350,6 @@ class ActionController:
                 "请改为运行一次针对性验收验证。"
             )
 
-        inspection_limit = self._inspection_limit(policy)
-        next_inspection_exceeds_budget = bool(
-            inspection_limit is not None
-            and self._inspection(tool_name)
-            and self.consecutive_inspections >= inspection_limit
-        )
-        if next_inspection_exceeds_budget:
-            self._activate()
-
-        if not self.action_required:
-            return None
-
-        if capabilities & {"code.edit", "test.run", "validation.static_web", "validation.browser", "service.validate"}:
-            return None
-        if "process.run" in capabilities and str(
-            (arguments or {}).get("purpose", "diagnostic")
-        ).strip().lower() in {"acceptance", "regression"}:
-            return None
-        if tool_name == "replan" and getattr(policy, "enable_replan", False):
-            return None
-        # Pending stale-edit refresh: one targeted file.read must remain executable
-        # even when action_required has closed general reconnaissance.
-        if edit_retry_needs_read and is_read:
-            return None
-        if self._inspection(tool_name) or "process.run" in capabilities:
-            return self.INSTRUCTION
         return None
 
     def _edit_content_restriction(self, tool_name: str, arguments: dict) -> str | None:
@@ -437,12 +363,6 @@ class ActionController:
         if not content:
             return None
 
-        if path.endswith((".ts", ".tsx")) and self._has_typescript_type_annotations(content):
-            return (
-                "TypeScript 验收按 data:text/javascript 加载（与隐藏 oracle 一致），"
-                "禁止类型注解。请写出无 `: number` / `: string` 等注解的模块风格代码。"
-            )
-
         if (
             tool_name == "write_file"
             and self.next_contract_type == "python_behavior"
@@ -455,7 +375,7 @@ class ActionController:
             )
 
         baseline = str(self.baseline_web_framework or "")
-        if path.endswith("app.py") and baseline in {"fastapi", "flask"}:
+        if tool_name == "write_file" and path.endswith("app.py") and baseline in {"fastapi", "flask"}:
             lowered = content.casefold()
             if baseline == "fastapi":
                 if "fastapi" not in lowered or re.search(
@@ -476,17 +396,6 @@ class ActionController:
                         "不要改成 FastAPI 或 http.server。"
                     )
         return None
-
-    @staticmethod
-    def _has_typescript_type_annotations(content: str) -> bool:
-        return bool(
-            re.search(
-                r":\s*(number|string|boolean|any|void|unknown|never|bigint)\b|"
-                r":\s*[A-Za-z_][\w.]*(\[\])?(\s*\|\s*[A-Za-z_][\w.]*)*\s*[=,)\n]|"
-                r"\)\s*:\s*[A-Za-z_\[\]|<]",
-                content,
-            )
-        )
 
     def _activate(self) -> None:
         if not self.action_required:

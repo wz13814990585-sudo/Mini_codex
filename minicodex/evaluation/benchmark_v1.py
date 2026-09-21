@@ -8,7 +8,9 @@ from pathlib import Path
 from .models import EvaluationCase, EvaluationCheck
 
 
-BENCHMARK_VERSION = "minicodex-bench-v1"
+# R2 keeps the catalog stable while correcting three oracles that rejected
+# standards-compliant TypeScript/DOM implementations.
+BENCHMARK_VERSION = "minicodex-bench-v1-r2"
 
 
 @dataclass(frozen=True)
@@ -104,7 +106,7 @@ def fixtures() -> tuple[BenchmarkFixture, ...]:
         _fixture("create_typescript_range", "create",
             "Create src/range.ts exporting inclusiveRange(start, end), which returns every integer from start through end and [] when end < start.",
             {"package.json": "{\"type\":\"module\"}\n"},
-            NODE_HELPER + "\ndef test_range():\n r=run_module('src/range.ts','',\"const m=await import('data:text/javascript;base64,'+JSON.stringify(''));\"); code=Path('src/range.ts').read_bytes(); uri='data:text/javascript;base64,'+base64.b64encode(code).decode(); script=f\"const m=await import('{uri}'); if(JSON.stringify(m.inclusiveRange(2,4))!=='[2,3,4]'||m.inclusiveRange(3,2).length) process.exit(2)\"; out=subprocess.run(['node','--input-type=module','-e',script]); assert out.returncode==0\n",
+            NODE_HELPER + "\ndef test_range():\n script=\"const m=await import('./src/range.ts'); if(JSON.stringify(m.inclusiveRange(2,4))!=='[2,3,4]'||m.inclusiveRange(3,2).length) process.exit(2)\"; out=subprocess.run(['node','--experimental-strip-types','--input-type=module','-e',script],capture_output=True,text=True); assert out.returncode==0,out.stderr\n",
             tags=("typescript", "create"), expected_edit_paths=("src/range.ts",)),
 
         # Modify (7)
@@ -131,7 +133,7 @@ def fixtures() -> tuple[BenchmarkFixture, ...]:
         _fixture("modify_web_keyboard", "modify",
             "Update app.js so pressing ArrowLeft changes #state text from idle to left; other keys leave it unchanged.",
             {"index.html": "<div id='state'>idle</div><script type='module' src='./app.js'></script>\n", "app.js": "// keyboard behavior missing\n"},
-            NODE_HELPER + "\ndef test_keyboard():\n setup=\"const state={textContent:'idle'}; globalThis.document={getElementById:()=>state,addEventListener:(t,cb)=>globalThis.key=cb};\"\n r=run_module('app.js',setup,\"key({key:'x'});if(state.textContent!=='idle')process.exit(2);key({key:'ArrowLeft'});if(state.textContent!=='left')process.exit(3);\"); assert r.returncode==0, r.stderr\n",
+            NODE_HELPER + "\ndef test_keyboard():\n setup=\"const state={textContent:'idle'}; const find=()=>state; globalThis.document={getElementById:find,querySelector:find,addEventListener:(t,cb)=>globalThis.key=cb};\"\n r=run_module('app.js',setup,\"key({key:'x'});if(state.textContent!=='idle')process.exit(2);key({key:'ArrowLeft'});if(state.textContent!=='left')process.exit(3);\"); assert r.returncode==0, r.stderr\n",
             tags=("web", "html", "javascript", "keyboard"), smoke=True),
         _fixture("modify_js_toggle", "modify",
             "Fix src/toggle.js so exported toggle('open') returns 'closed' and toggle('closed') returns 'open'. Reject other states with Error.",
@@ -195,7 +197,7 @@ def fixtures() -> tuple[BenchmarkFixture, ...]:
             tags=("python", "refactor")),
         _fixture("refactor_extract_web_script", "refactor", "Move the inline click behavior from index.html into app.js without changing: clicking #move sets #state to moved.",
             {"index.html": "<button id='move'>Move</button><div id='state'>idle</div><script>document.getElementById('move').onclick=()=>document.getElementById('state').textContent='moved'</script>\n"},
-            NODE_HELPER + "\ndef test_extract():\n html=Path('index.html').read_text(); assert Path('app.js').is_file() and 'src=' in html; setup=\"const nodes={state:{textContent:'idle'},move:{addEventListener:(t,cb)=>globalThis.click=cb}};globalThis.document={getElementById:id=>nodes[id]};\"; r=run_module('app.js',setup,\"click();if(nodes.state.textContent!=='moved')process.exit(2)\"); assert r.returncode==0,r.stderr\n",
+            NODE_HELPER + "\ndef test_extract():\n html=Path('index.html').read_text(); assert Path('app.js').is_file() and 'src=' in html; setup=\"const nodes={state:{textContent:'idle'},move:{onclick:null,addEventListener:(t,cb)=>globalThis.click=cb}};const find=id=>nodes[id.replace(/^#/,'')];globalThis.document={getElementById:find,querySelector:find};\"; assertion=\"const cb=globalThis.click||nodes.move.onclick;if(typeof cb!=='function')process.exit(3);cb();if(nodes.state.textContent!=='moved')process.exit(2)\"; r=run_module('app.js',setup,assertion); assert r.returncode==0,r.stderr\n",
             tags=("web", "html", "javascript", "refactor"),
             expected_edit_paths=("index.html", "app.js")),
 

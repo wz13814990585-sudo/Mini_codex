@@ -1,6 +1,6 @@
 # MiniCodex Benchmark V1
 
-`minicodex-bench-v1` 是固定的、需显式启用的仓库编码基准，用于对比可信的简单 baseline 与当前 MiniCodex 控制面。
+`minicodex-bench-v1-r2` 是固定的、需显式启用的仓库编码基准，用于对比可信的简单 baseline 与当前 MiniCodex 控制面。R2 修正了会拒绝标准 TypeScript 类型注解、`querySelector` 与 DOM `onclick` 的过窄 oracle。
 它复用 `EvaluationHarness`、`EvaluationCheckRunner`、运行时 trace 与 `ExecutionMetrics`，**不是**另一套评测框架。
 
 ## 题库目录
@@ -78,7 +78,7 @@ python -m minicodex.evaluation.run_benchmark \
 结果写入：
 
 ```text
-benchmark_results/minicodex-bench-v1/<experiment-id>/
+benchmark_results/minicodex-bench-v1-r2/<experiment-id>/
 ├── baseline/run_001.jsonl
 ├── minicodex/run_001.jsonl
 ├── traces/...

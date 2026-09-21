@@ -1,8 +1,9 @@
 """Stable, evidence-backed outcomes requested by the user."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import ast
+import os
 import time
 import re
 
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from ..validation.contracts import (
     FileContainsContract,
+    FileExistsContract,
+    BrowserInteractionContract,
     PythonBehaviorContract,
     SemanticContract,
     TestTargetContract,
@@ -19,7 +22,7 @@ from ..validation.contracts import (
     parse_contract,
 )
 
-REQUIREMENTS_PROMPT_VERSION = "task-requirements-v8"
+REQUIREMENTS_PROMPT_VERSION = "task-requirements-v9"
 
 
 class RequirementCategory(str, Enum):
@@ -92,8 +95,8 @@ contract 必须使用以下严格结构之一：
 {"type":"pytest","target":"tests/test_x.py"}
 {"type":"python_behavior","code":"from pkg import f; assert f(1)==2"}
 {"type":"node_behavior","code":"可由 node --input-type=module -e 执行且失败时非零退出的代码"}
-{"type":"http_response","method":"POST","path":"/login","expected_status":200,"json_body":{"username":"demo","password":"demo"},"expected_text":"token"}
-{"type":"http_response","method":"POST","path":"/login","expected_status":401,"json_body":{"username":"demo","password":"wrong"}}
+{"type":"http_response","method":"GET","path":"/items/1","expected_status":200,"expected_text":"item"}
+{"type":"http_response","method":"POST","path":"/items","expected_status":201,"json_body":{"name":"example"}}
 {"type":"browser_interaction","path":"index.html","action":{"type":"click","selector":"#increment"},"assertion":{"type":"text_equals","selector":"#count","value":"1"}}
 {"type":"browser_interaction","path":"app.js","action":{"type":"keypress","selector":"#state","value":"ArrowLeft"},"assertion":{"type":"text_equals","selector":"#state","value":"left"},"non_target":{"action":{"type":"keypress","selector":"#state","value":"x"},"assertion":{"type":"text_equals","selector":"#state","value":"idle"}}}
 {"type":"semantic","path":"README.md","claim":"中文语义声明"}
@@ -103,26 +106,27 @@ browser_interaction，不能降级为 semantic。若任务只给出 JavaScript �
 JavaScript 路径；解析器会从仓库事实定位引用它的 HTML 文档。
 若用户要求非目标交互不改变状态，browser_interaction 必须同时包含 non_target，明确给出
 一个非目标 action 以及执行后必须保持的精确状态 assertion。
-点击类 Web 行为的实现与验收均须基于 addEventListener；不要用 onclick 赋值冒充。
-登录/鉴权类 HTTP 行为必须在 http_response 中提供 json_body（合法与非法凭据各用对应 body），
-禁止省略 body 后用空请求验收；需要检查响应片段时使用 expected_text。
-若仓库事实显示登录是普通 Python 函数（如 def login(...) 返回 status/body）而不是
-FastAPI/Flask 应用，必须使用 python_behavior，禁止使用 http_response。
+需要请求体的 HTTP 行为必须在 http_response 中提供 json_body，禁止用空请求验收；
+需要检查响应片段时使用 expected_text。若仓库事实显示目标是普通函数而不是 HTTP 应用，
+必须使用对应语言的 behavior contract，禁止把 callable 臆造成 Web endpoint。
 Follow-up/modify 若仓库已有公开 callable，必须保留其调用形状与成功/失败状态语义；
 禁止改成无参函数、Web route 或 Flask/FastAPI endpoint 来“重写”实现。
 若要求 reject/raise/ValueError（而不是 clamp 到边界值），python_behavior 必须用
 pytest.raises 或 try/except 断言异常，禁止写成越界输入仍返回数值的 assert。
-回归断言必须与仓库事实中的现有行为一致（例如 clean_name 的真实返回值），禁止臆造。
+回归断言必须与仓库事实中的现有行为一致，禁止臆造。
 若要求保持 JSON/文本字段不变，优先 file_contains 精确片段，不要用无法核对基线的 semantic。
 重构移动符号时，契约需同时覆盖：新文件存在定义、旧文件改为导入、公开行为不变。
-TypeScript 行为请写成无类型注解的可被 data:text/javascript 加载的模块风格（与隐藏
-oracle 一致）；不要依赖 Node 原生剥类型。
 若仓库已有覆盖该行为的 pytest（如 tests/test_*.py），优先使用 pytest 契约，不要再另造
 与现有测试入参形状不一致的 python_behavior（例如源码/测试用 dict 行时，禁止改用 tuple）。
 python_behavior 的调用形状必须与现有源码或测试一致。
+行为契约必须具有区分力：它不仅要让正确实现通过，还要让从仓库事实可见的当前错误实现失败。
+不要只复制一个恰好同时满足错误实现的现有测试。对排序优先级、fallback、边界、状态隔离等
+多规则行为，应选择能区分规则优先级的反例；例如主排序键与次排序键必须至少有一组冲突顺序，
+并单独覆盖次排序键相同主键的情况。
 能由一个完全相同契约证明的结果应使用相同 contract。description 保持简洁中文；
 contract 的类型和字段名保持英文。不要把“若已经满足则不编辑”提取为 requirement，
-只设置 policy.no_edit_if_already_satisfied。不要臆造仓库事实。"""
+只设置 policy.no_edit_if_already_satisfied。只有用户明确允许“已经满足则不编辑”时才设为 true；
+create/fix/change/update/refactor 等要求实际变更的任务必须设为 false。不要臆造仓库事实。"""
 
     def __init__(self, llm=None, *, max_requirements: int = 12) -> None:
         self.llm = llm
@@ -148,16 +152,23 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
     ) -> TaskRequirements:
         text = user_request.casefold()
         structural = bool(target_paths) and all(str(p).endswith((".md", ".txt", ".html", ".css")) for p in target_paths)
-        structural = structural and not any(w in text for w in ("game", "tetris", "playable", "click", "keyboard", "login", "游戏"))
+        behavioral_hint = re.search(
+            r"\b(run|execute|behavior|click|keyboard|request|response|api|function|method)\b|"
+            r"运行|执行|行为|点击|键盘|请求|响应|接口|函数|方法",
+            text,
+            re.IGNORECASE,
+        )
+        structural = structural and behavioral_hint is None
         fallback_category = RequirementCategory.FILE if structural else RequirementCategory.BEHAVIOR
         path = str(next(iter(target_paths), ""))
+        allow_no_edit = self._explicit_no_edit_allowed(user_request)
         fallback = TaskRequirements([
             TaskRequirement(
                 "R1", str(user_request)[:500], category=fallback_category,
                 paths=tuple(target_paths),
                 contract=SemanticContract(path, str(user_request)[:500]),
             )
-        ])
+        ], no_edit_if_already_satisfied=allow_no_edit)
         if self.llm is None or not self.should_extract(user_request, mode):
             return fallback
         started = time.monotonic()
@@ -173,9 +184,13 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
             policy = data.get("policy", {})
             if not isinstance(policy, dict) or set(policy) - {"no_edit_if_already_satisfied"}:
                 raise StructuredOutputError("需求 policy 无效")
-            no_edit = policy.get("no_edit_if_already_satisfied", False)
-            if not isinstance(no_edit, bool):
+            declared_no_edit = policy.get("no_edit_if_already_satisfied", False)
+            if not isinstance(declared_no_edit, bool):
                 raise StructuredOutputError("no-edit policy 无效")
+            # Whether a modification may finish without an edit is an
+            # authorization decision derived from the user's own words, not a
+            # discretion granted to the control model.
+            no_edit = allow_no_edit
             items = []
             for index, raw in enumerate(data["requirements"][: self.max_requirements], 1):
                 if not isinstance(raw, dict) or set(raw) != {"description", "category", "paths", "contract"}:
@@ -202,11 +217,9 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
                 items.append(TaskRequirement(f"R{index}", description, category, paths, contract, kind))
             if not items:
                 raise StructuredOutputError("需求列表为空")
-            items = self._prefer_existing_pytest(items, workspace)
-            items = self._demote_http_for_plain_python(items, workspace)
             items = self._sanitize_contracts(items, user_request)
-            items = self._ensure_move_symbol_contracts(items, user_request)
             items = self._preserve_public_callable_shapes(items, workspace)
+            items = self._canonicalize_paths(items, workspace, target_paths)
             usage = getattr(response, "usage", None)
             self.last_telemetry = RequirementsTelemetry(
                 1, int(getattr(usage, "prompt_tokens", 0) or 0),
@@ -217,119 +230,202 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
             self.last_telemetry = RequirementsTelemetry(calls=1, latency_seconds=time.monotonic() - started)
             return fallback
 
+    @staticmethod
+    def _explicit_no_edit_allowed(user_request: str) -> bool:
+        text = " ".join(str(user_request or "").casefold().split())
+        return bool(re.search(
+            r"\b(?:do not|don't|dont|no need to) edit\b.{0,40}\b(?:already|if)\b|"
+            r"\bif\b.{0,50}\b(?:already (?:correct|works?|satisfied)|no changes? (?:are )?needed)\b|"
+            r"(?:如果|若).{0,30}(?:已经|已).{0,20}(?:正确|满足|可用|实现).{0,20}(?:不要|无需|不必)(?:修改|编辑)|"
+            r"(?:已经|已).{0,20}(?:正确|满足|可用|实现).{0,20}(?:不要|无需|不必)(?:修改|编辑)",
+            text,
+            re.IGNORECASE,
+        ))
+
+    @classmethod
+    def _canonicalize_paths(cls, items, workspace, target_paths):
+        """Resolve model path aliases against explicit and existing paths.
+
+        A package import such as ``calculator`` may legitimately map to
+        ``src/calculator``.  Requirement paths are action/validation scope, so
+        retaining a hallucinated top-level alias can cause the agent to create
+        a duplicate package.  Contracts that directly address files use the
+        same canonical mapping.
+        """
+
+        root = Path(workspace).resolve() if workspace else None
+        if root is None or not root.is_dir():
+            return items
+        explicit = tuple(
+            path for path in (
+                cls._normalize_path_hint(value) for value in target_paths or ()
+            ) if path
+        )
+
+        def canonical(value: str) -> str:
+            path = cls._normalize_path_hint(value)
+            if not path:
+                return path
+            if path in explicit:
+                return path
+            matches = tuple(
+                target for target in explicit
+                if target.endswith("/" + path)
+                or path.endswith("/" + target)
+            )
+            if len(matches) == 1:
+                return matches[0]
+            if (root / path).exists():
+                return path
+            for prefix in ("src", "lib"):
+                candidate = f"{prefix}/{path}"
+                if (root / candidate).exists():
+                    return candidate
+            return path
+
+        normalized = []
+        for item in items:
+            paths = tuple(dict.fromkeys(canonical(path) for path in item.paths if path))
+            contract = item.contract
+            if isinstance(contract, (FileExistsContract, FileContainsContract,
+                                     SemanticContract, BrowserInteractionContract)):
+                contract = replace(contract, path=canonical(contract.path))
+            elif isinstance(contract, TestTargetContract):
+                file, separator, node = contract.target.partition("::")
+                target = canonical(file) + (separator + node if separator else "")
+                contract = replace(contract, target=target)
+            normalized.append(TaskRequirement(
+                item.id,
+                item.description,
+                item.category,
+                paths,
+                contract,
+                item.kind,
+            ))
+        return normalized
+
     @classmethod
     def _user_message(cls, user_request: str, target_paths, workspace) -> str:
-        facts = cls._workspace_facts(workspace, target_paths)
+        facts = cls._workspace_facts(workspace, target_paths, user_request=user_request)
         if not facts:
             return str(user_request)
         return f"{user_request}\n\n仓库事实（只读摘录）：\n{facts}"
 
     @classmethod
-    def _workspace_facts(cls, workspace, target_paths, *, max_files: int = 6, max_chars: int = 1200) -> str:
+    def _workspace_facts(
+        cls,
+        workspace,
+        target_paths,
+        *,
+        user_request: str = "",
+        max_files: int = 6,
+        max_chars: int = 1200,
+    ) -> str:
+        """Select bounded repository excerpts by request relevance.
+
+        Explicit paths remain highest priority.  Remaining candidates are
+        scored from repository-relative names and bounded source excerpts;
+        there is deliberately no product-, filename-, or benchmark-specific
+        candidate list here.
+        """
+
         root = Path(workspace).resolve() if workspace else None
         if root is None or not root.is_dir():
             return ""
-        candidates: list[str] = []
+        explicit: list[str] = []
         for value in target_paths or ():
             path = cls._normalize_path_hint(value)
             if path:
-                candidates.append(path)
-        for relative in (
-            "app.py", "src/pricing.py", "src/api.py", "src/service.py", "package.json",
-            "src/calculator/service.py", "src/calculator/__init__.py", "tests/test_pricing.py",
-        ):
-            if relative not in candidates:
-                candidates.append(relative)
-        snippets: list[str] = []
-        seen: set[str] = set()
-        for relative in candidates:
-            if relative in seen or len(snippets) >= max_files:
-                continue
-            seen.add(relative)
+                explicit.append(path)
+
+        tokens = {
+            token.casefold()
+            for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", str(user_request or ""))
+            if token.casefold() not in {
+                "the", "and", "for", "with", "from", "into", "that", "this",
+                "change", "update", "create", "modify", "file", "code",
+            }
+        }
+        allowed_suffixes = {
+            ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css",
+            ".json", ".toml", ".yaml", ".yml", ".md",
+        }
+        ignored_parts = {
+            ".git", ".minicodex", "node_modules", "dist", "build", "coverage",
+            ".venv", "venv", "__pycache__",
+        }
+        candidates: list[tuple[int, str, str]] = []
+        ordered_files: list[Path] = []
+        seen_files: set[Path] = set()
+        for relative in explicit:
             file = root / relative
-            if not file.is_file():
+            if file.is_file() and not file.is_symlink():
+                ordered_files.append(file)
+                seen_files.add(file)
+        for base, dirs, names in os.walk(root, followlinks=False):
+            dirs[:] = sorted(
+                name for name in dirs
+                if name not in ignored_parts and not name.startswith(".")
+            )
+            for name in sorted(names):
+                file = Path(base) / name
+                if file not in seen_files:
+                    ordered_files.append(file)
+                    seen_files.add(file)
+                if len(ordered_files) >= 500 + len(explicit):
+                    break
+            if len(ordered_files) >= 500 + len(explicit):
+                break
+
+        visited = 0
+        for file in ordered_files:
+            if visited >= 500:
+                break
+            if not file.is_file() or file.is_symlink():
                 continue
+            relative = file.relative_to(root).as_posix()
+            if any(part in ignored_parts or part.startswith(".") for part in file.relative_to(root).parts):
+                continue
+            if file.suffix.casefold() not in allowed_suffixes and file.name not in {
+                "README", "Dockerfile", "Makefile",
+            }:
+                continue
+            visited += 1
             try:
                 text = file.read_text(encoding="utf-8")
             except (OSError, UnicodeError):
                 continue
-            excerpt = text if len(text) <= max_chars else text[:max_chars] + "\n# ... truncated ..."
+            excerpt = text[:max_chars]
+            path_cf = relative.casefold()
+            excerpt_cf = excerpt.casefold()
+            score = 100 if relative in explicit else 0
+            score += 20 * sum(token in path_cf for token in tokens)
+            score += 5 * sum(token in excerpt_cf for token in tokens)
+            if file.name.casefold() in {
+                "pyproject.toml", "package.json", "requirements.txt", "readme.md",
+            }:
+                score += 3
+            candidates.append((score, relative, excerpt))
+
+        candidates.sort(key=lambda value: (-value[0], value[1]))
+        snippets: list[str] = []
+        for _score, relative, excerpt in candidates[:max_files]:
+            if len(excerpt) >= max_chars:
+                excerpt += "\n# ... truncated ..."
             snippets.append(f"### {relative}\n{excerpt}")
         return "\n\n".join(snippets)
-
-    @staticmethod
-    def _demote_http_for_plain_python(items: list[TaskRequirement], workspace) -> list[TaskRequirement]:
-        """Replace http_response with python_behavior when app.py is a plain callable API."""
-
-        root = Path(workspace).resolve() if workspace else None
-        if root is None:
-            return items
-        app = root / "app.py"
-        if not app.is_file():
-            return items
-        try:
-            source = app.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            return items
-        lowered = source.casefold()
-        if "fastapi" in lowered or "flask" in lowered:
-            return items
-        if "def login(" not in source:
-            return items
-        has_http = any(item.contract.contract_type == "http_response" for item in items)
-        request_hint = " ".join(item.description for item in items).casefold()
-        mentions_expiry = any(
-            token in request_hint for token in ("expires", "过期", "3600")
-        )
-        if not has_http and not mentions_expiry:
-            return items
-        # Plain callable login API: ignore invented HTTP/extra contracts and use one
-        # oracle-aligned python_behavior against app.py.
-        if mentions_expiry:
-            behavior = (
-                "from app import login\n"
-                "status, body = login('demo', 'demo')\n"
-                "assert status == 200 and body.get('token') and body.get('expires_in') == 3600\n"
-                "bad_status, bad = login('x', 'x')\n"
-                "assert bad_status == 401 and 'expires_in' not in bad\n"
-            )
-            description = "成功登录增加 expires_in=3600，失败登录保持 401 且无 expires_in"
-        else:
-            behavior = (
-                "from app import login\n"
-                "status, body = login('demo', 'demo')\n"
-                "assert status == 200 and body.get('token')\n"
-                "bad_status, bad = login('x', 'x')\n"
-                "assert bad_status == 401\n"
-            )
-            description = "login 函数保持成功/失败状态行为"
-        return [
-            TaskRequirement(
-                "R1",
-                description,
-                RequirementCategory.BEHAVIOR,
-                ("app.py",),
-                PythonBehaviorContract(behavior),
-                RequirementKind.BEHAVIORAL,
-            )
-        ]
 
     @classmethod
     def _sanitize_contracts(cls, items: list[TaskRequirement], user_request: str) -> list[TaskRequirement]:
         """Repair high-confidence contract hallucinations after extraction."""
 
-        request = str(user_request or "")
-        request_cf = request.casefold()
-        rejects = bool(re.search(r"valueerror|reject|抛出|拒绝", request_cf))
+        del user_request
         sanitized: list[TaskRequirement] = []
         for item in items:
             contract = item.contract
             description_cf = item.description.casefold()
             if isinstance(contract, PythonBehaviorContract):
                 code = cls._normalize_src_imports(contract.code)
-                if rejects:
-                    code = cls._repair_valueerror_assertions(code)
-                code = cls._soften_exact_error_body_asserts(code)
                 sanitized.append(
                     TaskRequirement(
                         item.id, item.description, item.category, item.paths,
@@ -362,84 +458,6 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
         code = re.sub(r"\bimport\s+src\.", "import ", code)
         return code
 
-    @staticmethod
-    def _repair_valueerror_assertions(code: str) -> str:
-        # Replace "out-of-range input still returns a number" asserts with raises.
-        pattern = re.compile(
-            r"assert\s+apply_discount\((?P<args>[^)]*)\)\s*(>=|==)\s*0"
-        )
-
-        def repl(match: re.Match[str]) -> str:
-            args = match.group("args")
-            if not re.search(r"(-\d+|1[0-9]{2,}|[2-9]\d{2,})", args):
-                return match.group(0)
-            return (
-                "import pytest\n"
-                f"with pytest.raises(ValueError):\n    apply_discount({args})"
-            )
-
-        repaired = pattern.sub(repl, code)
-        # 0 and 100 are in-range for "outside 0..100"; must not require ValueError.
-        repaired = re.sub(
-            r"with pytest\.raises\(ValueError\):\s*\n\s*apply_discount\((?P<price>[^,]+),\s*100\s*\)",
-            r"assert apply_discount(\g<price>, 100) == 0",
-            repaired,
-        )
-        repaired = re.sub(
-            r"with pytest\.raises\(ValueError\):\s*\n\s*apply_discount\((?P<price>[^,]+),\s*0\s*\)",
-            r"assert apply_discount(\g<price>, 0) == (\g<price>)",
-            repaired,
-        )
-        if repaired != code and "import pytest" not in repaired and "pytest.raises" in repaired:
-            repaired = "import pytest\n" + repaired
-        return repaired
-
-    @staticmethod
-    def _soften_exact_error_body_asserts(code: str) -> str:
-        # Exact dict equality on error payloads is brittle; require key presence.
-        return re.sub(
-            r"assert\s+(\w+)\s*==\s*\{['\"]error['\"]\s*:\s*['\"]invalid['\"]\}",
-            r"assert \1.get('error') == 'invalid' and 'expires_in' not in \1",
-            code,
-        )
-
-    @classmethod
-    def _ensure_move_symbol_contracts(
-        cls, items: list[TaskRequirement], user_request: str,
-    ) -> list[TaskRequirement]:
-        """For move-symbol refactors, require new file + old file import + behavior."""
-
-        match = re.search(
-            r"move\s+(\w+)\s+from\s+([^\s,]+)\s+to\s+([^\s,]+)",
-            str(user_request or ""),
-            re.IGNORECASE,
-        )
-        if match is None:
-            return items
-        symbol, source_path, dest_path = match.groups()
-        source_path = source_path.strip().rstrip(".")
-        dest_path = dest_path.strip().rstrip(".")
-        module = Path(source_path).stem
-        dest_module = Path(dest_path).stem
-        code = (
-            "from pathlib import Path\n"
-            f"from {module} import {symbol}\n"
-            f"assert {symbol}(' a = 1 ') == {{'a': '1'}}\n"
-            f"assert Path({dest_path!r}).is_file()\n"
-            f"src = Path({source_path!r}).read_text(encoding='utf-8')\n"
-            f"assert 'def {symbol}' not in src\n"
-            f"assert 'import {dest_module}' in src or 'import {symbol}' in src\n"
-        )
-        return [
-            TaskRequirement(
-                "R1",
-                f"将 {symbol} 移到 {dest_path}，{source_path} 改为导入并保持行为",
-                RequirementCategory.BEHAVIOR,
-                (source_path, dest_path),
-                PythonBehaviorContract(code),
-                RequirementKind.BEHAVIORAL,
-            )
-        ]
 
     @classmethod
     def _preserve_public_callable_shapes(
@@ -573,30 +591,6 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
                         return None
                     return params
         return None
-
-    @staticmethod
-    def _prefer_existing_pytest(items: list[TaskRequirement], workspace) -> list[TaskRequirement]:
-        """Drop invented python_behavior when a real in-repo pytest contract already exists."""
-
-        root = Path(workspace).resolve() if workspace else None
-        if root is None:
-            return items
-        has_repo_pytest = False
-        for item in items:
-            contract = item.contract
-            if not isinstance(contract, TestTargetContract):
-                continue
-            target = str(contract.target or "").split("::", 1)[0].strip()
-            if target and (root / target).is_file():
-                has_repo_pytest = True
-                break
-        if not has_repo_pytest:
-            return items
-        filtered = [
-            item for item in items
-            if not isinstance(item.contract, PythonBehaviorContract)
-        ]
-        return filtered or items
 
     @staticmethod
     def _normalize_path_hint(value) -> str:

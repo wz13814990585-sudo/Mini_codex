@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from minicodex.agent.observability.metrics import ExecutionMetrics
-from minicodex.agent.orchestration.tool_availability import ToolAvailabilityResolver
+from minicodex.agent.orchestration.turn_builder import ToolAvailabilityResolver
 from minicodex.agent.progress.action_controller import ActionController
 from minicodex.agent.progress.executable_tool_policy import ExecutableToolPolicy
 from minicodex.agent.progress.finalization import FinalizationController

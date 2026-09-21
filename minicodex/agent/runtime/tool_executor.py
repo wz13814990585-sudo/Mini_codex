@@ -144,10 +144,10 @@ class ToolExecutor:
         if missing:
             return f"missing required argument(s): {', '.join(missing)}"
         # Internal MiniCodex tool-call metadata contract (not backend tool
-        # parameters). ToolSchemaProvider may advertise these to the LLM;
+        # parameters). The turn builder may advertise these to the LLM;
         # prepare accepts them here, and the orchestration layer strips them
         # before the underlying tool.execute(**kwargs) call.
-        # See ToolSchemaProvider / tool_call_runner for the matching strip set.
+        # See turn_builder / tool_call_runner for the matching strip set.
         _INTERNAL_TOOL_CALL_METADATA = frozenset({
             "purpose",
             "validation_check",

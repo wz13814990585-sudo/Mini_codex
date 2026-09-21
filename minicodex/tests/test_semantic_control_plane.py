@@ -155,7 +155,8 @@ def test_requirements_extracts_explicit_dom_interaction_as_browser_contract():
     assert "不能降级为 semantic" in RequirementsExtractor.SYSTEM_PROMPT
     assert "优先使用 pytest" in RequirementsExtractor.SYSTEM_PROMPT
     assert "仓库事实" in RequirementsExtractor.SYSTEM_PROMPT
-    assert "addEventListener" in RequirementsExtractor.SYSTEM_PROMPT
+    assert "区分力" in RequirementsExtractor.SYSTEM_PROMPT
+    assert "要求实际变更的任务必须设为 false" in RequirementsExtractor.SYSTEM_PROMPT
 
 
 def test_requirements_user_message_includes_workspace_facts(tmp_path):
@@ -191,7 +192,77 @@ def test_requirements_user_message_includes_workspace_facts(tmp_path):
     assert "def apply_discount" in user_content
 
 
-def test_http_contract_demoted_for_plain_login_module(tmp_path):
+def test_no_edit_permission_is_derived_from_user_text_not_control_model():
+    payload = {
+        "requirements": [{
+            "description": "修复行为",
+            "category": "behavior",
+            "paths": ["src/value.py"],
+            "contract": {
+                "type": "python_behavior",
+                "code": "from value import get_value; assert get_value() == 2",
+            },
+        }],
+        "policy": {"no_edit_if_already_satisfied": True},
+    }
+    ordinary = RequirementsExtractor(StubLLM(payload)).extract(
+        "Fix src/value.py so get_value returns 2.",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("src/value.py",),
+    )
+    assert ordinary.no_edit_if_already_satisfied is False
+
+    explicit = RequirementsExtractor(StubLLM({
+        **payload,
+        "policy": {"no_edit_if_already_satisfied": False},
+    })).extract(
+        "Ensure get_value returns 2; if already correct, do not edit files.",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("src/value.py",),
+    )
+    assert explicit.no_edit_if_already_satisfied is True
+
+
+def test_fast_fallback_preserves_explicit_no_edit_permission():
+    requirements = RequirementsExtractor().extract(
+        "如果功能已经正确，则无需修改 src/value.py。",
+        mode=ExecutionMode.FAST,
+        target_paths=("src/value.py",),
+    )
+    assert requirements.no_edit_if_already_satisfied is True
+
+
+def test_requirement_paths_resolve_src_layout_aliases(tmp_path):
+    package = tmp_path / "src" / "calculator"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    llm = StubLLM({
+        "requirements": [{
+            "description": "创建服务模块",
+            "category": "file",
+            "paths": ["calculator/service.py", "calculator/__init__.py"],
+            "contract": {
+                "type": "file_exists",
+                "path": "calculator/service.py",
+            },
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    requirements = RequirementsExtractor(llm).extract(
+        "Add src/calculator/service.py and update src/calculator/__init__.py.",
+        mode=ExecutionMode.STANDARD,
+        target_paths=("src/calculator/service.py", "src/calculator/__init__.py"),
+        workspace=tmp_path,
+    )
+
+    assert requirements.items[0].paths == (
+        "src/calculator/service.py",
+        "src/calculator/__init__.py",
+    )
+    assert requirements.items[0].contract.path == "src/calculator/service.py"
+
+
+def test_requirements_do_not_rewrite_http_contract_to_benchmark_callable(tmp_path):
     (tmp_path / "app.py").write_text(
         "def login(user, password):\n"
         "    return (200, {'token': 'demo-token'}) if (user, password) == ('demo', 'demo') "
@@ -221,11 +292,9 @@ def test_http_contract_demoted_for_plain_login_module(tmp_path):
         workspace=tmp_path,
     )
     assert len(requirements.items) == 1
-    assert isinstance(requirements.items[0].contract, PythonBehaviorContract)
-    assert "expires_in" in requirements.items[0].contract.code
-    assert "inspect.signature(login)" in requirements.items[0].contract.code
-    assert "len(inspect.signature(login).parameters) == 2" in requirements.items[0].contract.code
-    assert not isinstance(requirements.items[0].contract, HttpContract)
+    assert isinstance(requirements.items[0].contract, HttpContract)
+    assert requirements.items[0].contract.path == "/login"
+    assert requirements.items[0].contract.expected_text == "expires_in"
 
 
 def test_preserve_public_callable_shapes_injects_signature_guard(tmp_path):
@@ -288,7 +357,7 @@ def test_preserve_handles_inline_import_assert_contracts(tmp_path):
     assert "signature" in first_lines[2]
 
 
-def test_sanitize_normalizes_src_imports_and_valueerror_asserts():
+def test_sanitize_normalizes_src_imports_without_rewriting_business_semantics():
     items = [
         TaskRequirement(
             "R1", "折扣拒绝越界百分比", RequirementCategory.BEHAVIOR, ("src/pricing.py",),
@@ -306,11 +375,11 @@ def test_sanitize_normalizes_src_imports_and_valueerror_asserts():
     code = fixed[0].contract.code
     assert "from pricing import" in code
     assert "from src.pricing" not in code
-    assert "pytest.raises(ValueError)" in code
-    assert "apply_discount(100, 150) >= 0" not in code
+    assert "pytest.raises(ValueError)" not in code
+    assert "apply_discount(100, 150) >= 0" in code
 
 
-def test_sanitize_does_not_require_valueerror_on_boundary_percent():
+def test_sanitize_does_not_rewrite_boundary_assertions():
     items = [
         TaskRequirement(
             "R1", "100% 折扣返回 0", RequirementCategory.BEHAVIOR, ("src/pricing.py",),
@@ -327,8 +396,7 @@ def test_sanitize_does_not_require_valueerror_on_boundary_percent():
         "rejects percentage values outside 0..100 with ValueError",
     )
     code = fixed[0].contract.code
-    assert "apply_discount(100, 100) == 0" in code
-    assert "raises(ValueError):\n    apply_discount(100, 100)" not in code
+    assert "raises(ValueError):\n    apply_discount(100, 100)" in code
 
 
 def test_sanitize_inverts_absence_file_contains():
@@ -344,25 +412,22 @@ def test_sanitize_inverts_absence_file_contains():
     assert "def _clean(value):" in fixed[0].contract.code
 
 
-def test_ensure_move_symbol_contracts_covers_import_and_behavior():
+def test_sanitize_does_not_invent_move_symbol_behavior():
     items = [
         TaskRequirement(
             "R1", "parser 中有定义", RequirementCategory.FILE, ("src/parser.py",),
             FileContainsContract("src/parser.py", "def parse_record"),
         )
     ]
-    fixed = RequirementsExtractor._ensure_move_symbol_contracts(
-        items,
-        "Move parse_record from src/service.py to src/parser.py, import it back.",
+    fixed = RequirementsExtractor._sanitize_contracts(
+        items, "Move parse_record from src/service.py to src/parser.py, import it back."
     )
     assert len(fixed) == 1
-    code = fixed[0].contract.code
-    assert "from service import parse_record" in code
-    assert "Path('src/parser.py')" in code or 'Path("src/parser.py")' in code
-    assert "def parse_record' not in src" in code or 'def parse_record" not in src' in code
+    assert isinstance(fixed[0].contract, FileContainsContract)
+    assert fixed[0].contract.text == "def parse_record"
 
 
-def test_existing_pytest_contract_drops_conflicting_python_behavior(tmp_path):
+def test_existing_pytest_contract_does_not_drop_distinct_behavior_requirement(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_people.py").write_text("def test_basic(): pass\n", encoding="utf-8")
     llm = StubLLM({
@@ -391,8 +456,9 @@ def test_existing_pytest_contract_drops_conflicting_python_behavior(tmp_path):
         target_paths=("src/people.py", "tests/test_people.py"),
         workspace=tmp_path,
     )
-    assert len(requirements.items) == 1
-    assert isinstance(requirements.items[0].contract, TestTargetContract)
+    assert len(requirements.items) == 2
+    assert isinstance(requirements.items[0].contract, PythonBehaviorContract)
+    assert isinstance(requirements.items[1].contract, TestTargetContract)
 
 
 def test_browser_contract_is_only_created_by_typed_requirements_output():
@@ -572,5 +638,5 @@ def test_contract_shape_delta_hint_detects_flask_rewrite(tmp_path):
     agent = SimpleNamespace(workspace=tmp_path, current_validation_check=None)
     hint = _contract_shape_delta_hint(evidence, agent)
     assert "public callable contract" in hint
-    assert "login(user, password)" in hint
+    assert "login(arg0, arg1)" in hint
     assert "validate_service" in hint

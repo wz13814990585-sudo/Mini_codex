@@ -4,8 +4,9 @@
 | --- | --- |
 | 分支 | `demo_game_try` |
 | 改动前基线 | `e3510ac` |
-| 最新完整回归 | **579 passed in 13.09s** |
+| 最新完整回归 | **654 passed in 21.63s** |
 | 离线 VibeBench | **15/15**，误完成率 **0** |
+| 在线 R2 smoke | **8/8**，误完成 / 错验证目标 / 步数耗尽均为 **0** |
 | 编译 / diff 检查 | `compileall`、`git diff --check` 通过 |
 
 以上结果只证明本地自动化覆盖内的行为，**不代表**真实模型或任意仓库的生产可靠性已经得到验证。
@@ -193,6 +194,14 @@ DiffQualityGate 会检查：
 - `real_vibebench.py`：要求 provider-neutral `model_factory`，CI 不调用
 - `RealRepoBench`：提供明确的 Python / FastAPI / HTML / TypeScript 本地 fixture；oracle 写在 agent workspace 外的独立目录
 
+### 真实模型 smoke 反馈闭环
+
+30 场景在线结果曾为 26/30。四个失败中，三个来自过窄 oracle：把合法 TypeScript 当纯 JavaScript data URL 执行、DOM stub 不支持 `querySelector`、以及只接受 `addEventListener` 而拒绝 `onclick`。这些已在 `minicodex-bench-v1-r2` 修正并增加回归用例。
+
+剩余真实误完成来自 `fix_python_sort_key`：弱验收在编辑前碰巧通过，系统忽略了 `no_edit_if_already_satisfied=false` 并直接结束。当前完成门禁已接入该策略；零编辑完成权限由用户原文确定性派生，不能由控制模型自行放宽。Requirement path 也会对齐显式目标及已有 `src/` / `lib/` 布局，避免创建重复顶层包。
+
+修复后的 `minicodex-bench-v1-r2` 在线 smoke（DeepSeek `deepseek-chat`，temperature 0，单次运行）为 8/8。`fix_python_sort_key` 从旧结果的零编辑误完成变为一次正确 patch 后通过；`create_calculator_service` 从旧 trace 的 6 次编辑降为严格位于 `src/calculator/` 的 2 次编辑。平均每题 3.5 次 LLM 调用、7207.6 tokens、6.97 秒。原始结果位于 `benchmark_results/minicodex-bench-v1-r2/product_gate_r2_online/`。
+
 ### 行动效率指标
 
 记录首次编辑时间、前置检查 / 搜索数、工具 / 模型调用、token、重复读取 / 搜索、错文件 / 错验证目标、验证 / 编辑比、无进展、耗尽、回滚、恢复和可选美元成本。
@@ -238,7 +247,8 @@ python -m minicodex.evaluation.vibebench
 | 产品化收尾 | 566 passed / 13.17s | Workspace / typed Spec / Semantic |
 | RealRepoBench 绑定 | 569 passed / 13.78s | SpecBinder / 项目执行环境 |
 | 预真实测试集成 | 572 passed / 12.86s | 再绑定 / 参数校验 / 外置 oracle |
-| 执行闭环 | **579 passed / 13.09s** | 当前最新 |
+| 执行闭环 | 579 passed / 13.09s | 完成初始执行闭环 |
+| 产品门禁与 R2 oracle | **654 passed / 21.63s** | 当前最新；离线 VibeBench 15/15 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 

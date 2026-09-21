@@ -99,6 +99,29 @@ class ValidatorResolution:
     validation_key: str = ""
     reason: str = ""
 
+    def matches_invocation(self, tool_name: str, arguments: dict) -> bool:
+        """Return whether a provider call is the exact prepared validator.
+
+        ``validation_check`` is orchestration metadata rather than a backend
+        argument, so it is checked by the binding layer and excluded here.
+        Every executable argument, including ``purpose``, must otherwise match
+        the Harness-prepared invocation exactly.
+        """
+
+        if self.status != ResolutionStatus.RESOLVED or self.tool_name != tool_name:
+            return False
+
+        def executable(values) -> dict:
+            if not isinstance(values, dict):
+                return {}
+            return {
+                key: value
+                for key, value in values.items()
+                if key != "validation_check"
+            }
+
+        return executable(self.arguments) == executable(arguments)
+
 
 class ValidatorResolver:
     """Capability-aware contract dispatch with no natural-language parsing."""
@@ -274,7 +297,7 @@ class ValidatorResolver:
         return ValidatorResolution(check.id, status, reason=reason)
 
     def _python_command(self, code: str) -> str:
-        # Align with oracle pytest env so src-layout packages import at workspace root.
+        # Match the project's normal import environment for src-layout packages.
         pythonpath = os.pathsep.join(
             filter(
                 None,
@@ -290,41 +313,11 @@ class ValidatorResolver:
             f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
         )
 
-    _TS_IMPORT_RE = re.compile(
-        r"import\s+(?P<clause>\{[^}]+\}|\*\s+as\s+\w+|\w+)\s+from\s+"
-        r"(?P<q>['\"])(?P<path>[^'\"]+\.ts)(?P=q)\s*;?",
-        re.MULTILINE,
-    )
-
     def _node_command(self, code: str) -> str:
-        # Oracle loads .ts via data:text/javascript (no type stripping). Match that
-        # so typed TypeScript fails agent acceptance the same way as the oracle.
-        return f"node --input-type=module -e {shlex.quote(self._rewrite_ts_imports(code))}"
-
-    @classmethod
-    def _rewrite_ts_imports(cls, code: str) -> str:
-        matches = list(cls._TS_IMPORT_RE.finditer(code))
-        if not matches:
-            return code
-        rewritten = code
-        for match in reversed(matches):
-            path = match.group("path").lstrip("./")
-            clause = match.group("clause").strip()
-            loader = (
-                "await import('data:text/javascript;base64,' + "
-                f"Buffer.from(readFileSync({json.dumps(path)})).toString('base64'))"
-            )
-            if clause.startswith("{"):
-                replacement = f"const {clause} = {loader};"
-            elif clause.startswith("*"):
-                name = clause.split()[-1]
-                replacement = f"const {name} = {loader};"
-            else:
-                replacement = f"const {clause} = (await {loader}).default;"
-            rewritten = rewritten[: match.start()] + replacement + rewritten[match.end() :]
-        if "readFileSync" not in code:
-            rewritten = "import {readFileSync} from 'node:fs';\n" + rewritten
-        return rewritten
+        # Execute the contract with the repository's real Node runtime.  Do not
+        # rewrite TypeScript into a benchmark-specific data URL: projects that
+        # need transpilation must expose the appropriate project test command.
+        return f"node --input-type=module -e {shlex.quote(code)}"
 
     @staticmethod
     def _service_arguments(contract: HttpContract, profile):
@@ -380,9 +373,9 @@ class ValidatorResolver:
             else f",json={contract.json_body!r}"
         )
         preferred = str(self.preferred_http_framework or "").casefold()
-        # Required HTTP contract must stay on the baseline framework. If the
-        # agent rewrote FastAPI→Flask/http.server, do not silently validate the
-        # new shape (that causes false completion vs FastAPI oracles).
+        # Required HTTP contracts must stay on the repository's baseline
+        # framework; validating a replacement framework would prove a different
+        # application shape than the one the user asked us to modify.
         if preferred == "fastapi" and "FastAPI" not in source:
             return ""
         if preferred == "flask" and "Flask" not in source:
@@ -455,6 +448,8 @@ const nodes = new Map();
 const node = selector => {{
   if (!nodes.has(selector)) nodes.set(selector, {{
     textContent: Object.prototype.hasOwnProperty.call(initialText, selector) ? initialText[selector] : '',
+    onclick: null,
+    onkeydown: null,
     addEventListener: (type, cb) => {{ nodes.get(selector)._listeners ??= {{}}; nodes.get(selector)._listeners[type] = cb; }}
   }});
   return nodes.get(selector);
@@ -470,13 +465,13 @@ await import('data:text/javascript;base64,' + Buffer.from(source).toString('base
 const perform = (type, selector, value, missingCode) => {{
   const target = node(selector);
   const cb = type === 'click'
-    ? target._listeners?.click
-    : (documentListeners.keydown || target._listeners?.keydown);
+    ? (target._listeners?.click || target.onclick)
+    : (documentListeners.keydown || target._listeners?.keydown || target.onkeydown);
   if (typeof cb !== 'function') {{
     console.error(
       'Missing ' + type + ' handler on ' + selector
-      + '; register addEventListener for ' + type
-      + ' on the referenced script (for example app.js). '
+      + '; register a ' + type
+      + ' handler on the referenced script. '
       + 'Do not replace browser proof with validate_static_web/require_inline_script.'
     );
     process.exit(missingCode);

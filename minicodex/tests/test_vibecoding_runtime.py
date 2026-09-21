@@ -467,7 +467,15 @@ def test_real_vibebench_is_provider_opt_in(tmp_path):
 
 def test_followup_reuses_session_without_task_evidence(tmp_path):
     from minicodex.agent.agent import MiniCodexAgent
-    from minicodex.evaluation.vibebench import ScriptedModel, assertion, patch
+    from minicodex.evaluation.vibebench import (
+        Scenario,
+        ScenarioRequirementsExtractor,
+        ScriptedModel,
+        assertion,
+        patch,
+    )
+    from minicodex.evaluation.models import EvaluationCase
+    from minicodex.agent.validation.contracts import FileContainsContract
     from minicodex.tools.editing import PatchFileTool
     from minicodex.tools.execution import RunCommandTool
     root = tmp_path / "examples"
@@ -476,9 +484,17 @@ def test_followup_reuses_session_without_task_evidence(tmp_path):
     registry = ToolRegistry()
     registry.register(PatchFileTool(tmp_path))
     registry.register(RunCommandTool(tmp_path))
+    scenario = Scenario(
+        EvaluationCase("followup-session", ""),
+        (),
+        (),
+        contracts=(FileContainsContract("examples/a.py", "VALUE = 2"),),
+        allow_already_satisfied=True,
+    )
     agent = MiniCodexAgent(llm=ScriptedModel((patch("examples/a.py", "VALUE = 1", "VALUE = 2"),
         assertion("examples/a.py", "VALUE = 2"), assertion("examples/a.py", "VALUE = 2"),
-        assertion("examples/a.py", "VALUE = 2"))), registry=registry, planner=None, status_interval_seconds=0)
+        assertion("examples/a.py", "VALUE = 2"))), registry=registry, planner=None,
+        requirements_extractor=ScenarioRequirementsExtractor(scenario), status_interval_seconds=0)
     agent.run("Set VALUE to 2 in examples/a.py.")
     session = agent.workspace_session
     first_run_id = agent.task_state.run_id
@@ -496,6 +512,61 @@ def test_followup_reuses_session_without_task_evidence(tmp_path):
     builds = session.build_count
     agent.run("Set VALUE to 2 in examples/a.py.")
     assert session.build_count == builds
+
+
+def test_explicit_fix_cannot_finish_on_weak_pre_edit_acceptance(tmp_path):
+    from minicodex.agent.agent import MiniCodexAgent
+    from minicodex.evaluation.vibebench import (
+        Scenario,
+        ScenarioRequirementsExtractor,
+        ScriptedModel,
+        patch,
+    )
+    from minicodex.evaluation.models import EvaluationCase
+    from minicodex.agent.validation.contracts import PythonBehaviorContract
+    from minicodex.tools.editing import PatchFileTool
+    from minicodex.tools.execution import RunCommandTool
+
+    source = tmp_path / "src" / "people.py"
+    source.parent.mkdir()
+    source.write_text(
+        "def names_by_age(rows):\n"
+        "    return [row['name'] for row in sorted(rows, key=lambda row: row['name'])]\n",
+        encoding="utf-8",
+    )
+    # This intentionally weak contract passes both the broken and correct
+    # implementation. The explicit Fix request must still reach an edit.
+    scenario = Scenario(
+        EvaluationCase("weak-pre-edit-proof", ""),
+        (),
+        (),
+        contracts=(PythonBehaviorContract(
+            "from people import names_by_age; "
+            "assert names_by_age([{'name':'B','age':2},{'name':'A','age':1}]) == ['A','B']"
+        ),),
+    )
+    registry = ToolRegistry()
+    registry.register(PatchFileTool(tmp_path))
+    registry.register(RunCommandTool(tmp_path))
+    agent = MiniCodexAgent(
+        llm=ScriptedModel((patch(
+            "src/people.py",
+            "key=lambda row: row['name']",
+            "key=lambda row: (row['age'], row['name'])",
+        ),)),
+        registry=registry,
+        planner=None,
+        requirements_extractor=ScenarioRequirementsExtractor(scenario),
+        status_interval_seconds=0,
+    )
+
+    output = agent.run(
+        "Fix src/people.py so names_by_age sorts youngest first and uses name as tie-breaker."
+    )
+
+    assert agent.validation_pipeline.state.edit_revision == 1
+    assert "row['age']" in source.read_text(encoding="utf-8")
+    assert "任务已成功完成" in output
 
 
 def test_service_cleans_up_child_process_group(tmp_path):

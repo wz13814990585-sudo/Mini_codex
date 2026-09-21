@@ -30,16 +30,17 @@ MiniCodex 遵循同一条控制面边界：**语义理解与策略判断属于�
 
 共享流程如下：
 
-1. 根据当前状态与证据评估是否可完成。
-2. 应用有界的模式、计划、阶段与预算策略。
-3. `TurnBuilder` 把系统文本委托给 `PromptBuilder`，把阶段相关任务上下文委托给 `ContextBuilder`，把 schema 委托给 `ToolSchemaProvider`。
-4. `ToolCallRunner` 负责单次调用的准备 → 限制 → 修订感知的重复检查 → 安全执行。
-5. `ToolBatchRunner` 负责完整、有序的提供商批次，并为每个已声明调用发出恰好一个工具结果（包括控制转换前被跳过的调用）。
-6. `PlanOrchestrator` 负责步骤尝试、局部恢复与重规划转换。
-7. `ValidationPlanner` 创建独立的需求检查。`ValidationPipeline` 规范化执行事实；`ValidationLedger` 持有带修订的历史、目标绑定、基线与不稳定性。`RequirementEvidenceResolver` 从充分的当前证明推导满意度。`ValidationDecisionPolicy` 负责下一步动作决策；`ProgressController` 只描述可比较趋势。
-8. 紧凑、无状态的 `SemanticRegressionJudge` 仅在真正模糊的跨修订回归时运行。其建议不能编辑、回滚、绕过安全或完成任务。
-9. 确定性恢复允许有界、实质不同的修复；之后 `RollbackCoordinator` 才可恢复无冲突的 checkpoint。
-10. `CompletionHandler` 是唯一的终止所有者。`TaskReportBuilder` 立即渲染最终编码报告，不再额外调用模型。
+1. `TaskBootstrapper` 按固定顺序完成路由与策略、任务局部服务重置、需求 / 验证契约、`TaskRuntime` 启动、仓库上下文和初始计划；门面不再内联这段生命周期。
+2. 根据当前状态与证据评估是否可完成。
+3. 应用有界的模式、计划、阶段与预算策略。
+4. `TurnBuilder` 在单一模块中选择系统提示、构造阶段上下文、装饰并过滤工具 schema；工具可用性仍统一委托给纯函数 `ExecutableToolPolicy`。
+5. `ToolCallRunner` 负责单次调用的准备 → 限制 → 修订感知的重复检查 → 安全执行。
+6. `ToolBatchRunner` 负责完整、有序的提供商批次，并为每个已声明调用发出恰好一个工具结果（包括控制转换前被跳过的调用）。
+7. `PlanOrchestrator` 负责步骤尝试、局部恢复与重规划转换。
+8. `ValidationPlanner` 创建独立的需求检查。`ValidationPipeline` 规范化执行事实；`ValidationLedger` 持有带修订的历史、目标绑定、基线与不稳定性。`RequirementEvidenceResolver` 从充分的当前证明推导满意度。`ValidationDecisionPolicy` 负责下一步动作决策；`ProgressController` 只描述可比较趋势。
+9. 紧凑、无状态的 `SemanticRegressionJudge` 仅在真正模糊的跨修订回归时运行。其建议不能编辑、回滚、绕过安全或完成任务。
+10. 确定性恢复允许有界、实质不同的修复；之后 `RollbackCoordinator` 才可恢复无冲突的 checkpoint。
+11. `CompletionHandler` 是唯一的终止所有者。`TaskReportBuilder` 立即渲染最终编码报告，不再额外调用模型。
 
 常见产品流程：
 
@@ -71,11 +72,17 @@ MiniCodex 遵循同一条控制面边界：**语义理解与策略判断属于�
 
 `TaskRequirements` 保存可独立证明的用户结果及其当前证据。多目标 / 需协调的任务可做一次无状态需求调用；明显的 FAST 任务可跳过。绿色验证不能在显式请求结果仍未证明时结束任务。
 
+零编辑完成是一项由用户原文授权的确定性策略，而不是控制模型的自由判断。只有用户明确表示“若已满足则不要修改”时，当前状态的验收通过才能产生 `ALREADY_SATISFIED`；普通 create/fix/change/update/refactor 请求即使弱验收碰巧预先通过，也必须进入实际变更流程。需求模型返回的路径会优先对齐显式目标及现有 `src/` / `lib/` 布局，避免包导入名被误当成顶层编辑路径并创建重复源码树。
+
 工作记忆条目带有路径与修订。编辑某路径会先移除该路径的旧观察，再记录新修订。记忆是缓存；工作区仍是权威来源。
 
 任务控制状态与 checkpoint 是任务局部、进程内的。MiniCodex 不宣称进程崩溃后可续跑进行中任务。重启后的进程必须检查物理工作区并建立新的验证；不能复用崩溃前的验证或回滚状态。
 
 `ToolRegistry` 暴露与后端无关的 `ToolMetadata`：能力、风险、副作用类别、只读状态、超时类别与后端。支持如 `filesystem.read`、`filesystem.write`、`code.search`、`code.edit`、`process.run`、`test.run`、`validation.static_web`、`validation.browser`、`dependency.install`、`git.inspect` 等轻量能力，并为内置工具提供确定性的名称默认值。这是未来本地 / 远程后端的接缝；MCP 联网尚未实现。
+
+模型回合的热路径集中在 `orchestration/turn_builder.py`：提示选择、上下文拼装、Harness 元数据注入和工具可用性过滤不再分散到多个无状态转发模块。运行时拦截与 schema 过滤共同读取 `ExecutableToolPolicy`；`ActionController` 只保留计数器及依赖具体调用参数的路径/内容检查，避免两套阶段策略漂移。
+
+FAST 任务在没有专用语义评判器时，不会因兜底 `semantic` 契约提前终止。该检查保持未证明，允许模型通过显式绑定的测试或命令提供确定性证据；浏览器、HTTP 等强类型运行时契约缺少必需能力时仍然阻塞。
 
 CLI 级别为 `normal`、`verbose`、`debug`。`normal` 隐藏 Harness / 提供商噪声与内部枚举。`verbose` 保留执行 / 阶段诊断。`debug` 还会暴露结果 token 与任务后的 trace 摘要。`normal` 最终报告只包含变更文件与验证结果。
 
@@ -103,4 +110,4 @@ CLI 级别为 `normal`、`verbose`、`debug`。`normal` 隐藏 Harness / 提供�
 
 依赖方向是刻意的：`utils` 不依赖 agent 领域；tools 不依赖 orchestration；领域包避免导入 `MiniCodexAgent` 门面；orchestration 协调领域 API；`agent.py` 作为组合根。包 `__init__.py` 暴露有意设计的稳定 API。少数导入为惰性加载，仅用于防止包初始化循环，同时保持规范类 / 枚举的身份。每个概念只有一个规范模块路径；源码树中没有旧模块包装或兼容导入路径。
 
-`ExecutionMetrics` 与确定性评估 Harness 会区分主代理、路由、需求与语义裁判的调用 / token / 延迟。也会记录模式升级、晚期规划、修复、验证 / 不稳定复验、被阻止的过早回滚、结果、误完成、错误编辑、工具计数、主循环 step、重规划、回滚、动作压力与预算耗尽。提示词版本与配置的模型名可观测。`minicodex-bench-v1` 复用同一 Harness，提供 30 个固定仓库任务、Agent 结束后才物化的独立隐藏 oracle、baseline / MiniCodex profile、多次运行、失败聚类和版本化结果；详细定义见 `docs/benchmark-v1.md`。
+`ExecutionMetrics` 与确定性评估 Harness 会区分主代理、路由、需求与语义裁判的调用 / token / 延迟。也会记录模式升级、晚期规划、修复、验证 / 不稳定复验、被阻止的过早回滚、结果、误完成、错误编辑、工具计数、主循环 step、重规划、回滚、动作压力与预算耗尽。提示词版本与配置的模型名可观测。`minicodex-bench-v1-r2` 复用同一 Harness，提供 30 个固定仓库任务、Agent 结束后才物化的独立隐藏 oracle、baseline / MiniCodex profile、多次运行、失败聚类和版本化结果；详细定义见 `docs/benchmark-v1.md`。

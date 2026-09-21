@@ -6,9 +6,14 @@ from .completion_handler import (
     FinalResponseMode,
 )
 from .context_builder import ContextBuilder
-from .prompt_builder import PromptBuilder
-from .tool_schema_provider import ToolSchemaProvider
-from .turn_builder import AgentTurn, TurnBuilder
+from .turn_builder import (
+    AgentTurn,
+    PromptBuilder,
+    ToolAvailabilityResolver,
+    ToolAvailabilitySnapshot,
+    ToolSchemaProvider,
+    TurnBuilder,
+)
 from .tool_call_runner import ToolCallRun, ToolCallRunner
 from .tool_batch_runner import ToolBatchRunner
 from .tool_batch_result import ToolBatchResult
@@ -26,6 +31,8 @@ __all__ = [
     "ContextBuilder",
     "PromptBuilder",
     "ToolSchemaProvider",
+    "ToolAvailabilityResolver",
+    "ToolAvailabilitySnapshot",
     "ToolBatchRunner",
     "ToolCallRun",
     "ToolCallRunner",

@@ -239,7 +239,6 @@ class ValidationOrchestrator:
         if ordinary is not None:
             hints = [
                 hint for hint in (
-                    _typescript_type_annotation_hint(evidence),
                     _missing_target_file_hint(evidence),
                     _wrong_module_edit_hint(evidence),
                     _contract_shape_delta_hint(evidence, agent),
@@ -285,22 +284,6 @@ class ValidationOrchestrator:
             followup_message=recovery_message,
             skipped_reason="验证恢复已重启循环",
         )
-
-
-def _typescript_type_annotation_hint(evidence: ValidationEvidence) -> str:
-    blob = f"{evidence.path or ''}\n{evidence.summary or ''}\n{evidence.details!s}\n{getattr(evidence, 'target', '')}"
-    if ".ts" not in blob and "node_behavior" not in blob and "typescript" not in blob.casefold():
-        if evidence.outcome != ValidationOutcome.FAILED:
-            return ""
-        # Still hint when node acceptance fails after a .ts edit.
-        if "data:text/javascript" not in blob and "inclusiveRange" not in blob:
-            return ""
-    if evidence.outcome != ValidationOutcome.FAILED and ".ts" not in blob:
-        return ""
-    return (
-        "若验收通过 data:text/javascript 加载 .ts 失败，请去掉 TypeScript 类型注解后重写文件；"
-        "不要使用 --experimental-strip-types / tsc 绕过（隐藏 oracle 不会剥类型）。"
-    )
 
 
 def _framework_restore_hint(evidence: ValidationEvidence, agent=None) -> str:
@@ -379,7 +362,7 @@ def _wrong_module_edit_hint(evidence: ValidationEvidence) -> str:
     return (
         f"验收从 `{module}` 导入 `{symbol}`。"
         f"请直接修改 `{module}.py`（或该模块对应路径），"
-        f"不要新建平行模块（例如 login.py）或只改测试文件。"
+        "不要新建与验收导入路径无关的平行模块，也不要只改测试文件。"
     )
 
 
@@ -454,10 +437,7 @@ def _contract_shape_delta_hint(evidence: ValidationEvidence, agent=None) -> str:
         shape_broken = is_web and (
             def_match is None or len(actual_params) < len(expected_args)
         )
-        if symbol == "login" and len(expected_args) >= 2:
-            expected_sig = "user, password"
-        else:
-            expected_sig = ", ".join(f"arg{i}" for i in range(len(expected_args)))
+        expected_sig = ", ".join(f"arg{i}" for i in range(len(expected_args)))
         if shape_broken:
             return (
                 f"当前实现破坏了原 public callable contract。"
