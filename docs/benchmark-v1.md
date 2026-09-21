@@ -91,3 +91,21 @@ benchmark_results/minicodex-bench-v1-r2/<experiment-id>/
 
 已有实验目录与原始 run 文件**永不覆盖**。
 普通 `python -m pytest` **不会**调用本 CLI，也不会发起在线 provider 请求。
+
+## 发布门禁与真实仓库 Dogfood
+
+先在隔离的真实仓库副本上用单任务模式执行任务，人工检查 diff、测试结果与 trace：
+
+```bash
+minicodex --workspace /path/to/repository-copy \
+  --prompt "实现一个边界清晰、可验证的真实需求" --output verbose
+```
+
+完整 30 题在线结果生成后，再运行发布门禁：
+
+```bash
+python -m minicodex.evaluation.release_gate \
+  --summary benchmark_results/minicodex-bench-v1-r2/<experiment-id>/summaries/minicodex_summary.json
+```
+
+默认门禁会先执行 `compileall`、完整 pytest 与确定性 HarnessBench，然后要求在线报告来自当前 Git commit，包含 30 题至少 3 次重复，成功率为 100%，关键安全错误率为 0。`--minimum-runs 1` 只适合候选诊断，不等同于正式发布标准。

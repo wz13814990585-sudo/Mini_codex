@@ -93,16 +93,35 @@ def run_interactive(config: WorkspaceConfig, *, output_level="normal") -> None:
         recorder.save_jsonl(config.trace_root / "latest.jsonl")
 
 
+def run_once(config: WorkspaceConfig, prompt: str, *, output_level="normal") -> str:
+    """Run one automation-friendly task and persist its trace even on failure."""
+    if not prompt.strip():
+        raise ValueError("单任务 prompt 不能为空")
+    agent, recorder, _memory = build_agent(config, output_level=output_level)
+    try:
+        return agent.run(prompt.strip())
+    finally:
+        config.trace_root.mkdir(parents=True, exist_ok=True)
+        recorder.save_jsonl(config.trace_root / "latest.jsonl")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="MiniCodex 交互式编程助手")
     parser.add_argument("--workspace", metavar="PATH", help="要检查与编辑的仓库（默认：当前目录）")
     parser.add_argument("--output", choices=("normal", "verbose", "debug"), default="normal",
                         help="输出详细程度：normal / verbose / debug")
+    parser.add_argument("--prompt", help="执行一个任务后退出；用于脚本、CI 与真实仓库 Dogfood")
     args = parser.parse_args(argv)
     try:
         config = WorkspaceConfig.create(args.workspace, application_root=APPLICATION_ROOT)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.prompt is not None:
+        try:
+            print(run_once(config, args.prompt, output_level=args.output))
+        except ValueError as exc:
+            parser.error(str(exc))
+        return
     run_interactive(config, output_level=args.output)
 
 

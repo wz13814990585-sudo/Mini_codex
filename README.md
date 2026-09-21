@@ -117,6 +117,14 @@ minicodex --workspace /path/to/project --output verbose
 python -m minicodex.main --workspace ../another-project
 ```
 
+真实仓库 Dogfood 或自动化场景可执行单个任务后退出，运行 trace 仍会保存：
+
+```bash
+minicodex --workspace /path/to/project \
+  --prompt "修复用户注册接口的邮箱校验，并运行相关测试" \
+  --output verbose
+```
+
 启动后输入自然语言任务，例如：
 
 ```text
@@ -237,6 +245,13 @@ python -m compileall -q minicodex
 HarnessBench 是确定性的 CI 安全工具序列测试。`RealVibeBench` 是 provider-neutral、必须显式传入模型工厂的真实模型入口；CI 不调用它，也不调用任何付费 API。
 
 `MiniCodex Benchmark V1` 提供固定的 30 个仓库级任务、Agent 工作区外的隐藏行为 oracle、8 个 smoke cases、baseline / MiniCodex 公平对照、多次运行、原始 JSONL、汇总指标、对比报告与确定性失败聚类。实时 benchmark 必须显式指定 profile、provider、model 和凭据；普通 pytest 不会调用模型。使用方法和指标定义见 [docs/benchmark-v1.md](docs/benchmark-v1.md)。
+
+正式发布前，使用机器可判定的门禁同时运行本地回归并检查完整在线报告。默认要求当前 commit 上 30 个任务至少重复 3 次、任务成功率 100%，且错误完成、越权编辑、错误文件、错误验证目标、耗尽步数与幽灵步骤均为 0：
+
+```bash
+minicodex-release-gate \
+  --summary benchmark_results/minicodex-bench-v1-r2/<experiment-id>/summaries/minicodex_summary.json
+```
 
 ### 当前限制
 
