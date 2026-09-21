@@ -1,10 +1,14 @@
 # MiniCodex
 
+[![CI](https://github.com/wz13814990585-sudo/Mini_codex/actions/workflows/ci.yml/badge.svg)](https://github.com/wz13814990585-sudo/Mini_codex/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 MiniCodex 是一个面向本地代码仓库的轻量级自主编码代理。它基于 DeepSeek（或兼容 OpenAI Chat Completions 的 API）理解任务，并通过受控的文件、搜索、执行、测试与验证工具完成代码修改。
 
 核心理念：**模型负责语义理解与策略判断；确定性 Harness 负责事实、权限、安全、执行、验证、恢复与完成判定。**
 
-> 当前版本为早期开发版（`0.1.0`）。运行代理前，请先提交或备份工作区中的重要改动。
+> 当前版本为 Alpha（`0.2.0`）。运行代理前，请先提交或备份工作区中的重要改动。
 
 ## 主要能力
 
@@ -80,13 +84,19 @@ python -m pip install -e ".[test]"
 
 ### 3. 配置模型
 
-在项目根目录创建 `.env`：
+复制示例配置；MiniCodex 会读取启动目录中的 `.env`：
+
+```bash
+cp .env.example .env
+```
 
 ```dotenv
-DEEPSEEK_API_KEY=your_api_key_here
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+MINICODEX_API_KEY=your_api_key_here
+MINICODEX_BASE_URL=https://api.deepseek.com
+MINICODEX_MODEL=deepseek-chat
 ```
+
+原有的 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL` 仍然兼容。命令行的 `--model` 与 `--base-url` 优先级更高；为避免密钥出现在 shell 历史中，API Key 只从环境变量读取。
 
 也可为控制面与语义回归判断指定独立模型；未配置时会复用主模型：
 
@@ -97,32 +107,48 @@ DEEPSEEK_JUDGE_MODEL=deepseek-chat
 
 请勿把真实 API Key 提交到 Git。项目已忽略 `.env`。
 
-### 4. 启动交互式 CLI
+### 4. 检查环境
 
 ```bash
-python -m minicodex.main --output normal
+minicodex doctor
 ```
 
-安装后也可直接运行：
+如需验证真实模型连接，可显式执行一次最小在线请求：
+
+```bash
+minicodex doctor --connect
+```
+
+`--connect` 可能产生少量模型费用，普通 `doctor` 不访问网络。CI 或脚本可以使用 `minicodex doctor --json`。
+
+### 5. 执行任务
+
+单任务模式是最适合自动化与演示的入口：
+
+```bash
+minicodex run "修复用户注册接口的邮箱校验，并运行相关测试" \
+  --workspace /path/to/project \
+  --output verbose
+```
+
+启动交互式会话：
+
+```bash
+minicodex chat --workspace /path/to/project
+```
+
+不带子命令时仍保持旧版交互行为；旧版 `--prompt` 参数也继续可用：
 
 ```bash
 minicodex
+minicodex --workspace /path/to/project --prompt "修复失败测试"
 ```
 
-默认工作区是启动时的当前目录，也可显式指定：
+查看所有产品命令：
 
 ```bash
-minicodex --workspace /path/to/project --output verbose
-# 或
-python -m minicodex.main --workspace ../another-project
-```
-
-真实仓库 Dogfood 或自动化场景可执行单个任务后退出，运行 trace 仍会保存：
-
-```bash
-minicodex --workspace /path/to/project \
-  --prompt "修复用户注册接口的邮箱校验，并运行相关测试" \
-  --output verbose
+minicodex --help
+minicodex run --help
 ```
 
 启动后输入自然语言任务，例如：
@@ -135,6 +161,24 @@ You > 在 try_code 中创建一个可以直接打开运行的贪吃蛇页面
 
 输入 `exit` 或 `quit` 退出。
 
+## 五分钟演示
+
+仓库提供一个刻意保留简单缺陷的独立计算器项目。请复制后运行，避免修改仓库内的原始示例：
+
+```bash
+demo_dir="$(mktemp -d)/calculator_demo"
+cp -R examples/calculator_demo "$demo_dir"
+
+minicodex run \
+  "修改 src/calculator.py，让 divide(a, b) 在 b 为 0 时抛出 ValueError，并在 tests/test_calculator.py 增加回归测试，然后运行测试。" \
+  --workspace "$demo_dir" \
+  --output verbose
+
+python -m pytest -q "$demo_dir/tests"
+```
+
+这条演示覆盖 MiniCodex 的核心产品闭环：仓库检查、需求拆解、代码编辑、针对性验证、回归验证和结构化完成报告。
+
 ## 输出级别
 
 通过 `--output` 控制终端信息量：
@@ -146,7 +190,7 @@ You > 在 try_code 中创建一个可以直接打开运行的贪吃蛇页面
 | `debug` | 额外显示内部结果标识、trace 摘要与长期记忆统计 |
 
 ```bash
-python -m minicodex.main --output debug
+minicodex chat --output debug
 ```
 
 ## 可选：浏览器验证
@@ -171,16 +215,16 @@ Playwright 可用时，MiniCodex 会自动注册浏览器验证工具。缺少�
 
 ## 运行产物
 
-MiniCodex 会在**选定工作区**的 `.minicodex/` 下保存运行时数据。该目录会被 RepoMap 与索引忽略，不会作为项目源码或编辑目标：
+MiniCodex 会按工作区隔离地保存运行时数据，但不会把内部文件写进目标仓库。默认位置是用户目录下的 `~/.minicodex/workspaces/<repository-key>/`：
 
 ```text
-.minicodex/
+~/.minicodex/workspaces/<repository-key>/
 ├── memory/long_term.json   # 跨任务经验记录
 ├── traces/latest.jsonl     # 最近一次运行的结构化 trace
 └── sandbox/                # sandbox 运行数据
 ```
 
-这些文件是本地运行产物，默认不会提交到 Git。长期记忆只是辅助缓存，物理工作区始终是事实来源；进程重启后不会假装恢复一个未完成任务。
+这些文件是本地运行产物，不会进入目标仓库或提交到 Git。长期记忆只是辅助缓存，物理工作区始终是事实来源；进程重启后不会假装恢复一个未完成任务。
 
 ## 项目结构
 
@@ -260,7 +304,10 @@ minicodex-release-gate \
 - 浏览器验证依赖可选的 Playwright 与本机 Chromium
 - 模型服务、网络状态、第三方包源与操作系统权限仍可能导致任务失败
 - 自动化验证只能降低风险，不能代替代码审查与真实环境测试
+- Alpha 版本默认自动执行通过安全策略的工作区内操作，尚未提供逐命令人工审批界面
 
 ## 许可证
 
-仓库当前未声明开源许可证。在添加许可证前，请勿默认将本项目视为可自由再分发的软件。
+MiniCodex 使用 [MIT License](LICENSE)。
+
+版本变化见 [CHANGELOG.md](CHANGELOG.md)。

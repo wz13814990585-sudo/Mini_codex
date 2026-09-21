@@ -1,7 +1,6 @@
-import os
-
 from openai import OpenAI
 
+from .config import ModelConfig
 from .types import (
     LLMResponse,
     TokenUsage,
@@ -11,13 +10,20 @@ from .types import (
 class LLMClient:
 
     def __init__(self, *, api_key: str | None = None, base_url: str | None = None,
-                 model: str | None = None, temperature: float | None = None):
+                 model: str | None = None, temperature: float | None = None,
+                 config: ModelConfig | None = None):
+        resolved = (config or ModelConfig.from_environment(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+        )).require_ready()
         self.client = OpenAI(
-            api_key=api_key or os.getenv("DEEPSEEK_API_KEY"),
-            base_url=base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            api_key=resolved.api_key,
+            base_url=resolved.base_url,
         )
 
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.config = resolved
+        self.model = resolved.model
         self.temperature = temperature
 
     def chat(
