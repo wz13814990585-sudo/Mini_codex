@@ -24,10 +24,21 @@ class ToolEventAdapter:
 
     def process(self, agent, tool_call, *, index, tool_calls, messages,
                 current_plan_step, runs, evidence_items, signals):
+        tool_name = tool_call.function.name
+        metrics = getattr(agent, "execution_metrics", None)
+        if metrics is not None:
+            note = getattr(metrics, "note_step_tool_call", None)
+            if callable(note):
+                note()
+        args_preview = str(getattr(tool_call.function, "arguments", "") or "")[:240]
+        action = getattr(agent, "action_controller", None)
         self._emit_event(
             agent,
             RuntimeEventType.TOOL_STARTED,
-            tool_name=tool_call.function.name,
+            tool_name=tool_name,
+            arguments_summary=args_preview,
+            agent_step=int(getattr(metrics, "agent_steps", 0) or 0),
+            phase=getattr(getattr(action, "phase", None), "value", getattr(action, "phase", None)),
         )
         run = self.call_runner.run(agent, tool_call)
         runs.append(run)
@@ -61,6 +72,12 @@ class ToolEventAdapter:
             print(f"[参数] {arguments}")
 
         if run.preparation_failed:
+            self._emit_tool_blocked(
+                agent, tool_name, arguments,
+                failure_type="prepare_failed",
+                restriction_source="prepare_failed",
+                reason=str(getattr(result, "error", "") or ""),
+            )
             self._emit_validation_skipped(agent, tool_name, arguments, "preparation_failed")
             agent.working_summary.record_tool_result(tool_name=tool_name, arguments={}, result=result)
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
@@ -72,6 +89,12 @@ class ToolEventAdapter:
 
         controller = getattr(agent, "action_controller", None)
         if run.restriction is not None:
+            self._emit_tool_blocked(
+                agent, tool_name, arguments,
+                failure_type=str(run.restriction.failure_type or "restricted"),
+                restriction_source=str(run.restriction.failure_type or "restriction"),
+                reason=str(run.restriction.reason or ""),
+            )
             self._emit_validation_skipped(
                 agent, tool_name, arguments,
                 str(run.restriction.failure_type or "restricted"),
@@ -97,6 +120,12 @@ class ToolEventAdapter:
             )
 
         if run.duplicate_blocked:
+            self._emit_tool_blocked(
+                agent, tool_name, arguments,
+                failure_type="duplicate_blocked",
+                restriction_source="duplicate_blocked",
+                reason="duplicate_tool_call",
+            )
             self._emit_validation_skipped(agent, tool_name, arguments, "duplicate_tool_call")
             agent.plan_orchestrator.record_attempt_failure(current_plan_step)
             if metrics is not None:
@@ -208,6 +237,10 @@ class ToolEventAdapter:
 
         signal = ProgressSignal(ProgressKind.OBSERVATION, "工具产生了一条观察结果。")
         if is_edit and result.success:
+            if metrics is not None:
+                note_p = getattr(metrics, "note_step_productive", None)
+                if callable(note_p):
+                    note_p()
             signal, completed = self.edit_handler.apply(
                 agent, tool_name=tool_name, arguments=arguments, result=result,
                 current_plan_step=current_plan_step, emit=self._emit_event,
@@ -239,6 +272,12 @@ class ToolEventAdapter:
             signal = ProgressSignal(ProgressKind.ADVANCED, "计划已修订。")
 
         if is_validation:
+            purpose = str(arguments.get("purpose", "") or "").casefold()
+            if metrics is not None and purpose in {"acceptance", "regression", ""}:
+                # Executed acceptance/regression (or structured validation) advances task state.
+                note_p = getattr(metrics, "note_step_productive", None)
+                if callable(note_p):
+                    note_p()
             handled = self.validation_handler.apply(
                 agent, tool_name=tool_name, arguments=arguments, result=result,
                 capabilities=capabilities, metrics=metrics, emit=self._emit_event,
@@ -363,6 +402,51 @@ class ToolEventAdapter:
             emit(f"正在验证 {path or 'Web 产物'}...")
             if result.success and result.data.get("outcome") == "passed":
                 emit("验证通过。")
+
+
+    @staticmethod
+    def _emit_tool_blocked(
+        agent,
+        tool_name: str,
+        arguments: dict,
+        *,
+        failure_type: str,
+        restriction_source: str,
+        reason: str = "",
+    ) -> None:
+        metrics = getattr(agent, "execution_metrics", None)
+        if metrics is not None:
+            note = getattr(metrics, "note_step_tool_blocked", None)
+            if callable(note):
+                note()
+        action = getattr(agent, "action_controller", None)
+        payload = {
+            "tool_name": tool_name,
+            "failure_type": failure_type,
+            "reason_code": failure_type,
+            "restriction_source": restriction_source,
+            "phase": getattr(getattr(action, "phase", None), "value", getattr(action, "phase", None)),
+            "agent_step": int(getattr(metrics, "agent_steps", 0) or 0),
+            "validation_check_id": str(
+                (arguments or {}).get("validation_check")
+                or getattr(action, "next_required_check_id", "")
+                or ""
+            ),
+            "contract_type": str(getattr(action, "next_contract_type", "") or ""),
+            "reason": reason,
+            "arguments_summary": str(arguments or "")[:240],
+        }
+        ToolEventAdapter._emit_event(agent, RuntimeEventType.TOOL_BLOCKED, **payload)
+        recorder = getattr(agent, "trace_recorder", None)
+        if recorder is None:
+            return
+        try:
+            from ..observability.trace import TraceEventType
+            blocked = getattr(TraceEventType, "TOOL_BLOCKED", None)
+            if blocked is not None:
+                recorder.emit(blocked, payload)
+        except Exception:
+            pass
 
     @staticmethod
     def _emit_validation_skipped(agent, tool_name: str, arguments: dict, reason: str) -> None:

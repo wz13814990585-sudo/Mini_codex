@@ -93,6 +93,11 @@ class ToolCallRunner:
         intent = replace(intent, allow_contract_change=bool(getattr(
             getattr(agent, "safety_policy", None), "test_contract_change_authorized", False)))
         intent_token = ACTIVE_EDIT_INTENT.set(intent)
+        metrics = getattr(agent, "execution_metrics", None)
+        if metrics is not None:
+            note = getattr(metrics, "note_step_tool_requested", None)
+            if callable(note):
+                note()
         try:
             execution = agent.tool_executor.execute_prepared(PreparedToolCall(
                 tool_name, {k: v for k, v in arguments.items() if k not in {"validation_check", "edit_intent"}}

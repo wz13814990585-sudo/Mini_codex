@@ -46,8 +46,9 @@ class PlanQualityValidator:
     )
     _SEPARATORS = re.compile(r",|;|，|；|、|\band\b|以及|并且|同时")
     _PROCESS_ONLY = re.compile(
-        r"^\s*(inspect|read|search|review|check|verify|confirm|validate|test|run tests)\b|"
-        r"^\s*(检查|读取|搜索|审查|查看|确认|验证|测试|再次验证)",
+        r"^\s*(inspect|read|search|review|check|verify|confirm|validate|test|run tests|"
+        r"locate|identify|find)\b|"
+        r"^\s*(检查|读取|搜索|审查|查看|确认|验证|测试|再次验证|定位|探查|查找)",
         re.IGNORECASE,
     )
     _PERMISSION_SEEKING = re.compile(

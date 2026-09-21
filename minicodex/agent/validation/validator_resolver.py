@@ -106,6 +106,7 @@ class ValidatorResolver:
     def __init__(self, workspace: str | Path = ".", *, test_index=None) -> None:
         del test_index
         self.workspace = Path(workspace).resolve()
+        self.preferred_http_framework = ""
 
     def resolve(self, check: ValidationCheck, *, registry, profile=None, paths=(), revision=0):
         del revision
@@ -164,9 +165,16 @@ class ValidatorResolver:
                     registry, check, "process.run", "run_command",
                     {**common, "command": command}, f"{contract.method} {contract.path}",
                 )
+            preferred = str(self.preferred_http_framework or "")
+            restore = (
+                f"仓库基线是 {preferred}，请恢复该框架的 app 并做增量修复，"
+                "不要改成 Flask/http.server 或其他运行时。"
+                if preferred else
+                "请恢复可解析的 FastAPI/Flask app 模块。"
+            )
             return self._unresolved(
                 check, ResolutionStatus.TARGET_UNRESOLVED,
-                "HTTP 契约既无安全服务启动命令，也无可解析的应用模块。",
+                "HTTP 契约既无安全服务启动命令，也无可解析的应用模块。" + restore,
             )
 
         if isinstance(contract, BrowserInteractionContract):
@@ -371,6 +379,14 @@ class ValidatorResolver:
             "" if contract.json_body is None
             else f",json={contract.json_body!r}"
         )
+        preferred = str(self.preferred_http_framework or "").casefold()
+        # Required HTTP contract must stay on the baseline framework. If the
+        # agent rewrote FastAPI→Flask/http.server, do not silently validate the
+        # new shape (that causes false completion vs FastAPI oracles).
+        if preferred == "fastapi" and "FastAPI" not in source:
+            return ""
+        if preferred == "flask" and "Flask" not in source:
+            return ""
         if "FastAPI" in source:
             code = (
                 f"from importlib import import_module; "

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+import ast
 import time
 import re
 
@@ -18,7 +19,7 @@ from ..validation.contracts import (
     parse_contract,
 )
 
-REQUIREMENTS_PROMPT_VERSION = "task-requirements-v7"
+REQUIREMENTS_PROMPT_VERSION = "task-requirements-v8"
 
 
 class RequirementCategory(str, Enum):
@@ -107,6 +108,8 @@ JavaScript 路径；解析器会从仓库事实定位引用它的 HTML 文档。
 禁止省略 body 后用空请求验收；需要检查响应片段时使用 expected_text。
 若仓库事实显示登录是普通 Python 函数（如 def login(...) 返回 status/body）而不是
 FastAPI/Flask 应用，必须使用 python_behavior，禁止使用 http_response。
+Follow-up/modify 若仓库已有公开 callable，必须保留其调用形状与成功/失败状态语义；
+禁止改成无参函数、Web route 或 Flask/FastAPI endpoint 来“重写”实现。
 若要求 reject/raise/ValueError（而不是 clamp 到边界值），python_behavior 必须用
 pytest.raises 或 try/except 断言异常，禁止写成越界输入仍返回数值的 assert。
 回归断言必须与仓库事实中的现有行为一致（例如 clean_name 的真实返回值），禁止臆造。
@@ -203,6 +206,7 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
             items = self._demote_http_for_plain_python(items, workspace)
             items = self._sanitize_contracts(items, user_request)
             items = self._ensure_move_symbol_contracts(items, user_request)
+            items = self._preserve_public_callable_shapes(items, workspace)
             usage = getattr(response, "usage", None)
             self.last_telemetry = RequirementsTelemetry(
                 1, int(getattr(usage, "prompt_tokens", 0) or 0),
@@ -436,6 +440,139 @@ contract 的类型和字段名保持英文。不要把“若已经满足则不�
                 RequirementKind.BEHAVIORAL,
             )
         ]
+
+    @classmethod
+    def _preserve_public_callable_shapes(
+        cls, items: list[TaskRequirement], workspace,
+    ) -> list[TaskRequirement]:
+        """Lock existing public callable signatures into python_behavior contracts.
+
+        Follow-up/modify tasks often say \"keep existing behavior\" in prose. When the
+        workspace already exposes a plain function, bake its parameter names into the
+        acceptance code so rewriting it as a zero-arg Flask/FastAPI route fails the
+        required contract instead of inviting HTTP validation drift.
+        """
+
+        root = Path(workspace).resolve() if workspace else None
+        if root is None or not root.is_dir():
+            return items
+        preserved: list[TaskRequirement] = []
+        for item in items:
+            contract = item.contract
+            if not isinstance(contract, PythonBehaviorContract):
+                preserved.append(item)
+                continue
+            code = str(contract.code or "")
+            if "inspect.signature" in code:
+                preserved.append(item)
+                continue
+            guards: list[str] = []
+            for module, symbol in re.findall(
+                r"from\s+([\w.]+)\s+import\s+(\w+)", code,
+            ):
+                if module.startswith("src."):
+                    module = module[4:]
+                params = cls._public_callable_params(root, module, symbol)
+                if not params:
+                    continue
+                call = re.search(rf"\b{re.escape(symbol)}\s*\(([^)]*)\)", code)
+                if call is None:
+                    continue
+                positional = [
+                    part.strip()
+                    for part in call.group(1).split(",")
+                    if part.strip() and "=" not in part.strip()
+                ]
+                if len(positional) < len(params):
+                    continue
+                guards.append(
+                    f"assert len(inspect.signature({symbol}).parameters) == {len(params)}"
+                )
+            if not guards:
+                preserved.append(item)
+                continue
+            # Build a preamble that always runs before any use of inspect/symbol.
+            # Do not prepend guards ahead of imports: many LLM contracts put
+            # `from mod import sym; assert ...` on one line (no trailing newline),
+            # which used to produce NameError and permanently fail acceptance.
+            preamble = ["import inspect"]
+            for guard in guards:
+                symbol = re.search(r"signature\((\w+)\)", guard).group(1)
+                import_line = None
+                for module, imported in re.findall(
+                    r"from\s+([\w.]+)\s+import\s+(\w+)", code,
+                ):
+                    if imported == symbol:
+                        import_line = f"from {module} import {symbol}"
+                        break
+                if import_line and import_line not in preamble:
+                    preamble.append(import_line)
+                if guard not in preamble:
+                    preamble.append(guard)
+            body = code
+            if "import inspect" in body:
+                body = re.sub(r"(?m)^import inspect\s*\n?", "", body)
+            # Drop duplicate imports that now live in the preamble so one-line
+            # `from x import y; assert ...` contracts stay valid.
+            for line in preamble:
+                if line.startswith("from "):
+                    body = re.sub(
+                        rf"(?m)^from\s+{re.escape(line.split()[1])}\s+import\s+{re.escape(line.split()[-1])}\s*;?\s*",
+                        "",
+                        body,
+                        count=1,
+                    )
+            new_code = "\n".join(preamble) + "\n" + body.lstrip()
+            description = item.description
+            if "调用形状" not in description and "signature" not in description.casefold():
+                description = f"{description}（保留公开调用形状）"
+            preserved.append(
+                TaskRequirement(
+                    item.id,
+                    description,
+                    item.category,
+                    item.paths,
+                    PythonBehaviorContract(new_code),
+                    item.kind,
+                )
+            )
+        return preserved
+
+    @classmethod
+    def _public_callable_params(
+        cls, root: Path, module: str, symbol: str,
+    ) -> tuple[str, ...] | None:
+        """Return parameter names for a plain public function, or None if unsuitable."""
+
+        candidates = (
+            root / f"{module.replace('.', '/')}.py",
+            root / "src" / f"{module.replace('.', '/')}.py",
+            root / f"{module}.py",
+        )
+        for path in candidates:
+            if not path.is_file():
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            lowered = source.casefold()
+            if "fastapi" in lowered or "flask" in lowered:
+                return None
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                return None
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef) and node.name == symbol:
+                    params = tuple(
+                        arg.arg for arg in node.args.args
+                        if arg.arg not in {"self", "cls"}
+                    )
+                    if not params:
+                        return None
+                    return params
+        return None
 
     @staticmethod
     def _prefer_existing_pytest(items: list[TaskRequirement], workspace) -> list[TaskRequirement]:

@@ -240,6 +240,12 @@ class EvaluationResult:
     oracle_checks: int = 0
     oracle_passed: bool = False
     agent_steps: int = 0
+    executed_tool_turn_count: int = 0
+    ghost_step_count: int = 0
+    ghost_step_rate: float = 0.0
+    blocked_tool_selection_count: int = 0
+    productive_step_count: int = 0
+    text_only_step_count: int = 0
     llm_call_count: int = 0
     main_agent_llm_calls: int = 0
     validation_runs: int = 0
@@ -515,10 +521,38 @@ class EvaluationSummary:
             "rollback_rate": rate(sum(r.rollback_count > 0 for r in self.results), total),
             "average_tokens": average(r.total_tokens for r in self.results),
             "total_tokens": sum(r.total_tokens for r in self.results),
+            "prompt_tokens": sum(r.prompt_tokens for r in self.results),
+            "completion_tokens": sum(r.completion_tokens for r in self.results),
+            "average_prompt_tokens": average(r.prompt_tokens for r in self.results),
+            "average_completion_tokens": average(r.completion_tokens for r in self.results),
             "average_latency_seconds": average(r.duration_seconds for r in self.results),
             "median_latency_per_success_seconds": median(r.duration_seconds for r in successes),
             "cost_per_success_usd": (sum(known_costs) / successful
                                      if known_costs and successful else None),
+            "executed_tool_turn_count": sum(r.executed_tool_turn_count for r in self.results),
+            "ghost_step_count": sum(r.ghost_step_count for r in self.results),
+            "ghost_step_rate": rate(
+                sum(r.ghost_step_count for r in self.results),
+                sum(r.agent_steps for r in self.results),
+            ),
+            "blocked_tool_selection_count": sum(
+                r.blocked_tool_selection_count for r in self.results
+            ),
+            "productive_step_count": sum(r.productive_step_count for r in self.results),
+            "text_only_step_count": sum(r.text_only_step_count for r in self.results),
+            "average_executed_tool_turn_count": average(
+                r.executed_tool_turn_count for r in self.results
+            ),
+            "average_ghost_step_count": average(r.ghost_step_count for r in self.results),
+            "average_blocked_tool_selection_count": average(
+                r.blocked_tool_selection_count for r in self.results
+            ),
+            "average_productive_step_count": average(
+                r.productive_step_count for r in self.results
+            ),
+            "average_text_only_step_count": average(
+                r.text_only_step_count for r in self.results
+            ),
         }
 
     def metrics_by_category(self) -> dict:

@@ -84,6 +84,81 @@ def test_edit_paths_pinned_to_validation_targets():
     assert "write_file" in force
 
 
+def test_python_behavior_blocks_validate_service_drift():
+    state = TaskState(
+        mode=ExecutionMode.STANDARD,
+        phase=AgentPhase.FIXING,
+        target_paths=("app.py",),
+        relevant_paths=("app.py",),
+    )
+    controller = ActionController()
+    controller.reset(state)
+    controller.update_context(
+        state=state,
+        policy=policy_for(ExecutionMode.STANDARD),
+        remaining_budget=8,
+        acceptance_missing=True,
+        next_required_check_id="V1",
+        next_contract_type="python_behavior",
+        validation_paths=("app.py",),
+    )
+    reason = controller.restriction_reason(
+        "validate_service",
+        {"path": "/login", "method": "POST"},
+        policy_for(ExecutionMode.STANDARD),
+    )
+    assert reason is not None
+    assert "python_behavior" in reason
+    assert "validate_service" in reason
+
+
+def test_blocks_typed_typescript_and_fastapi_framework_rewrite():
+    state = TaskState(
+        mode=ExecutionMode.STANDARD,
+        phase=AgentPhase.ACTING,
+        target_paths=("src/range.ts", "app.py"),
+        relevant_paths=("src/range.ts", "app.py"),
+    )
+    controller = ActionController()
+    controller.reset(state)
+    controller.update_context(
+        state=state,
+        policy=policy_for(ExecutionMode.STANDARD),
+        remaining_budget=8,
+        next_contract_type="node_behavior",
+        validation_paths=("src/range.ts", "app.py"),
+        baseline_web_framework="fastapi",
+    )
+    policy = policy_for(ExecutionMode.STANDARD)
+    typed = controller.restriction_reason(
+        "write_file",
+        {
+            "path": "src/range.ts",
+            "content": "export function inclusiveRange(start: number, end: number): number[] { return [] }",
+        },
+        policy,
+    )
+    assert typed is not None and "类型注解" in typed
+    plain = controller.restriction_reason(
+        "write_file",
+        {
+            "path": "src/range.ts",
+            "content": "export function inclusiveRange(start, end) {\n  const out = []\n  return out\n}\n",
+        },
+        policy,
+    )
+    assert plain is None
+    flask_rewrite = controller.restriction_reason(
+        "write_file",
+        {
+            "path": "app.py",
+            "content": "from flask import Flask\napp=Flask(__name__)\n",
+        },
+        policy,
+    )
+    assert flask_rewrite is not None and "FastAPI" in flask_rewrite
+
+
 def test_force_edit_lists_move_symbol_paths():
     state = TaskState(
         mode=ExecutionMode.STANDARD,

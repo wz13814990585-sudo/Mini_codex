@@ -753,6 +753,14 @@ def attach_runtime_tracing(
                     "edit_revision": state.edit_revision,
                     "validation_revision": state.validation_revision,
                     "reason": data.get("reason"),
+                    "tool_name": data.get("tool_name"),
+                    "arguments_summary": data.get("arguments_summary"),
+                    "agent_step": data.get("agent_step"),
+                    "failure_type": data.get("failure_type"),
+                    "reason_code": data.get("reason_code"),
+                    "restriction_source": data.get("restriction_source"),
+                    "validation_check_id": data.get("validation_check_id"),
+                    "contract_type": data.get("contract_type"),
                 },
             )
             return state

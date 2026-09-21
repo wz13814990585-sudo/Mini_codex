@@ -6,6 +6,7 @@ import pytest
 from ..agent.planning import (
     RequirementCategory, RequirementsExtractor, TaskRequirement, TaskRequirements,
 )
+from ..agent.planning.requirements import RequirementKind
 from ..agent.progress import ProgressController, ValidationStatus
 from ..agent.routing import ExecutionMode, TaskIntent, TaskRouter, policy_for
 from ..agent.runtime import RuntimeTaskControl
@@ -222,7 +223,69 @@ def test_http_contract_demoted_for_plain_login_module(tmp_path):
     assert len(requirements.items) == 1
     assert isinstance(requirements.items[0].contract, PythonBehaviorContract)
     assert "expires_in" in requirements.items[0].contract.code
+    assert "inspect.signature(login)" in requirements.items[0].contract.code
+    assert "len(inspect.signature(login).parameters) == 2" in requirements.items[0].contract.code
     assert not isinstance(requirements.items[0].contract, HttpContract)
+
+
+def test_preserve_public_callable_shapes_injects_signature_guard(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "def login(user, password):\n    return (200, {'token': 't'})\n",
+        encoding="utf-8",
+    )
+    items = [
+        TaskRequirement(
+            "R1",
+            "成功登录增加 expires_in",
+            RequirementCategory.BEHAVIOR,
+            ("app.py",),
+            PythonBehaviorContract(
+                "from app import login\n"
+                "status, body = login('demo', 'demo')\n"
+                "assert status == 200 and body.get('expires_in') == 3600\n"
+            ),
+            RequirementKind.BEHAVIORAL,
+        )
+    ]
+    fixed = RequirementsExtractor._preserve_public_callable_shapes(items, tmp_path)
+    code = fixed[0].contract.code
+    assert "import inspect" in code
+    assert "len(inspect.signature(login).parameters) == 2" in code
+    assert code.index("import inspect") < code.index("inspect.signature(login)")
+    assert code.index("from app import login") < code.index("inspect.signature(login)")
+    assert "调用形状" in fixed[0].description
+
+
+def test_preserve_handles_inline_import_assert_contracts(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/pricing.py").write_text(
+        "def apply_discount(price, percent):\n    return price * (1 - percent / 100)\n",
+        encoding="utf-8",
+    )
+    items = [
+        TaskRequirement(
+            "R1",
+            "折扣计算",
+            RequirementCategory.BEHAVIOR,
+            ("src/pricing.py",),
+            PythonBehaviorContract(
+                "from pricing import apply_discount; assert apply_discount(100, 20) == 80"
+            ),
+            RequirementKind.BEHAVIORAL,
+        )
+    ]
+    fixed = RequirementsExtractor._preserve_public_callable_shapes(items, tmp_path)
+    code = fixed[0].contract.code
+    assert code.index("import inspect") < code.index("from pricing import apply_discount")
+    assert code.index("from pricing import apply_discount") < code.index(
+        "inspect.signature(apply_discount)"
+    )
+    assert "assert apply_discount(100, 20) == 80" in code
+    # Must not reference inspect/symbol before they exist.
+    first_lines = code.splitlines()[:3]
+    assert first_lines[0] == "import inspect"
+    assert first_lines[1] == "from pricing import apply_discount"
+    assert "signature" in first_lines[2]
 
 
 def test_sanitize_normalizes_src_imports_and_valueerror_asserts():
@@ -474,3 +537,40 @@ def test_state_machine_rejects_impossible_projections():
         "inspect_only_with_edit", "finished_without_acceptance",
         "stale_validation_revision", "provider_call_during_open_tool_batch",
     }
+
+
+def test_contract_shape_delta_hint_detects_flask_rewrite(tmp_path):
+    from minicodex.agent.orchestration.validation_orchestrator import _contract_shape_delta_hint
+    from minicodex.agent.validation.evidence import (
+        ValidationEvidence, ValidationOutcome, ValidationPurpose, ValidationScope,
+    )
+
+    (tmp_path / "app.py").write_text(
+        "from flask import Flask, jsonify\n"
+        "app = Flask(__name__)\n"
+        "@app.post('/login')\n"
+        "def login():\n"
+        "    return jsonify({'token': 'x', 'expires_in': 3600}), 200\n",
+        encoding="utf-8",
+    )
+    evidence = ValidationEvidence(
+        tool_name="run_command",
+        execution_succeeded=True,
+        outcome=ValidationOutcome.FAILED,
+        scope=ValidationScope.TARGETED,
+        purpose=ValidationPurpose.ACCEPTANCE,
+        edit_revision=1,
+        summary="TypeError: login() takes 0 positional arguments",
+        details={
+            "target_identity": (
+                "from app import login\n"
+                "status, body = login('demo', 'demo')\n"
+                "assert status == 200\n"
+            ),
+        },
+    )
+    agent = SimpleNamespace(workspace=tmp_path, current_validation_check=None)
+    hint = _contract_shape_delta_hint(evidence, agent)
+    assert "public callable contract" in hint
+    assert "login(user, password)" in hint
+    assert "validate_service" in hint

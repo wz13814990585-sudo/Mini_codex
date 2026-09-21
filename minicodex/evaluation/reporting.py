@@ -30,8 +30,18 @@ COMPARISON_METRICS = (
     "repeated_tool_rate",
     "average_tokens",
     "median_tokens_per_success",
+    "prompt_tokens",
+    "completion_tokens",
+    "average_prompt_tokens",
+    "average_completion_tokens",
     "average_latency_seconds",
     "median_latency_per_success_seconds",
+    "ghost_step_rate",
+    "ghost_step_count",
+    "blocked_tool_selection_count",
+    "executed_tool_turn_count",
+    "productive_step_count",
+    "text_only_step_count",
 )
 
 # Human-facing Markdown labels only. JSON / machine keys stay English.
@@ -69,9 +79,24 @@ METRIC_LABELS_ZH = {
     "rollback_rate": "回滚率",
     "average_tokens": "平均 token 数",
     "total_tokens": "总 token 数",
+    "prompt_tokens": "Input tokens（总计）",
+    "completion_tokens": "Output tokens（总计）",
+    "average_prompt_tokens": "平均 Input tokens",
+    "average_completion_tokens": "平均 Output tokens",
     "average_latency_seconds": "平均延迟（秒）",
     "median_latency_per_success_seconds": "成功任务延迟中位数（秒）",
     "cost_per_success_usd": "每次成功成本（美元）",
+    "executed_tool_turn_count": "已执行工具回合数",
+    "ghost_step_count": "幽灵步数",
+    "ghost_step_rate": "幽灵步率",
+    "blocked_tool_selection_count": "被拦截工具选择次数",
+    "productive_step_count": "有效推进步数",
+    "text_only_step_count": "纯文本回合数",
+    "average_executed_tool_turn_count": "平均已执行工具回合数",
+    "average_ghost_step_count": "平均幽灵步数",
+    "average_blocked_tool_selection_count": "平均被拦截工具选择次数",
+    "average_productive_step_count": "平均有效推进步数",
+    "average_text_only_step_count": "平均纯文本回合数",
 }
 
 CASE_GROUP_LABELS_ZH = {

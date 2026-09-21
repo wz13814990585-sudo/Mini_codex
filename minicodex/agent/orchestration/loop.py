@@ -110,6 +110,7 @@ def _prepare_turn(agent, *, step: int, task_max_steps: int, messages: list) -> _
             validator_resolution_status=getattr(resolution, "status", ""),
             unresolved_reason=getattr(resolution, "reason", ""),
             validation_paths=validation_paths,
+            baseline_web_framework=getattr(agent, "baseline_web_framework", "") or "",
         )
 
     finalization = getattr(agent, "finalization", None)
@@ -260,6 +261,9 @@ def run_agent_loop(agent, user_input: str) -> str:
         metrics = getattr(agent, "execution_metrics", None)
         if metrics is not None:
             metrics.agent_steps = step + 1
+            begin = getattr(metrics, "begin_agent_step", None)
+            if callable(begin):
+                begin()
         llm_response = _chat_with_heartbeat(
             agent, messages=turn.messages, tools=turn.tools
         )
@@ -275,12 +279,20 @@ def run_agent_loop(agent, user_input: str) -> str:
                 remaining_steps=task_max_steps - step - 1,
             )
             if handled.finished:
+                if metrics is not None:
+                    finalize = getattr(metrics, "finalize_agent_step", None)
+                    if callable(finalize):
+                        finalize()
                 return handled.output or ""
             messages.append(
                 {"role": "assistant", "content": content or "未采取工具动作。"}
             )
             if handled.followup_instruction:
                 messages.append({"role": "user", "content": handled.followup_instruction})
+            if metrics is not None:
+                finalize = getattr(metrics, "finalize_agent_step", None)
+                if callable(finalize):
+                    finalize()
             continue
 
         # A real tool turn resets idle-text pressure.
@@ -292,6 +304,10 @@ def run_agent_loop(agent, user_input: str) -> str:
             agent, response, messages, current_plan_step=prepared.current_plan_step
         )
         if batch.early_stop is not None:
+            if metrics is not None:
+                finalize = getattr(metrics, "finalize_agent_step", None)
+                if callable(finalize):
+                    finalize()
             if batch.completion_finished:
                 return batch.early_stop
             handled = agent.completion_handler.handle_control_stop(
@@ -299,8 +315,16 @@ def run_agent_loop(agent, user_input: str) -> str:
             )
             return handled.output or "任务未完成。"
         if batch.restart:
+            if metrics is not None:
+                finalize = getattr(metrics, "finalize_agent_step", None)
+                if callable(finalize):
+                    finalize()
             continue
 
+        if metrics is not None:
+            finalize = getattr(metrics, "finalize_agent_step", None)
+            if callable(finalize):
+                finalize()
         ready = agent.completion_handler.check_after_batch(agent)
         if ready.finished:
             return ready.output or ""

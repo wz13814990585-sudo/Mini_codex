@@ -39,6 +39,7 @@ class TraceEventType(
 
     TOOL_REQUESTED = "tool_requested"
     TOOL_FINISHED = "tool_finished"
+    TOOL_BLOCKED = "tool_blocked"
 
     SAFETY_DECISION = "safety_decision"
 

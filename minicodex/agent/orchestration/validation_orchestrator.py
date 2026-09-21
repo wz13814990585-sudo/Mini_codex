@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..validation.decision_policy import ValidationDecisionPolicy
 
 import re
+from pathlib import Path
 
 from .control_decision import ControlDecision
 from .orchestration_transitions import (
@@ -241,6 +242,8 @@ class ValidationOrchestrator:
                     _typescript_type_annotation_hint(evidence),
                     _missing_target_file_hint(evidence),
                     _wrong_module_edit_hint(evidence),
+                    _contract_shape_delta_hint(evidence, agent),
+                    _framework_restore_hint(evidence, agent),
                 ) if hint
             ]
             if hints and ordinary.followup_message:
@@ -254,16 +257,22 @@ class ValidationOrchestrator:
             return ordinary
 
         reason = f"验证反复失败且无明显改善。{progress.message}"
+        shape_hint = _contract_shape_delta_hint(evidence, agent)
         policy = getattr(agent, "execution_policy", None)
         if policy is not None and not policy.enable_heavy_recovery:
+            message = "FAST 模式已停止：定向验证持续停滞。"
+            if shape_hint:
+                message = f"{message}\n{shape_hint}"
             return ControlDecision(
-                early_stop="FAST 模式已停止：定向验证持续停滞。",
+                early_stop=message,
                 reason_code=ReasonCode.BLOCKED,
             )
         recovery_message, should_continue = agent.recovery.recover(
             reason=reason,
             replan_callback=agent.replan,
         )
+        if shape_hint:
+            recovery_message = f"{recovery_message}\n{shape_hint}"
         print("\n[验证恢复]")
         print(recovery_message)
         if not should_continue:
@@ -279,13 +288,55 @@ class ValidationOrchestrator:
 
 
 def _typescript_type_annotation_hint(evidence: ValidationEvidence) -> str:
-    blob = f"{evidence.path or ''}\n{evidence.summary or ''}"
-    if ".ts" not in blob:
+    blob = f"{evidence.path or ''}\n{evidence.summary or ''}\n{evidence.details!s}\n{getattr(evidence, 'target', '')}"
+    if ".ts" not in blob and "node_behavior" not in blob and "typescript" not in blob.casefold():
+        if evidence.outcome != ValidationOutcome.FAILED:
+            return ""
+        # Still hint when node acceptance fails after a .ts edit.
+        if "data:text/javascript" not in blob and "inclusiveRange" not in blob:
+            return ""
+    if evidence.outcome != ValidationOutcome.FAILED and ".ts" not in blob:
         return ""
     return (
         "若验收通过 data:text/javascript 加载 .ts 失败，请去掉 TypeScript 类型注解后重写文件；"
-        "不要使用 --experimental-strip-types 绕过（隐藏 oracle 不会剥类型）。"
+        "不要使用 --experimental-strip-types / tsc 绕过（隐藏 oracle 不会剥类型）。"
     )
+
+
+def _framework_restore_hint(evidence: ValidationEvidence, agent=None) -> str:
+    blob = f"{evidence.summary or ''}\n{evidence.details!s}\n{getattr(evidence, 'target', '')}"
+    baseline = str(getattr(agent, "baseline_web_framework", "") or "")
+    if not baseline:
+        return ""
+    if evidence.outcome not in {ValidationOutcome.FAILED}:
+        if "无可解析" not in blob and "http.server" not in blob.casefold():
+            return ""
+    workspace = getattr(agent, "workspace", None)
+    if workspace:
+        app = Path(workspace) / "app.py"
+        if app.is_file():
+            try:
+                source = app.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                source = ""
+            lowered = source.casefold()
+            left_baseline = (
+                (baseline == "fastapi" and "fastapi" not in lowered)
+                or (baseline == "flask" and "flask" not in lowered)
+            )
+            if left_baseline or "http.server" in lowered or "basehttprequesthandler" in lowered:
+                return (
+                    f"当前实现离开了仓库基线框架（{baseline}）。"
+                    f"请恢复 {baseline} app，并用 patch_file 只做需求要求的增量修改；"
+                    "不要改成 Flask/http.server 来“换实现”。"
+                )
+    if "无可解析" in blob or "既无安全服务" in blob:
+        return (
+            f"HTTP 验收需要基线框架 {baseline or 'FastAPI/Flask'} 的可导入 app。"
+            "请恢复该框架实现后再跑同一验收。"
+        )
+    return ""
+
 
 
 def _missing_target_file_hint(evidence: ValidationEvidence) -> str:
@@ -330,6 +381,107 @@ def _wrong_module_edit_hint(evidence: ValidationEvidence) -> str:
         f"请直接修改 `{module}.py`（或该模块对应路径），"
         f"不要新建平行模块（例如 login.py）或只改测试文件。"
     )
+
+
+def _contract_shape_delta_hint(evidence: ValidationEvidence, agent=None) -> str:
+    """Diagnose when required python_behavior callable shape was replaced by a web app."""
+
+    if evidence.outcome != ValidationOutcome.FAILED:
+        return ""
+    target = str(getattr(evidence, "target", "") or "")
+    if agent is not None:
+        check = getattr(agent, "current_validation_check", None)
+        contract = getattr(check, "contract", None) if check is not None else None
+        if contract is not None and getattr(contract, "contract_type", "") == "python_behavior":
+            code = str(getattr(contract, "code", "") or "")
+            if code and (not target or "import" not in target):
+                target = code
+    blob = f"{target}\n{evidence.path or ''}\n{evidence.summary or ''}\n{evidence.details!s}"
+    imports = re.findall(r"from\s+([\w.]+)\s+import\s+(\w+)", target or blob)
+    if not imports:
+        return ""
+    workspace = getattr(agent, "workspace", None) if agent is not None else None
+    if not workspace:
+        return ""
+    root = Path(workspace)
+    for module, symbol in imports:
+        if module in {"pathlib", "pytest", "sys", "os", "inspect"}:
+            continue
+        call = re.search(rf"\b{re.escape(symbol)}\s*\(([^)]*)\)", target or blob)
+        if call is None:
+            continue
+        expected_args = [
+            part.strip() for part in call.group(1).split(",")
+            if part.strip() and "=" not in part.strip()
+        ]
+        if len(expected_args) < 1:
+            continue
+        path = root / f"{module.replace('.', '/')}.py"
+        if not path.is_file():
+            path = root / "src" / f"{module.replace('.', '/')}.py"
+        if not path.is_file():
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        is_web = bool(re.search(r"\bFlask\b|\bFastAPI\b|@app\.(route|get|post|put|delete)\b", source))
+        def_match = re.search(rf"def\s+{re.escape(symbol)}\s*\(([^)]*)\)", source)
+        actual_params = []
+        if def_match is not None:
+            actual_params = [
+                part.strip().split(":")[0].split("=")[0].strip()
+                for part in def_match.group(1).split(",")
+                if part.strip() and part.strip() not in {"self", "cls"}
+            ]
+        expects_tuple = bool(
+            re.search(rf"\w+\s*,\s*\w+\s*=\s*{re.escape(symbol)}\s*\(", target or blob)
+        )
+        returns_dict_only = bool(
+            re.search(rf"def\s+{re.escape(symbol)}\s*\([^)]*\):([\s\S]*?)(?=\ndef\s|\Z)", source)
+        )
+        dict_return = False
+        if returns_dict_only and expects_tuple:
+            body = re.search(
+                rf"def\s+{re.escape(symbol)}\s*\([^)]*\):([\s\S]*?)(?=\ndef\s|\Z)", source
+            )
+            fn_body = body.group(1) if body else ""
+            # Plain dict returns without a tuple/list return break (status, body) unpacking.
+            dict_return = (
+                bool(re.search(r"return\s*\{", fn_body))
+                and not bool(re.search(r"return\s*\(", fn_body))
+            )
+        shape_broken = is_web and (
+            def_match is None or len(actual_params) < len(expected_args)
+        )
+        if symbol == "login" and len(expected_args) >= 2:
+            expected_sig = "user, password"
+        else:
+            expected_sig = ", ".join(f"arg{i}" for i in range(len(expected_args)))
+        if shape_broken:
+            return (
+                f"当前实现破坏了原 public callable contract。"
+                f"验收要求直接调用 `{symbol}({expected_sig})`（required contract = python_behavior），"
+                f"但 `{path.name}` 已变成 Web endpoint。"
+                f"请恢复现有 `{symbol}({expected_sig})` 接口，仅按需求做增量修改；"
+                f"不要改成 Web endpoint，也不要用 validate_service 替代该契约。"
+            )
+        if dict_return:
+            return (
+                f"当前实现破坏了原 public callable contract。"
+                f"验收要求 `{symbol}({expected_sig})` 返回 `(status, body)` 二元组，"
+                f"但 `{path.name}` 改成了 dict/HTTP 风格返回值。"
+                f"请保留原调用与返回形状，仅在成功 body 上增量修改；"
+                f"不要用 validate_service 或自造凭据替换 required acceptance。"
+            )
+        if def_match is not None and len(actual_params) < len(expected_args):
+            return (
+                f"当前实现破坏了原 public callable contract。"
+                f"验收要求 `{symbol}({expected_sig})`（{len(expected_args)} 个位置参数），"
+                f"但签名变成了 `{symbol}({', '.join(actual_params)})`。"
+                f"请恢复参数个数与直接调用形状，仅按需求做增量修改。"
+            )
+    return ""
 
 
 _DEFAULT = ValidationOrchestrator()

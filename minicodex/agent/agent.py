@@ -3,6 +3,7 @@ import io
 import sys
 import time
 from contextlib import redirect_stdout
+from pathlib import Path
 
 from .editing import (
     CheckpointManager,
@@ -421,6 +422,25 @@ class MiniCodexAgent:
 
         return "."
 
+    def _detect_baseline_web_framework(self) -> str:
+        """Capture FastAPI/Flask presence before the agent rewrites app.py."""
+
+        root = Path(self.workspace)
+        for relative in ("app.py", "src/app.py"):
+            path = root / relative
+            if not path.is_file():
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            lowered = source.casefold()
+            if "fastapi" in lowered:
+                return "fastapi"
+            if "flask" in lowered:
+                return "flask"
+        return ""
+
     def ensure_bound_check(self, check):
         """Typed contracts are already bound; repository facts only resolve targets."""
         return check
@@ -700,6 +720,9 @@ class MiniCodexAgent:
             user_input
         )
         self.workspace_session.refresh(full=True)
+        self.baseline_web_framework = self._detect_baseline_web_framework()
+        if hasattr(self, "validator_resolver") and self.validator_resolver is not None:
+            self.validator_resolver.preferred_http_framework = self.baseline_web_framework
 
         self.active_plan = None
 
@@ -955,7 +978,7 @@ class MiniCodexAgent:
         return True
 
     def get_tool_schemas(self) -> list[dict]:
-        """Expose only mode-relevant tools without mutating the Registry."""
+        """Expose only currently executable tools without mutating the Registry."""
 
         intent = getattr(self.execution_route, "intent", TaskIntent.MODIFY)
         if intent == TaskIntent.INFORMATIONAL:
@@ -966,7 +989,8 @@ class MiniCodexAgent:
                 if getattr(self.execution_route, "target_paths", ())
                 else set()
             )
-            return self._schemas_for_capabilities(allowed_capabilities) if allowed_capabilities else []
+            schemas = self._schemas_for_capabilities(allowed_capabilities) if allowed_capabilities else []
+            return schemas
         if intent == TaskIntent.INSPECT_ONLY:
             inspect_capabilities = {
                 "filesystem.read", "code.search", "git.inspect", "test.run",
@@ -977,17 +1001,20 @@ class MiniCodexAgent:
             schemas = self.registry.get_schemas()
         policy = self.execution_policy
         allowed = getattr(policy, "exposed_tool_names", None)
-        if allowed is None:
-            return schemas
-        allowed_capabilities = set().union(*(self.registry.capabilities_for(name)
-                                              for name in allowed if name in getattr(self.registry, "_tools", {})))
-        return [
-            schema
-            for schema in schemas
-            if schema.get("function", {}).get("name") in allowed
-            or (schema.get("function", {}).get("name") in getattr(self.registry, "_tools", {})
-                and bool(self.registry.capabilities_for(schema["function"]["name"]) & allowed_capabilities))
-        ]
+        if allowed is not None:
+            allowed_capabilities = set().union(*(self.registry.capabilities_for(name)
+                                                  for name in allowed if name in getattr(self.registry, "_tools", {})))
+            schemas = [
+                schema
+                for schema in schemas
+                if schema.get("function", {}).get("name") in allowed
+                or (schema.get("function", {}).get("name") in getattr(self.registry, "_tools", {})
+                    and bool(self.registry.capabilities_for(schema["function"]["name"]) & allowed_capabilities))
+            ]
+        # Phase/action/contract-aware pre-filter. ActionController remains the
+        # final deterministic guard for argument-specific restrictions.
+        from .orchestration.tool_availability import ToolAvailabilityResolver
+        return ToolAvailabilityResolver().filter_schemas(self, schemas)
 
     def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
         """Filter through tool-owned capability declarations."""

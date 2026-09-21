@@ -40,7 +40,14 @@ def resolve_tool_restriction(agent, tool_name: str, arguments: dict) -> ToolRest
     action = getattr(agent, "action_controller", None)
     policy = getattr(agent, "execution_policy", None)
     if action is not None and policy is not None:
-        reason = action.restriction_reason(tool_name, arguments, policy)
+        fin = getattr(agent, "finalization", None)
+        reason = action.restriction_reason(
+            tool_name,
+            arguments,
+            policy,
+            finalization_active=bool(getattr(fin, "active", False)),
+            allow_proof_inspection=bool(getattr(fin, "allow_proof_inspection", False)),
+        )
         if reason:
             return ToolRestriction("action_required_restriction", reason, reason_code=ReasonCode.INSPECTION_LIMIT)
 

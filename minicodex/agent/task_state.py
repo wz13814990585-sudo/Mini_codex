@@ -39,6 +39,7 @@ class RuntimeEventType(str, Enum):
     PLAN_RECONCILED = "plan_reconciled"
     TOOL_STARTED = "tool_started"
     TOOL_FINISHED = "tool_finished"
+    TOOL_BLOCKED = "tool_blocked"
     EDIT_APPLIED = "edit_applied"
     WORKSPACE_CHANGED = "workspace_changed"
     VALIDATION_OBSERVED = "validation_observed"
@@ -209,6 +210,8 @@ def reduce_task_state(state: TaskState, event: RuntimeEvent) -> TaskState:
         updates["consecutive_no_state_change"] = max(
             0, int(data.get("consecutive_no_state_change", state.consecutive_no_state_change))
         )
+    elif event.kind == RuntimeEventType.TOOL_BLOCKED:
+        updates["active_tool"] = None
     elif event.kind in {RuntimeEventType.EDIT_APPLIED, RuntimeEventType.WORKSPACE_CHANGED}:
         from .editing.work_unit import WorkUnit
         owned = event.kind == RuntimeEventType.EDIT_APPLIED

@@ -146,11 +146,11 @@ def test_hidden_oracle_is_materialized_only_after_agent_finishes(tmp_path):
 
 
 def _evidence(outcome, revision, *, purpose=ValidationPurpose.ACCEPTANCE,
-              scope=ValidationScope.TARGETED):
+              scope=ValidationScope.TARGETED, check_id=""):
     return ValidationEvidence(
         tool_name="run_tests", execution_succeeded=True, outcome=outcome,
         scope=scope, purpose=purpose,
-        edit_revision=revision,
+        edit_revision=revision, check_id=check_id,
     )
 
 
@@ -159,14 +159,16 @@ class MetricAgent:
                  outcome="edited_and_validated", max_steps=False,
                  intent=TaskIntent.MODIFY, edit_count=None, tool_count=4,
                  edited_paths=(), rollback_count=0, redundant_reads=0,
-                 no_progress=0):
+                 no_progress=0, validation_plan=None):
         edit_count = revision if edit_count is None else edit_count
         self.workspace = workspace
         self.validation_pipeline = SimpleNamespace(state=SimpleNamespace(
             edit_revision=revision, has_edit=bool(edit_count),
             acceptance_passed=any(item.purpose == ValidationPurpose.ACCEPTANCE and
                                   item.outcome == ValidationOutcome.PASSED for item in evidence),
-            full_passed=False, evidence_history=list(evidence)))
+            full_passed=False, evidence_history=list(evidence),
+            plan=validation_plan,
+        ))
         self.token_metrics = SimpleNamespace(
             total=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15), call_count=2)
         self.execution_metrics = ExecutionMetrics(
@@ -178,7 +180,8 @@ class MetricAgent:
             no_progress_detections=no_progress,
         )
         self.execution_route = SimpleNamespace(intent=intent)
-        self.active_plan = None
+        # Work plan has steps only — must not be used for first-pass check binding.
+        self.active_plan = SimpleNamespace(steps=("edit",), is_completed=lambda: True)
         self.concrete_blockers = []
 
     def run(self, prompt):
@@ -204,6 +207,39 @@ def test_unbound_acceptance_is_not_first_pass_success_but_metrics_remain(tmp_pat
     assert result.validation_runs == result.validation_passes == 1
     assert result.validation_failures == result.validation_inconclusive == 0
     assert result.run_index == 2 and result.benchmark_version == BENCHMARK_VERSION
+
+
+def test_bound_acceptance_on_validation_plan_is_first_pass_success(tmp_path):
+    """first_pass must bind to validation_pipeline.state.plan checks, not active_plan steps."""
+    plan = SimpleNamespace(checks=(
+        SimpleNamespace(id="V1", required=True, purpose=ValidationPurpose.ACCEPTANCE),
+    ))
+    agent = MetricAgent(
+        tmp_path,
+        [
+            _evidence(ValidationOutcome.FAILED, 0, check_id="V1"),
+            _evidence(ValidationOutcome.PASSED, 1, check_id="V1"),
+        ],
+        validation_plan=plan,
+    )
+    result = _metric_case(tmp_path, agent)
+    assert result.first_pass_success is True
+    assert result.recovery_entered is False
+    assert result.repair_attempts == 0
+
+
+def test_active_plan_without_validation_checks_cannot_prove_first_pass(tmp_path):
+    """Regression: work-plan active_plan has no .checks; must not silently zero first-pass."""
+    agent = MetricAgent(
+        tmp_path,
+        [_evidence(ValidationOutcome.PASSED, 1, check_id="V1")],
+        validation_plan=None,
+    )
+    # active_plan is still present (steps only) — first_pass must stay False.
+    assert getattr(agent.active_plan, "steps", None)
+    assert not hasattr(agent.active_plan, "checks")
+    result = _metric_case(tmp_path, agent)
+    assert result.first_pass_success is False
 
 
 def test_recovery_semantics_require_corrective_action_and_oracle_success(tmp_path):
@@ -373,6 +409,12 @@ def test_summary_denominators_and_efficiency_metrics():
     assert metrics["median_tokens_per_success"] == 200
     assert metrics["average_failed_tool_calls"] == 1 / 3
     assert metrics["failed_tool_call_rate"] == 1 / 12
+    assert metrics["ghost_step_count"] == 0
+    assert metrics["ghost_step_rate"] == 0.0
+    assert metrics["executed_tool_turn_count"] == 0
+    assert metrics["blocked_tool_selection_count"] == 0
+    assert metrics["productive_step_count"] == 0
+    assert metrics["text_only_step_count"] == 0
 
 
 def test_baseline_and_minicodex_share_budget_but_not_advanced_controls():

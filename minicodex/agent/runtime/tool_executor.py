@@ -143,9 +143,17 @@ class ToolExecutor:
         missing = [name for name in required if name not in arguments]
         if missing:
             return f"missing required argument(s): {', '.join(missing)}"
-        # These Harness-level bindings are accepted by every validator even
-        # when a backend tool schema does not repeat them.
-        unknown = set(arguments) - set(properties) - {"purpose", "validation_check"}
+        # Internal MiniCodex tool-call metadata contract (not backend tool
+        # parameters). ToolSchemaProvider may advertise these to the LLM;
+        # prepare accepts them here, and the orchestration layer strips them
+        # before the underlying tool.execute(**kwargs) call.
+        # See ToolSchemaProvider / tool_call_runner for the matching strip set.
+        _INTERNAL_TOOL_CALL_METADATA = frozenset({
+            "purpose",
+            "validation_check",
+            "edit_intent",
+        })
+        unknown = set(arguments) - set(properties) - _INTERNAL_TOOL_CALL_METADATA
         # A deliberately empty properties mapping is used by lightweight
         # adapters to mean an open-ended interface.  Preserve that standard
         # JSON-Schema behaviour; production tools declare their accepted

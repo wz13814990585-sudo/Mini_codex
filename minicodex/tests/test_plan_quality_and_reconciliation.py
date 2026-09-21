@@ -95,6 +95,80 @@ def test_permission_seeking_plan_step_is_process_only():
     assert report.should_regenerate is True
 
 
+def test_locate_plan_step_is_process_only():
+    from types import SimpleNamespace
+    step = SimpleNamespace(
+        id=4,
+        description="定位登录成功 token 响应的构造位置，确认其返回结构与状态字段",
+        acceptance_criteria=[],
+        requires_semantic_completion=False,
+        quality_warnings=[],
+    )
+    report = PlanQualityValidator().validate([step])
+    assert any(issue.code == "process_only" for issue in report.issues)
+
+
+def test_zero_edit_plan_stall_forces_edit_instead_of_stop():
+    from types import SimpleNamespace
+    from minicodex.agent.orchestration.plan_orchestrator import PlanOrchestrator
+    from minicodex.agent.planning.state import StepStatus
+    from minicodex.agent.validation import (
+        PythonBehaviorContract, ValidationPipeline,
+    )
+    from minicodex.agent.validation.plan import ValidationPlanner
+    from minicodex.agent.planning.requirements import (
+        RequirementCategory, TaskRequirement, TaskRequirements,
+    )
+
+    orchestrator = PlanOrchestrator()
+    locate = PlanStep(
+        id=4,
+        description="定位登录成功 token 响应的构造位置，确认其返回结构与状态字段",
+        status=StepStatus.IN_PROGRESS,
+        attempts=5,
+    )
+    edit = PlanStep(
+        id=5,
+        description="在成功响应中加入 expires_in=3600",
+        status=StepStatus.PENDING,
+        attempts=0,
+    )
+    plan = AgentPlan(goal="login", steps=[locate, edit])
+    requirements = TaskRequirements([
+        TaskRequirement(
+            "R1",
+            "expires_in",
+            RequirementCategory.BEHAVIOR,
+            ("app.py",),
+            PythonBehaviorContract("from app import login\nassert login('demo','demo')[0]==200\n"),
+        )
+    ])
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(requirements)
+    controller = SimpleNamespace(
+        force_edit_instruction=lambda: "FORCE_EDIT_APP_PY",
+        _activate=lambda: None,
+    )
+    agent = SimpleNamespace(
+        active_plan=plan,
+        max_step_attempts=5,
+        validation_pipeline=pipeline,
+        action_controller=controller,
+        plan_version=1,
+        sync_plan_state=lambda: None,
+        recovery=SimpleNamespace(recover=lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not recover"))),
+        replan=lambda reason: {"replanned": False},
+    )
+
+    turn = orchestrator.begin_turn(agent)
+    assert turn.can_continue is True
+    assert turn.terminal_reason is None
+    assert turn.followup_message == "FORCE_EDIT_APP_PY"
+    assert locate.status == StepStatus.SUPERSEDED
+    assert turn.current_step is edit
+    assert edit.attempts == 0
+
+
 def test_semantic_completion_requires_fresh_current_revision_evidence():
     agent = MiniCodexAgent(
         llm=None,

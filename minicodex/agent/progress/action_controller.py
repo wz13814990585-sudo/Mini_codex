@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from ..task_state import AgentPhase, TaskState
 from .progress import ProgressKind, ProgressSignal
 
@@ -96,6 +98,7 @@ class ActionController:
             or getattr(state, "target_paths", ())
             or ()
         )
+        self.baseline_web_framework = ""
 
     def update_context(
         self,
@@ -109,6 +112,7 @@ class ActionController:
         validator_resolution_status: object = "",
         unresolved_reason: str = "",
         validation_paths=(),
+        baseline_web_framework: str | None = None,
     ) -> None:
         """Expose current deterministic task context without adding pressure."""
 
@@ -135,6 +139,8 @@ class ActionController:
         self.validator_resolution_status = str(status or "")
         self.unresolved_reason = str(unresolved_reason or "")
         self.validation_paths = tuple(dict.fromkeys(validation_paths or self.target_paths))
+        if baseline_web_framework is not None:
+            self.baseline_web_framework = str(baseline_web_framework or "")
         if not same_obligation:
             self.validation_inspections = 0
 
@@ -183,17 +189,82 @@ class ActionController:
             return True
         return False
 
+    def executable_policy_state(
+        self,
+        policy,
+        *,
+        finalization_active: bool = False,
+        allow_proof_inspection: bool = False,
+    ) -> "ExecutableToolPolicyState":
+        """Snapshot shared with ToolAvailabilityResolver / schema filtering."""
+
+        from .executable_tool_policy import ExecutableToolPolicyState
+
+        return ExecutableToolPolicyState(
+            phase=self.phase,
+            action_required=bool(self.action_required),
+            consecutive_inspections=int(self.consecutive_inspections or 0),
+            validation_inspections=int(self.validation_inspections or 0),
+            inspection_budget=self._inspection_limit(policy),
+            unresolved_inspection_limit=int(self.UNRESOLVED_INSPECTION_LIMIT),
+            next_contract_type=str(self.next_contract_type or ""),
+            next_required_check_id=str(self.next_required_check_id or ""),
+            validator_resolution_status=str(self.validator_resolution_status or ""),
+            validation_paths=tuple(self.validation_paths or ()),
+            target_paths=tuple(self.target_paths or ()),
+            has_edit=bool(self.has_edit),
+            finalization_active=bool(finalization_active),
+            allow_proof_inspection=bool(allow_proof_inspection),
+            enable_replan=bool(getattr(policy, "enable_replan", False)),
+            exposed_tool_names=(
+                frozenset(getattr(policy, "exposed_tool_names"))
+                if getattr(policy, "exposed_tool_names", None) is not None
+                else None
+            ),
+        )
+
     def restriction_reason(
         self,
         tool_name: str,
         arguments: dict | None,
         policy,
+        *,
+        finalization_active: bool = False,
+        allow_proof_inspection: bool = False,
     ) -> str | None:
         """Block only another wasteful action; edits/validation stay open."""
 
         self.current_mode = getattr(policy, "mode", None)
         capabilities = self._capabilities(tool_name)
         is_read = "file.read" in capabilities
+
+        # Align with schema filtering for argument-independent capability blocks.
+        # Unresolved validation still needs the path-scoped grant + counter below.
+        from .executable_tool_policy import ExecutableToolPolicy
+        skip_shared = (
+            self.phase in {AgentPhase.VALIDATING, AgentPhase.FINALIZING}
+            and self.validator_resolution_status == "target_unresolved"
+            and self._inspection(tool_name)
+        )
+        if not skip_shared:
+            shared_reason = ExecutableToolPolicy.capability_block_reason(
+                self.executable_policy_state(
+                    policy,
+                    finalization_active=finalization_active,
+                    allow_proof_inspection=allow_proof_inspection,
+                ),
+                tool_name=tool_name,
+                capabilities=capabilities,
+            )
+            if shared_reason:
+                # Match legacy pressure: only INSPECTING/ACTING budget gates
+                # flip action_required. FIXING/VALIDATING denials stay local.
+                if self._inspection(tool_name) and self.phase in {
+                    AgentPhase.INSPECTING,
+                    AgentPhase.ACTING,
+                }:
+                    self._activate()
+                return shared_reason
 
         if self.phase in {AgentPhase.VALIDATING, AgentPhase.FINALIZING} and self._inspection(tool_name):
             if self.validator_resolution_status == "target_unresolved":
@@ -260,6 +331,9 @@ class ActionController:
                         f"当前验收路径为 {', '.join(allowed)}。"
                         f"请编辑这些文件，不要写入 {path}。"
                     )
+            edit_block = self._edit_content_restriction(tool_name, arguments or {})
+            if edit_block:
+                return edit_block
 
         if tool_name == "replan" and not getattr(policy, "enable_replan", False):
             return "FAST 模式无计划；replan 不可用。"
@@ -272,6 +346,26 @@ class ActionController:
                 f"当前必需检查 {self.next_required_check_id or 'browser_interaction'} "
                 "是浏览器交互契约。请修复 HTML 引用的脚本中的事件监听，"
                 "不要用 validate_static_web / require_inline_script 替代。"
+            )
+
+        # Required contract is source of truth: do not chase workspace-shaped HTTP
+        # validators when acceptance is a plain python_behavior/pytest check.
+        if (
+            tool_name == "validate_service"
+            or "service.validate" in capabilities
+        ) and self.next_contract_type in {
+            "python_behavior",
+            "node_behavior",
+            "pytest",
+            "file_contains",
+            "file_exists",
+            "command",
+        }:
+            return (
+                f"当前必需检查 {self.next_required_check_id or 'current'} 的契约是 "
+                f"{self.next_contract_type}，不是 HTTP 服务。"
+                "请修复实现使原 python/文件验收通过；"
+                "不要用 validate_service 或 Web endpoint 替代该契约。"
             )
 
         if (
@@ -315,6 +409,68 @@ class ActionController:
         if self._inspection(tool_name) or "process.run" in capabilities:
             return self.INSTRUCTION
         return None
+
+    def _edit_content_restriction(self, tool_name: str, arguments: dict) -> str | None:
+        path = self._normalize_path(str(arguments.get("path", "") or ""))
+        content = str(
+            arguments.get("content")
+            or arguments.get("new_text")
+            or arguments.get("new_content")
+            or ""
+        )
+        if not content:
+            return None
+
+        if path.endswith((".ts", ".tsx")) and self._has_typescript_type_annotations(content):
+            return (
+                "TypeScript 验收按 data:text/javascript 加载（与隐藏 oracle 一致），"
+                "禁止类型注解。请写出无 `: number` / `: string` 等注解的模块风格代码。"
+            )
+
+        if (
+            tool_name == "write_file"
+            and self.next_contract_type == "python_behavior"
+            and re.search(r"\bFlask\b|\bFastAPI\b|@app\.(route|get|post)\b", content)
+        ):
+            return (
+                "当前必需检查是 python_behavior。"
+                "请用 patch_file 在现有 public callable 上做增量修改，"
+                "不要把实现重写成 Flask/FastAPI Web endpoint。"
+            )
+
+        baseline = str(self.baseline_web_framework or "")
+        if path.endswith("app.py") and baseline in {"fastapi", "flask"}:
+            lowered = content.casefold()
+            if baseline == "fastapi":
+                if "fastapi" not in lowered or re.search(
+                    r"\bflask\b|http\.server|basehttprequesthandler", lowered
+                ):
+                    return (
+                        "仓库基线是 FastAPI。"
+                        "请用 patch_file 增量修改现有 FastAPI app（例如补 status_code / Email 校验），"
+                        "不要改成 Flask 或 http.server。"
+                    )
+            if baseline == "flask":
+                if "flask" not in lowered or re.search(
+                    r"\bfastapi\b|http\.server|basehttprequesthandler", lowered
+                ):
+                    return (
+                        "仓库基线是 Flask。"
+                        "请用 patch_file 增量修改现有 Flask app，"
+                        "不要改成 FastAPI 或 http.server。"
+                    )
+        return None
+
+    @staticmethod
+    def _has_typescript_type_annotations(content: str) -> bool:
+        return bool(
+            re.search(
+                r":\s*(number|string|boolean|any|void|unknown|never|bigint)\b|"
+                r":\s*[A-Za-z_][\w.]*(\[\])?(\s*\|\s*[A-Za-z_][\w.]*)*\s*[=,)\n]|"
+                r"\)\s*:\s*[A-Za-z_\[\]|<]",
+                content,
+            )
+        )
 
     def _activate(self) -> None:
         if not self.action_required:

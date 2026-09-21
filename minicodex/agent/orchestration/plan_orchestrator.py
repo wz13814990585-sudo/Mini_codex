@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
+from ..planning.plan_quality import PlanQualityValidator
+from ..planning.state import StepStatus
+from ..validation.decision_policy import ValidationDecisionPolicy
+
+
+_LOCATE_STEP = re.compile(
+    r"定位|探查|查找构造|find (?:the )?location|locate ",
+    re.IGNORECASE,
+)
 
 @dataclass(frozen=True)
 class PlanTurnState:
@@ -23,6 +33,12 @@ class PlanOrchestrator:
         current = plan.start_current_step()
         if current is None or current.attempts < agent.max_step_attempts:
             return PlanTurnState(current, True)
+
+        # Zero-edit + pending acceptance: never let locate/process plan steps
+        # terminate the task. Force an edit instead of recovery death / replan
+        # into more reconnaissance milestones.
+        if self._must_keep_editing(agent):
+            return self._force_edit_after_step_stall(agent, plan, current)
 
         reason = (
             f"计划步骤 {current.id} 已超过尝试次数上限。"
@@ -49,6 +65,57 @@ class PlanOrchestrator:
             True,
             followup_message=recovery_message,
             replanned=active is not previous_plan,
+        )
+
+    @staticmethod
+    def _must_keep_editing(agent) -> bool:
+        ledger = getattr(getattr(agent, "validation_pipeline", None), "state", None)
+        if ledger is None:
+            return False
+        if int(getattr(ledger, "edit_revision", 0) or 0) > 0:
+            return False
+        check = ValidationDecisionPolicy(ledger).next_required_check()
+        return check is not None
+
+    @classmethod
+    def _force_edit_after_step_stall(cls, agent, plan, current) -> PlanTurnState:
+        description = str(getattr(current, "description", "") or "")
+        if cls._is_reconnaissance_step(description):
+            current.status = StepStatus.SUPERSEDED
+            if current in plan.steps:
+                plan.steps.remove(current)
+                plan.completed_history.append(current)
+            agent.plan_version += 1
+            sync = getattr(agent, "sync_plan_state", None)
+            if callable(sync):
+                sync()
+            current = plan.start_current_step()
+
+        if current is not None:
+            current.reset_attempts()
+
+        force = ""
+        controller = getattr(agent, "action_controller", None)
+        if controller is not None:
+            activate = getattr(controller, "_activate", None)
+            if callable(activate):
+                activate()
+            force = str(getattr(controller, "force_edit_instruction", lambda: "")() or "")
+        if not force:
+            force = (
+                "验收尚未通过且尚未编辑工作区。"
+                "请立即用 write_file/patch_file 修改验收目标文件；"
+                "不要继续定位/探查类计划步骤。"
+            )
+        return PlanTurnState(current, True, followup_message=force)
+
+    @staticmethod
+    def _is_reconnaissance_step(description: str) -> bool:
+        text = str(description or "")
+        return bool(
+            PlanQualityValidator._PROCESS_ONLY.search(text)
+            or PlanQualityValidator._PERMISSION_SEEKING.search(text)
+            or _LOCATE_STEP.search(text)
         )
 
     @staticmethod

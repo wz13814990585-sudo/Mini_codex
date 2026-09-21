@@ -315,31 +315,18 @@ class EvaluationHarness:
         # Plan State
         # =====================================================
 
-        plan = getattr(
-            agent,
-            "active_plan",
-            None,
-        )
-
-        if (
-            plan
-            is None
-        ):
-
+        # Agent work plan (steps) — used only for plan_completed bookkeeping.
+        work_plan = getattr(agent, "active_plan", None)
+        if work_plan is None:
             plan_completed = True
-
         else:
-
             try:
-
-                plan_completed = bool(
-                    plan.is_completed()
-                )
-
+                plan_completed = bool(work_plan.is_completed())
             except Exception:
-
                 plan_completed = False
 
+        # Validation plan (typed checks) — source of truth for first-pass metrics.
+        validation_plan = getattr(validation_state, "plan", None)
         # =====================================================
         # Token Metrics
         # =====================================================
@@ -497,7 +484,7 @@ class EvaluationHarness:
             edit_count=edit_count,
             edit_revision=edit_revision,
             acceptance_passed=acceptance_passed,
-            plan=plan,
+            plan=validation_plan,
             evidence_history=evidence_history,
             recovery_entered=recovery_entered,
             corrective_edit=corrective_edit,
@@ -527,7 +514,7 @@ class EvaluationHarness:
             unauthorized_edit=unauthorized_edit,
             wrong_file_edit=wrong_file_edit,
             evidence_history=evidence_history,
-            plan=plan,
+            plan=validation_plan,
             blockers=tuple(getattr(agent, "concrete_blockers", ()) or ()),
         )
         failure_reason = self._failure_reason(
@@ -661,6 +648,12 @@ class EvaluationHarness:
             oracle_checks=oracle_checks,
             oracle_passed=oracle_passed,
             agent_steps=int(metric("agent_steps", 0) or 0),
+            executed_tool_turn_count=int(metric("executed_tool_turn_count", 0) or 0),
+            ghost_step_count=int(metric("ghost_step_count", 0) or 0),
+            ghost_step_rate=float(metric("ghost_step_rate", 0.0) or 0.0),
+            blocked_tool_selection_count=int(metric("blocked_tool_selection_count", 0) or 0),
+            productive_step_count=int(metric("productive_step_count", 0) or 0),
+            text_only_step_count=int(metric("text_only_step_count", 0) or 0),
             llm_call_count=(llm_calls + int(metric("routing_llm_calls", 0) or 0)
                             + int(metric("requirements_llm_calls", 0) or 0)
                             + int(metric("semantic_judge_llm_calls", 0) or 0)),

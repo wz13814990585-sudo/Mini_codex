@@ -12,6 +12,9 @@ class ToolSchemaProvider:
             function = schema["function"]
             caps = agent.registry.capabilities_for(function["name"])
             if "code.edit" in caps:
+                # Internal MiniCodex tool-call metadata (not a backend tool
+                # parameter). prepare() must accept it; tool_call_runner strips
+                # it before tool.execute.
                 function["parameters"].setdefault("properties", {})["edit_intent"] = {
                     "type": "object", "description": "Independent expected post-edit state, not the patch mechanism.",
                     "properties": {"path": {"type": "string"}, "expected_text": {"type": "string"},
@@ -19,6 +22,7 @@ class ToolSchemaProvider:
                     "required": ["path", "expected_text"], "additionalProperties": False,
                 }
             if caps & {"test.run", "process.run", "validation.static_web", "validation.browser", "service.validate"}:
+                # Internal metadata: accepted in prepare, stripped before execute.
                 function["parameters"].setdefault("properties", {})["validation_check"] = {
                     "type": "string", "description": "Exact V-id from the current verification contracts."
                 }

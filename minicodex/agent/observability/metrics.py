@@ -12,6 +12,15 @@ class ExecutionMetrics:
     intent: str | None = None
     llm_call_count: int = 0
     agent_steps: int = 0
+    executed_tool_turn_count: int = 0
+    ghost_step_count: int = 0
+    blocked_tool_selection_count: int = 0
+    productive_step_count: int = 0
+    text_only_step_count: int = 0
+    _step_tool_calls: int = 0
+    _step_tool_requested: int = 0
+    _step_blocked_tools: int = 0
+    _step_productive: bool = False
     tool_call_count: int = 0
     failed_tool_call_count: int = 0
     failed_edit_tool_count: int = 0
@@ -77,6 +86,15 @@ class ExecutionMetrics:
         self.intent = intent
         self.llm_call_count = 0
         self.agent_steps = 0
+        self.executed_tool_turn_count = 0
+        self.ghost_step_count = 0
+        self.blocked_tool_selection_count = 0
+        self.productive_step_count = 0
+        self.text_only_step_count = 0
+        self._step_tool_calls = 0
+        self._step_tool_requested = 0
+        self._step_blocked_tools = 0
+        self._step_productive = False
         self.tool_call_count = 0
         self.failed_tool_call_count = 0
         self.failed_edit_tool_count = 0
@@ -169,6 +187,47 @@ class ExecutionMetrics:
             self.validation_runs += 1
         if tool_name == "replan":
             self.replan_count += 1
+
+    def begin_agent_step(self) -> None:
+        """Reset per-step tool accounting for one main-agent turn."""
+
+        self._step_tool_calls = 0
+        self._step_tool_requested = 0
+        self._step_blocked_tools = 0
+        self._step_productive = False
+
+    def note_step_tool_call(self) -> None:
+        self._step_tool_calls += 1
+
+    def note_step_tool_requested(self, *, productive: bool = False) -> None:
+        self._step_tool_requested += 1
+        if productive:
+            self._step_productive = True
+
+    def note_step_tool_blocked(self) -> None:
+        self._step_blocked_tools += 1
+        self.blocked_tool_selection_count += 1
+
+    def note_step_productive(self) -> None:
+        self._step_productive = True
+
+    def finalize_agent_step(self) -> None:
+        """Classify the completed main-agent step without changing agent_steps."""
+
+        if self._step_tool_calls <= 0:
+            self.text_only_step_count += 1
+            return
+        if self._step_tool_requested > 0:
+            self.executed_tool_turn_count += 1
+        else:
+            self.ghost_step_count += 1
+        if self._step_productive:
+            self.productive_step_count += 1
+
+    @property
+    def ghost_step_rate(self) -> float:
+        return self.ghost_step_count / self.agent_steps if self.agent_steps else 0.0
+
 
     def finish(self, outcome: str, reason: str, reason_code=None) -> None:
         self.final_outcome = outcome
