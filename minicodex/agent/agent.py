@@ -1,57 +1,77 @@
-import re
+import json
+import io
+import sys
+import time
+from contextlib import redirect_stdout
+from pathlib import Path
 
-from .checkpoint import (
+from .editing import (
     CheckpointManager,
-)
-from .checkpoint_executor import (
     CheckpointingToolExecutor,
-)
-from .context_budget import (
-    ContextBudget,
-)
-from .git_awareness import (
-    GitAwareness,
-    GitRepositoryInspector,
-)
-from .loop import (
-    run_agent_loop,
-)
-from .metrics import (
-    TokenMetrics,
-)
-from .progress import (
-    ProgressController,
-)
-from .recovery import (
-    RecoveryController,
-)
-from .rollback import (
+    EditRetryPolicy,
+    RollbackCoordinator,
     RollbackEngine,
 )
-from .safety import (
-    SafetyPolicy,
+from .context import (
+    ContextBudget,
 )
-from .safety_executor import (
-    SafetyToolExecutor,
+from .progress import ActionController, FinalizationController
+from .validation import (
+    JudgeContextBuilder,
+    RegressionPolicy,
+    RegressionRequirement,
+    RegressionRecoveryPolicy,
+    RelevantPathResolver,
+    TaskCompletionPolicy,
+    ValidationExecutor,
+    ValidationPipeline,
+    ValidatorResolver,
+    SemanticRegressionJudge,
 )
-from .state import (
-    AgentPlan,
-)
-from .tool_executor import (
+from .dependency import DependencyResolver
+from .routing import ExecutionPolicy, TaskIntent, TaskRouter, policy_for
+from .runtime import (
+    GitAwareness,
+    GitRepositoryInspector,
+    RuntimeTaskControl,
     ToolExecutor,
 )
-from .validation import (
-    ValidationPipeline,
+from .orchestration.loop import (
+    run_agent_loop,
 )
-from .working_summary import (
+from .orchestration import (
+    CompletionHandler,
+    FinalResponseMode,
+    ToolBatchRunner,
+    TurnBuilder,
+    ValidationOrchestrator,
+    PlanOrchestrator,
+)
+from .orchestration.task_start import TaskBootstrapper
+from .observability import (
+    ExecutionMetrics,
+    OutputLevel,
+    TokenMetrics,
+)
+from .progress import ProgressController
+from .planning import (
+    AgentPlan, PlanProgressReconciler, RequirementsExtractor,
+    StepEvidenceStore, TaskRequirements,
+)
+from .progress import RecoveryController
+from .safety import (
+    SafetyPolicy,
+    SafetyToolExecutor,
+)
+from .task_state import AgentPhase, RuntimeEventType, TaskRuntime, TaskState
+from .validation.contracts import CommandContract, TestTargetContract
+from .validation.plan import EvidenceStrength, ValidationCheck, ValidationPlan
+from .validation.evidence import ValidationPurpose
+from .validation.decision_policy import ValidationDecisionPolicy
+from .context.workspace_session import ChangeImpactResolver, WorkspaceSession
+from .memory import (
     WorkingSummary,
 )
-
-from ..prompts.system import (
-    build_system_prompt,
-    build_turn_context,
-)
-
 
 class MiniCodexAgent:
 
@@ -65,11 +85,25 @@ class MiniCodexAgent:
         max_steps: int = 20,
         max_step_attempts: int = 5,
         max_context_tokens: int = 64000,
+        status_interval_seconds: float = 15.0,
+        max_no_progress_steps: int = 5,
+        task_router: TaskRouter | None = None,
+        requirements_extractor: RequirementsExtractor | None = None,
+        semantic_judge: SemanticRegressionJudge | None = None,
+        regression_policy: RegressionPolicy | None = None,
+        output_level: str | OutputLevel = OutputLevel.NORMAL,
     ):
 
         self.llm = llm
 
         self.registry = registry
+
+        self.status_interval_seconds = max(
+            0.0,
+            float(status_interval_seconds),
+        )
+        self.output_level = OutputLevel.parse(output_level)
+        self._normal_progress_stream = None
 
         # =====================================================
         # Shared Workspace
@@ -80,9 +114,10 @@ class MiniCodexAgent:
                 registry
             )
         )
+        self.workspace_session = WorkspaceSession(self.workspace)
 
         # =====================================================
-        # Stage 11 Git Awareness
+        # Git awareness
         # =====================================================
 
         self.git_inspector = (
@@ -102,7 +137,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Stage 12 Safety / Permission
+        # Safety and permissions
         # =====================================================
 
         self.safety_policy = (
@@ -178,7 +213,7 @@ class MiniCodexAgent:
         )
 
         # =====================================================
-        # Stage 12 Safety Boundary
+        # Safety boundary
         #
         # LLM
         #   ↓
@@ -191,6 +226,7 @@ class MiniCodexAgent:
 
         self.tool_executor = (
             SafetyToolExecutor(
+                registry=registry,
                 executor=(
                     checkpoint_executor
                 ),
@@ -239,7 +275,7 @@ class MiniCodexAgent:
         )
 
         self.repo_map_text = (
-            "Repository map unavailable."
+            "仓库地图不可用。"
         )
 
         # =====================================================
@@ -257,6 +293,8 @@ class MiniCodexAgent:
         self.max_steps = (
             max_steps
         )
+        self.configured_max_steps = max(1, int(max_steps))
+        self.task_max_steps = self.configured_max_steps
 
         self.max_step_attempts = (
             max_step_attempts
@@ -276,6 +314,22 @@ class MiniCodexAgent:
             | None
         ) = None
 
+        self.task_router = task_router or TaskRouter()
+        self.requirements_extractor = requirements_extractor or RequirementsExtractor()
+        self.task_requirements = TaskRequirements()
+        self.runtime_control = RuntimeTaskControl()
+        self.semantic_judge = semantic_judge or SemanticRegressionJudge()
+        self.judge_context_builder = JudgeContextBuilder()
+        self.regression_recovery_policy = RegressionRecoveryPolicy()
+        self.task_steps_consumed = 0
+        self.concrete_blockers: list[str] = []
+        self.regression_policy = regression_policy or RegressionPolicy()
+        self.execution_route = None
+        self.execution_policy: ExecutionPolicy | None = None
+        self.task_requires_validation = True
+        self.plan_version = 0
+        self.rollback_revision = 0
+
         # =====================================================
         # Progress
         # =====================================================
@@ -283,8 +337,41 @@ class MiniCodexAgent:
         self.progress = (
             ProgressController(
                 max_same_tool_repeats=2,
-                progress_window=6,
                 max_validation_no_progress=2,
+            )
+        )
+        self.latest_progress_signal = None
+
+        self.action_controller = ActionController(registry)
+        self.finalization = FinalizationController()
+        self.step_evidence = StepEvidenceStore()
+        self.completion_policy = TaskCompletionPolicy()
+        self.execution_metrics = ExecutionMetrics()
+        self.task_runtime = TaskRuntime()
+        self.task_state = self.task_runtime.state
+        self.edit_retry = EditRetryPolicy()
+        self.dependency_resolver = DependencyResolver(self.workspace)
+        self.latest_dependency_resolution = None
+        self.latest_symbol_recovery_paths: tuple[str, ...] = ()
+        self.relevant_path_resolver = RelevantPathResolver(self.workspace)
+        self.validator_resolver = ValidatorResolver(self.workspace, test_index=self.workspace_session.test_index)
+        self.validation_executor = ValidationExecutor()
+        for tool in getattr(self.registry, "_tools", {}).values():
+            if hasattr(tool, "symbol_index"):
+                tool.symbol_index = self.workspace_session.symbol_index
+        self.completion_handler = CompletionHandler()
+        self.turn_builder = TurnBuilder()
+        self.task_bootstrapper = TaskBootstrapper()
+        self.tool_batch_runner = ToolBatchRunner()
+        self.rollback_coordinator = RollbackCoordinator()
+        self.validation_orchestrator = ValidationOrchestrator(self.rollback_coordinator)
+        self.plan_orchestrator = PlanOrchestrator()
+        self.final_response_mode = FinalResponseMode.TASK_REPORT
+        self.replan_count = 0
+
+        self.plan_progress_reconciler = (
+            PlanProgressReconciler(
+                workspace=self.workspace
             )
         )
 
@@ -297,6 +384,9 @@ class MiniCodexAgent:
                 max_recovery_level=3
             )
         )
+
+        self._repo_map_revision: int | None = None
+        self._repo_map_initialized = False
 
     # =========================================================
     # Workspace Resolution
@@ -335,6 +425,156 @@ class MiniCodexAgent:
 
         return "."
 
+    def _detect_baseline_web_framework(self) -> str:
+        """Capture FastAPI/Flask presence before the agent rewrites app.py."""
+
+        root = Path(self.workspace)
+        for relative in ("app.py", "src/app.py"):
+            path = root / relative
+            if not path.is_file():
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            lowered = source.casefold()
+            if "fastapi" in lowered:
+                return "fastapi"
+            if "flask" in lowered:
+                return "flask"
+        return ""
+
+    def ensure_bound_check(self, check):
+        """Typed contracts are already bound; repository facts only resolve targets."""
+        return check
+
+    def validation_paths_for(self, check) -> tuple[str, ...]:
+        """Small, deterministic inspection scope for one unresolved check."""
+        paths = list(getattr(self.task_state, "relevant_paths", ()) or ())
+        if check is not None:
+            for requirement_id in getattr(check, "requirement_ids", ()):
+                requirement = next((item for item in self.task_requirements.items if item.id == requirement_id), None)
+                paths.extend(getattr(requirement, "paths", ()) if requirement else ())
+            contract = getattr(check, "contract", None)
+            paths.extend(filter(None, (
+                getattr(contract, "path", ""),
+                getattr(contract, "target", "").split("::", 1)[0],
+            )))
+        return tuple(dict.fromkeys(str(path) for path in paths if str(path).strip()))
+
+    def prepare_next_validation_check(self):
+        """Prepare the one current obligation before prompt rendering.
+
+        Binding is intentionally an orchestration transition, never a hidden
+        side effect of ContextBuilder.  The resulting snapshot is also the
+        ActionController's authority for tightly bounded proof inspection.
+        """
+        check = ValidationDecisionPolicy(self.validation_pipeline.state).next_required_check()
+        if check is None:
+            self.current_validation_check = None
+            self.current_validator_resolution = None
+            return None, None
+        check = self.ensure_bound_check(check)
+        session = self.workspace_session
+        resolution = self.validator_resolver.resolve(
+            check,
+            registry=self.registry,
+            profile=session.profile,
+            paths=self.validation_paths_for(check),
+            revision=session.revision,
+        )
+        self.current_validation_check = check
+        self.current_validator_resolution = resolution
+        return check, resolution
+
+    def execute_resolved_validations(self):
+        """Run consecutive resolved checks without spending provider turns."""
+        results = []
+        while True:
+            check, resolution = self.prepare_next_validation_check()
+            if check is None:
+                break
+            result = self.validation_executor.execute(self, check, resolution)
+            results.append(result)
+            if result.state.value != "proven":
+                break
+        return tuple(results)
+
+    def materialize_regression_checks(self, changed_path: str = "") -> None:
+        """Materialize the policy-required regression obligation after edits.
+
+        Relevant-only tasks prefer tests mapped to the changed source.  When
+        no focused mapping exists, the repository's discovered test command is
+        the deterministic fallback.  Complex tasks always require the full
+        discovered suite.  This keeps the completion policy and the executable
+        validation plan aligned instead of treating an omitted check as proof
+        that regression validation was unnecessary.
+        """
+        ledger = self.validation_pipeline.state
+        if not ledger.has_edit:
+            return
+        requirement = self.current_regression_requirement()
+        if requirement == RegressionRequirement.NOT_APPLICABLE:
+            return
+
+        existing = tuple(
+            check for check in ledger.plan.checks
+            if check.required and check.purpose == ValidationPurpose.REGRESSION
+        )
+        if requirement == RegressionRequirement.RELEVANT_ONLY and existing:
+            return
+        if requirement == RegressionRequirement.REQUIRED and any(
+            check.strength >= EvidenceStrength.FULL for check in existing
+        ):
+            return
+
+        targets = tuple(dict.fromkeys((
+            changed_path,
+            *getattr(self.execution_route, "target_paths", ()),
+        )))
+        impact = ChangeImpactResolver().resolve(self.workspace_session, targets)
+        profile = self.workspace_session.profile
+        focused_tests = tuple(test for test in impact.tests if test)
+        test_command = dict(getattr(profile, "commands", ()) or ()).get("test", "")
+
+        contracts = []
+        if requirement == RegressionRequirement.REQUIRED:
+            if getattr(profile, "test_framework", "unknown") == "pytest":
+                contracts = [TestTargetContract(".")]
+            elif test_command:
+                contracts = [CommandContract(test_command)]
+        elif focused_tests:
+            contracts = [TestTargetContract(target) for target in focused_tests]
+        elif getattr(profile, "test_framework", "unknown") == "pytest":
+            contracts = [TestTargetContract(".")]
+        elif test_command:
+            contracts = [CommandContract(test_command)]
+
+        if not contracts:
+            return
+
+        checks = list(ledger.plan.checks)
+        for contract in contracts:
+            target = getattr(contract, "target", "") or getattr(contract, "command", "")
+            checks.append(ValidationCheck(
+                id=f"V{len(checks) + 1}",
+                requirement_ids=(),
+                purpose=ValidationPurpose.REGRESSION,
+                contract=contract,
+                strength=(
+                    EvidenceStrength.FULL
+                    if requirement == RegressionRequirement.REQUIRED
+                    else EvidenceStrength.REGRESSION
+                ),
+                revision=ledger.edit_revision,
+                reason=(
+                    f"复杂变更需要完整回归：{target}"
+                    if requirement == RegressionRequirement.REQUIRED
+                    else f"编辑影响需要相关回归：{target}"
+                ),
+            ))
+        ledger.plan = ValidationPlan(tuple(checks))
+
     # =========================================================
     # Next Edit Revision
     # =========================================================
@@ -350,6 +590,121 @@ class MiniCodexAgent:
             + 1
         )
 
+    def apply_runtime_event(self, kind: RuntimeEventType, **data) -> TaskState:
+        """Apply one fact to the canonical task state."""
+
+        state = self.task_runtime.emit(kind, **data)
+        self.task_state = state
+        return state
+
+    def ensure_runtime_started(self, user_request: str = "") -> TaskState:
+        """Initialize canonical state for direct loop/test integrations."""
+
+        if self.task_state.run_id:
+            return self.task_state
+        validation = self.validation_pipeline.state
+        latest = validation.latest_evidence
+        route = self.execution_route
+        policy = self.execution_policy
+        return self.apply_runtime_event(
+            RuntimeEventType.TASK_STARTED,
+            mode=getattr(policy, "mode", None),
+            intent=getattr(route, "intent", TaskIntent.MODIFY),
+            user_request=user_request or self.active_user_request or "",
+            final_response_mode=self.final_response_mode.value,
+            target_paths=tuple(getattr(route, "target_paths", ()) or ()),
+            needs_plan=bool(getattr(route, "needs_plan", False)),
+            planning_activated=self.active_plan is not None,
+            requirement_ids=tuple(item.id for item in self.task_requirements.items),
+            satisfied_requirement_ids=self.satisfied_requirement_ids(),
+            remaining_steps=self.task_max_steps,
+            edit_revision=validation.edit_revision,
+            validation_revision=getattr(validation, "evidence_sequence", 0),
+            has_edit=validation.has_edit,
+            acceptance_passed=validation.acceptance_passed,
+            relevant_validation_passed=validation.targeted_passed,
+            full_validation_passed=validation.full_passed,
+            latest_validation_outcome=getattr(latest, "outcome", None),
+            active_evidence_edit_revision=getattr(latest, "edit_revision", None),
+        )
+
+    def task_progress_state(self, remaining_steps: int | None = None) -> TaskState:
+        if remaining_steps is not None:
+            self.apply_runtime_event(
+                RuntimeEventType.BUDGET_UPDATED,
+                consumed_steps=self.task_steps_consumed,
+                remaining_steps=remaining_steps,
+            )
+        return self.task_state
+
+    def refresh_runtime_context(self) -> TaskState:
+        """Update derived path scope at a deliberate context boundary."""
+
+        return self.apply_runtime_event(
+            RuntimeEventType.CONTEXT_UPDATED,
+            relevant_paths=self.relevant_path_resolver.resolve(self).paths,
+        )
+
+    def sync_requirements_state(self) -> TaskState:
+        return self.apply_runtime_event(
+            RuntimeEventType.REQUIREMENTS_UPDATED,
+            requirement_ids=tuple(item.id for item in self.task_requirements.items),
+            satisfied_requirement_ids=self.satisfied_requirement_ids(),
+        )
+
+    def satisfied_requirement_ids(self) -> tuple[str, ...]:
+        ledger = self.validation_pipeline.state
+        return tuple(
+            requirement.id
+            for requirement in self.task_requirements.items
+            if ledger.plan.for_requirement(requirement.id)
+            and all(ledger.proof(check.id) is not None
+                    for check in ledger.plan.for_requirement(requirement.id))
+        )
+
+    def sync_plan_state(self, *, superseded_steps: tuple[int, ...] = ()) -> TaskState:
+        completed = tuple(
+            step.id
+            for step in (self.active_plan.all_steps() if self.active_plan is not None else ())
+            if getattr(step.status, "value", step.status) == "completed"
+        )
+        return self.apply_runtime_event(
+            RuntimeEventType.PLAN_RECONCILED,
+            planning_activated=self.active_plan is not None,
+            plan_revision=self.plan_version,
+            completed_steps=completed,
+            superseded_steps=superseded_steps,
+        )
+
+    def current_regression_requirement(self):
+        policy = self.execution_policy
+        if policy is None:
+            return RegressionRequirement.REQUIRED
+
+        touched = ()
+        try:
+            touched = self.git_awareness.task_state().agent_touched_files
+        except Exception:
+            pass
+        if not touched and self.execution_route is not None:
+            touched = self.execution_route.target_paths
+
+        requirement = self.regression_policy.requirement_for(
+            mode=policy.mode,
+            changed_paths=touched,
+            default=policy.regression_requirement,
+        )
+        if requirement == RegressionRequirement.NOT_APPLICABLE:
+            return requirement
+
+        profile = getattr(self.workspace_session, "profile", None)
+        commands = dict(getattr(profile, "commands", ()) or ())
+        has_test_runtime = bool(
+            getattr(profile, "test_framework", "unknown") != "unknown"
+            or commands.get("test")
+        )
+        return requirement if has_test_runtime else RegressionRequirement.NOT_APPLICABLE
+
     # =========================================================
     # Main Entry
     # =========================================================
@@ -357,93 +712,171 @@ class MiniCodexAgent:
     def run(
         self,
         user_input: str,
-        use_planning: bool = True,
+        use_planning: bool | None = None,
+        policy: ExecutionPolicy | None = None,
+    ) -> str:
+        started = time.monotonic()
+        if self.output_level in {OutputLevel.VERBOSE, OutputLevel.DEBUG}:
+            try:
+                return self._run_impl(user_input, use_planning=use_planning, policy=policy)
+            finally:
+                self.execution_metrics.duration_seconds = time.monotonic() - started
+        # Legacy control-plane diagnostics remain available in verbose/debug.
+        # Normal product use exposes only small user-facing action events.
+        self._normal_progress_stream = sys.stdout
+        try:
+            with redirect_stdout(io.StringIO()):
+                return self._run_impl(user_input, use_planning=use_planning, policy=policy)
+        finally:
+            self.execution_metrics.duration_seconds = time.monotonic() - started
+            self._normal_progress_stream = None
+
+    def emit_normal_progress(self, message: str) -> None:
+        stream = self._normal_progress_stream
+        if stream is not None:
+            print(str(message).strip(), file=stream, flush=True)
+
+    def refresh_workspace_facts(self):
+        session = self.workspace_session
+        session.prioritize(getattr(self.execution_route, "target_paths", ()) or getattr(self.task_state, "relevant_paths", ()))
+        external_candidate = session._fingerprint is not None
+        owned_dirty = bool(getattr(session, "_dirty_paths", ()))
+        if session.refresh(periodic=True) and external_candidate and not owned_dirty and self.task_state.run_id:
+            revision = self.validation_pipeline.record_edit(owned=False)
+            self.working_summary.advance_revision(revision)
+            self.apply_runtime_event(RuntimeEventType.WORKSPACE_CHANGED, edit_revision=revision,
+                                     paths=session.changed_paths)
+            self.sync_requirements_state()
+            self._repo_map_initialized = False
+            self._repo_map_revision = None
+
+    def undo_task(self):
+        """Explicit user-facing undo; never invoked by ordinary validation failure."""
+        result = self.rollback_engine.undo_task()
+        if result.data.get("restored_paths"):
+            revision = self.validation_pipeline.record_edit()
+            self.apply_runtime_event(RuntimeEventType.ROLLBACK_APPLIED, edit_revision=revision,
+                                     restored_paths=tuple(result.data["restored_paths"]))
+            self.sync_requirements_state()
+            for path in result.data["restored_paths"]:
+                self.workspace_session.invalidate(path)
+        return result
+
+    def check_completion_after_batch(self):
+        """Completion ownership stays with CompletionHandler, not batch protocol."""
+        return self.completion_handler.check_after_batch(self)
+
+    def _run_impl(
+        self,
+        user_input: str,
+        use_planning: bool | None = None,
+        policy: ExecutionPolicy | None = None,
     ) -> str:
 
-        self.active_user_request = (
-            user_input
+        self.task_bootstrapper.start(
+            self,
+            user_input,
+            use_planning=use_planning,
+            policy=policy,
+        )
+        return run_agent_loop(self, user_input)
+
+    def resolve_execution_policy(
+        self,
+        user_input: str,
+        *,
+        policy: ExecutionPolicy | None = None,
+    ) -> ExecutionPolicy:
+        if policy is not None:
+            self.execution_route = self.task_router.route(user_input)
+            return policy
+
+        self.execution_route = self.task_router.route(user_input)
+        return policy_for(
+            self.execution_route.mode,
+            needs_plan=getattr(self.execution_route, "needs_plan", None),
         )
 
-        self.active_plan = None
-
-        # =====================================================
-        # Reset Task State
-        # =====================================================
-
-        self.progress.reset(
-            new_task=True
-        )
-
-        self.validation_pipeline.reset()
-
-        self.checkpoint_manager.reset()
-
-        self.recovery.reset()
-
-        self.token_metrics.reset()
-
-        self.context_budget.reset()
-
-        self.working_summary.reset()
-
-        # =====================================================
-        # Task-Start Git Baseline
-        # =====================================================
-
-        self.git_awareness.reset_task()
-
-        # =====================================================
-        # Initial Repository Map
-        # =====================================================
-
-        self._refresh_repo_map()
-
-        # =====================================================
-        # Initial Plan
-        # =====================================================
-
-        if (
-            use_planning
-            and self.planner
-        ):
-
-            try:
-
-                self.active_plan = (
-                    self.planner
-                    .create_plan(
-                        user_input,
-                        max_agent_steps=(
-                            self.max_steps
-                        ),
-                        token_metrics=(
-                            self.token_metrics
-                        ),
-                    )
-                )
-
-                self._print_plan(
-                    self.active_plan
-                )
-
-            except Exception as e:
-
-                print(
-                    f"\n[Planning Failed] "
-                    f"{type(e).__name__}: "
-                    f"{e}"
-                )
-
-        # =====================================================
-        # Agent Loop
-        # =====================================================
-
-        return (
-            run_agent_loop(
-                self,
-                user_input,
+    def activate_late_plan(self, *, reason: str) -> bool:
+        """Monotonically activate planning when runtime scope disproves direct execution."""
+        if self.active_plan is not None or self.runtime_control.planning_activated:
+            return False
+        if self.planner is None or not self.task_requires_validation:
+            return False
+        try:
+            self.active_plan = self.planner.create_plan(
+                self.active_user_request or "",
+                max_agent_steps=self.task_max_steps,
+                max_plan_steps=max(1, self.execution_policy.max_plan_steps),
+                token_metrics=self.token_metrics,
             )
+        except Exception:
+            return False
+        self.runtime_control.planning_activated = True
+        self.runtime_control.late_plan_activations += 1
+        self.execution_metrics.late_plan_activations = self.runtime_control.late_plan_activations
+        self.plan_version += 1
+        self.apply_runtime_event(
+            RuntimeEventType.PLAN_ACTIVATED,
+            plan_revision=self.plan_version,
         )
+        self.working_summary.add(f"已延迟激活规划：{reason}")
+        self._print_plan(self.active_plan)
+        return True
+
+    def get_base_tool_schemas(self) -> list[dict]:
+        """Return intent/mode-scoped schemas before turn-phase filtering."""
+
+        intent = getattr(self.execution_route, "intent", TaskIntent.MODIFY)
+        if intent == TaskIntent.INFORMATIONAL:
+            # File-specific explanations may inspect the workspace; general
+            # questions do not need tool access.
+            allowed_capabilities = (
+                {"filesystem.read", "code.search"}
+                if getattr(self.execution_route, "target_paths", ())
+                else set()
+            )
+            schemas = self._schemas_for_capabilities(allowed_capabilities) if allowed_capabilities else []
+            return schemas
+        if intent == TaskIntent.INSPECT_ONLY:
+            inspect_capabilities = {
+                "filesystem.read", "code.search", "git.inspect", "test.run",
+                "validation.static_web", "validation.browser", "process.run",
+            }
+            schemas = self._schemas_for_capabilities(inspect_capabilities)
+        else:
+            schemas = self.registry.get_schemas()
+        policy = self.execution_policy
+        allowed = getattr(policy, "exposed_tool_names", None)
+        if allowed is not None:
+            allowed_capabilities = set().union(*(self.registry.capabilities_for(name)
+                                                  for name in allowed if name in getattr(self.registry, "_tools", {})))
+            schemas = [
+                schema
+                for schema in schemas
+                if schema.get("function", {}).get("name") in allowed
+                or (schema.get("function", {}).get("name") in getattr(self.registry, "_tools", {})
+                    and bool(self.registry.capabilities_for(schema["function"]["name"]) & allowed_capabilities))
+            ]
+        return schemas
+
+    def get_tool_schemas(self) -> list[dict]:
+        """Compatibility API returning the schemas executable this turn."""
+
+        from .orchestration.turn_builder import ToolAvailabilityResolver
+
+        return ToolAvailabilityResolver().filter_schemas(
+            self,
+            self.get_base_tool_schemas(),
+        )
+
+    def _schemas_for_capabilities(self, capabilities: set[str]) -> list[dict]:
+        """Filter through tool-owned capability declarations."""
+        try:
+            return self.registry.get_schemas(capabilities=capabilities)
+        except TypeError:
+            # Minimal test/third-party registries may predate capability filtering.
+            return self.registry.get_schemas()
 
     # =========================================================
     # Repository Map Refresh
@@ -451,6 +884,8 @@ class MiniCodexAgent:
 
     def _refresh_repo_map(
         self,
+        *,
+        force: bool = False,
     ) -> None:
 
         if (
@@ -459,9 +894,25 @@ class MiniCodexAgent:
         ):
 
             self.repo_map_text = (
-                "Repository map unavailable."
+                "仓库地图不可用。"
             )
 
+            return
+
+        policy = self.execution_policy
+        current_revision = self.validation_pipeline.state.edit_revision
+        refresh_policy = getattr(
+            policy,
+            "repo_map_refresh_policy",
+            "every_turn",
+        )
+
+        if (
+            not force
+            and self._repo_map_initialized
+            and refresh_policy != "every_turn"
+            and self._repo_map_revision == current_revision
+        ):
             return
 
         try:
@@ -470,275 +921,22 @@ class MiniCodexAgent:
                 self.repo_map
                 .build()
             )
+            self._repo_map_initialized = True
+            self._repo_map_revision = current_revision
 
         except Exception as e:
 
             self.repo_map_text = (
-                "Repository map unavailable: "
+                "仓库地图不可用："
                 f"{type(e).__name__}: "
                 f"{e}"
             )
 
-    # =========================================================
-    # Complete Plan Step
-    # =========================================================
+    def reconcile_plan_progress(self) -> dict:
+        return self.plan_orchestrator.reconcile_progress(self)
 
-    def complete_plan_step(
-        self,
-    ) -> dict:
-
-        if (
-            self.active_plan
-            is None
-        ):
-
-            return {
-                "completed": False,
-                "step_id": None,
-                "step_description": None,
-                "message": (
-                    "No active plan."
-                ),
-            }
-
-        step = (
-            self.active_plan
-            .complete_current_step()
-        )
-
-        if (
-            step
-            is None
-        ):
-
-            return {
-                "completed": False,
-                "step_id": None,
-                "step_description": None,
-                "message": (
-                    "No active plan step."
-                ),
-            }
-
-        self.recovery.mark_progress()
-
-        self.progress.reset()
-
-        self._print_plan(
-            self.active_plan
-        )
-
-        return {
-            "completed": True,
-            "step_id": (
-                step.id
-            ),
-            "step_description": (
-                step.description
-            ),
-            "message": (
-                f"Completed plan step "
-                f"{step.id}: "
-                f"{step.description}"
-            ),
-        }
-
-    # =========================================================
-    # Replan
-    # =========================================================
-
-    def replan(
-        self,
-        reason: str,
-    ) -> dict:
-
-        if (
-            self.active_plan
-            is None
-        ):
-
-            return {
-                "replanned": False,
-                "reason": reason,
-                "failure_reason": (
-                    "No active plan to revise."
-                ),
-                "message": (
-                    "No active plan to revise."
-                ),
-            }
-
-        if (
-            self.replanner
-            is None
-        ):
-
-            return {
-                "replanned": False,
-                "reason": reason,
-                "failure_reason": (
-                    "No replanner configured."
-                ),
-                "message": (
-                    "No replanner configured."
-                ),
-            }
-
-        if (
-            self.active_user_request
-            is None
-        ):
-
-            return {
-                "replanned": False,
-                "reason": reason,
-                "failure_reason": (
-                    "Original request unavailable."
-                ),
-                "message": (
-                    "Original request unavailable."
-                ),
-            }
-
-        try:
-
-            new_plan = (
-                self.replanner
-                .replan(
-                    user_request=(
-                        self.active_user_request
-                    ),
-                    current_plan=(
-                        self.active_plan
-                    ),
-                    reason=reason,
-                    token_metrics=(
-                        self.token_metrics
-                    ),
-                )
-            )
-
-        except Exception as e:
-
-            error_message = (
-                "Replanning failed: "
-                f"{type(e).__name__}: "
-                f"{e}"
-            )
-
-            return {
-                "replanned": False,
-                "reason": reason,
-                "failure_reason": (
-                    error_message
-                ),
-                "message": (
-                    error_message
-                ),
-            }
-
-        self.active_plan = (
-            new_plan
-        )
-
-        self.progress.reset()
-
-        print(
-            "\n[Replanned]"
-        )
-
-        print(
-            f"Reason: "
-            f"{reason}"
-        )
-
-        self._print_plan(
-            self.active_plan
-        )
-
-        return {
-            "replanned": True,
-            "reason": reason,
-            "failure_reason": None,
-            "message": (
-                "Plan successfully revised. "
-                "Continue execution using "
-                "the new plan."
-            ),
-        }
-
-    # =========================================================
-    # Step Type Detection
-    # =========================================================
-
-    def _step_likely_requires_edit(
-        self,
-        current_step,
-    ) -> bool:
-
-        if (
-            current_step
-            is None
-        ):
-
-            return False
-
-        text = (
-            current_step
-            .description
-        )
-
-        lowered = (
-            text.lower()
-        )
-
-        english_keywords = (
-            "fix",
-            "modify",
-            "change",
-            "implement",
-            "add",
-            "update",
-            "remove",
-            "refactor",
-            "rewrite",
-            "replace",
-            "create",
-            "write",
-        )
-
-        chinese_keywords = (
-            "修复",
-            "修改",
-            "实现",
-            "增加",
-            "添加",
-            "更新",
-            "删除",
-            "重构",
-            "新建",
-            "重写",
-            "替换",
-            "写入",
-            "编写",
-        )
-
-        if any(
-            keyword in text
-            for keyword
-            in chinese_keywords
-        ):
-
-            return True
-
-        return any(
-            re.search(
-                rf"\b{keyword}\b",
-                lowered,
-            )
-            for keyword
-            in english_keywords
-        )
+    def replan(self, reason: str) -> dict:
+        return self.plan_orchestrator.replan_task(self, reason)
 
     # =========================================================
     # System Prompt
@@ -748,10 +946,7 @@ class MiniCodexAgent:
         self,
         **kwargs,
     ) -> str:
-
-        return (
-            build_system_prompt()
-        )
+        return self.turn_builder.prompt_builder.build(self, **kwargs)
 
     # =========================================================
     # Dynamic Turn Context
@@ -761,115 +956,18 @@ class MiniCodexAgent:
         self,
         plan=None,
         current_step=None,
-        remaining_agent_steps: (
-            int
-            | None
-        ) = None,
+        remaining_agent_steps: int | None = None,
         **kwargs,
     ) -> str:
-
-        # =====================================================
-        # Fresh Repository Map
-        # =====================================================
-
-        self._refresh_repo_map()
-
-        # =====================================================
-        # Fresh Git State
-        # =====================================================
-
-        try:
-
-            self.git_awareness.refresh()
-
-            git_awareness_text = (
-                self.git_awareness
-                .render()
-            )
-
-        except Exception as e:
-
-            git_awareness_text = (
-                "Git awareness unavailable: "
-                f"{type(e).__name__}: "
-                f"{e}"
-            )
-
-        # =====================================================
-        # Safety Context
-        # =====================================================
-
-        try:
-
-            safety_policy_text = (
-                self.safety_policy
-                .render()
-            )
-
-        except Exception as e:
-
-            safety_policy_text = (
-                "Safety policy unavailable: "
-                f"{type(e).__name__}: "
-                f"{e}"
-            )
-
-        # =====================================================
-        # Plan
-        # =====================================================
-
-        plan_text = (
-            self._plan_to_text(
-                plan
-            )
-            if plan
-            else (
-                "No explicit plan."
-            )
-        )
-
-        if current_step:
-
-            current_step_text = (
-                f"{current_step.id}. "
-                f"{current_step.description}"
-            )
-
-        else:
-
-            current_step_text = (
-                "No active plan step."
-            )
-
-        # =====================================================
-        # Build Context
-        # =====================================================
-
-        return (
-            build_turn_context(
-                plan_text=(
-                    plan_text
-                ),
-                current_step_text=(
-                    current_step_text
-                ),
-                remaining_agent_steps=(
-                    remaining_agent_steps
-                ),
-                working_summary_text=(
-                    self.working_summary
-                    .render()
-                ),
-                repo_map_text=(
-                    self.repo_map_text
-                ),
-                git_awareness_text=(
-                    git_awareness_text
-                ),
-                safety_policy_text=(
-                    safety_policy_text
-                ),
-            )
+        del kwargs
+        return self.turn_builder.context_builder.build(
+            self,
+            current_plan_step=current_step,
+            remaining_agent_steps=(
+                self.task_state.remaining_steps
+                if remaining_agent_steps is None
+                else remaining_agent_steps
+            ),
         )
 
     # =========================================================
@@ -886,11 +984,39 @@ class MiniCodexAgent:
                 f"{step.id}. "
                 f"[{step.status.value}] "
                 f"{step.description} "
-                f"(failures="
+                f"(criteria="
+                f"{self._criteria_text(step)}, "
+                f"failures="
                 f"{step.attempts})"
             )
             for step
             in plan.all_steps()
+        )
+
+    @staticmethod
+    def _criteria_text(step) -> str:
+        criteria = getattr(
+            step,
+            "acceptance_criteria",
+            [],
+        )
+
+        if not criteria:
+            if getattr(
+                step,
+                "requires_semantic_completion",
+                False,
+            ):
+                return (
+                    "仅语义完成；宽泛步骤需要"
+                    "显式完成"
+                )
+            return "仅语义完成"
+
+        return json.dumps(
+            criteria,
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
     # =========================================================
@@ -903,7 +1029,7 @@ class MiniCodexAgent:
     ) -> None:
 
         print(
-            f"\n[Plan] "
+            f"\n[计划] "
             f"{plan.goal}"
         )
 
@@ -918,3 +1044,12 @@ class MiniCodexAgent:
                 f"(failures="
                 f"{step.attempts})"
             )
+
+            for warning in getattr(
+                step,
+                "quality_warnings",
+                [],
+            ):
+                print(
+                    f"   [计划质量] {warning}"
+                )

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from ..agent.agent import MiniCodexAgent
-from ..agent.tool_executor import (
+from ..agent.runtime import (
     PreparedToolCall,
     ToolExecution,
 )

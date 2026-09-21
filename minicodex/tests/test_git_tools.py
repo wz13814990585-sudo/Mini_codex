@@ -1,13 +1,11 @@
 import subprocess
 
-from ..agent.git_awareness import (
+from ..agent.runtime import (
     GitAwareness,
     GitRepositoryInspector,
 )
-from ..tools.git_diff import (
+from ..tools.git import (
     GitDiffTool,
-)
-from ..tools.git_status import (
     GitStatusTool,
 )
 

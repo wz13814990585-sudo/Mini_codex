@@ -8,6 +8,7 @@ class BaseTool(ABC):
     name: str
     description: str
     parameters: dict
+    capabilities: frozenset[str] = frozenset()
 
     @abstractmethod
     def execute(

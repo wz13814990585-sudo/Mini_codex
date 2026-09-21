@@ -4,24 +4,56 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mini-codex"
-version = "0.1.0"
-description = "A small autonomous coding agent powered by DeepSeek."
+dynamic = ["version"]
+description = "A local autonomous coding agent with deterministic validation and safe tool execution."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "MiniCodex contributors" }]
 requires-python = ">=3.11"
+keywords = ["coding-agent", "llm", "developer-tools", "vibecoding"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+]
 dependencies = [
     "openai>=1.0",
     "python-dotenv>=1.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/wz13814990585-sudo/Mini_codex"
+Repository = "https://github.com/wz13814990585-sudo/Mini_codex"
+Issues = "https://github.com/wz13814990585-sudo/Mini_codex/issues"
+
 [project.optional-dependencies]
-test = ["pytest>=8.0"]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
 
 [project.scripts]
 minicodex = "minicodex.main:main"
+minicodex-release-gate = "minicodex.evaluation.release_gate:main"
 
 [tool.pytest.ini_options]
 testpaths = ["minicodex/tests"]
 pythonpath = ["."]
-addopts = "-p no:debugging -p no:asyncio --import-mode=prepend"
+addopts = "-p no:debugging --import-mode=prepend"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.setuptools.packages.find]
 include = ["minicodex*"]
+exclude = ["minicodex.tests*"]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = { attr = "minicodex.__version__" }

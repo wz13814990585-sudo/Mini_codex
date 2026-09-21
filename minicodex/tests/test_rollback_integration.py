@@ -1,25 +1,25 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from ..agent.checkpoint import (
+from ..agent.editing import (
     CheckpointManager,
 )
-from ..agent.loop import (
+from ..agent.orchestration.validation_orchestrator import (
     apply_validation_evidence,
 )
 from ..agent.progress import (
     ProgressController,
 )
-from ..agent.recovery import (
+from ..agent.progress import (
     RecoveryController,
 )
-from ..agent.rollback import (
+from ..agent.editing import (
     RollbackEngine,
 )
 from ..agent.validation import (
     ValidationPipeline,
 )
-from ..agent.working_summary import (
+from ..agent.memory import (
     WorkingSummary,
 )
 from ..tools.results import (
@@ -98,7 +98,7 @@ def make_agent(
 # =============================================================
 
 
-def test_regressed_validation_rolls_back_latest_edit(
+def test_first_regressed_validation_does_not_roll_back_latest_edit(
     tmp_path: Path,
 ):
 
@@ -206,16 +206,13 @@ def test_regressed_validation_rolls_back_latest_edit(
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=messages,
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -227,17 +224,18 @@ def test_regressed_validation_rolls_back_latest_edit(
         is True
     )
 
-    # Bad edit was physically reverted.
+    # A first regression is an intermediate state. Without semantic proof of
+    # causality the Harness retains it for inspection/corrective repair.
     assert (
         file_path.read_text(
             encoding="utf-8"
         )
-        == "value = 1\n"
+        == "value = 999\n"
     )
 
     assert (
         checkpoint.rolled_back
-        is True
+        is False
     )
 
     # Rollback creates a new monotonic revision.
@@ -245,7 +243,7 @@ def test_regressed_validation_rolls_back_latest_edit(
         agent.validation_pipeline
         .state
         .edit_revision
-        == 3
+        == 2
     )
 
     # Old evidence is stale.
@@ -264,16 +262,19 @@ def test_regressed_validation_rolls_back_latest_edit(
     )
 
     assert (
-        len(messages)
-        == 1
+        messages
+        == []
     )
 
     assert (
-        "automatically rolled back"
+        "不确定"
         in (
-            messages[0][
-                "content"
-            ]
+            decision.followup_message
+            .lower()
+        )
+        or "uncertain"
+        in (
+            decision.followup_message
             .lower()
         )
     )
@@ -371,16 +372,13 @@ def test_improved_validation_does_not_rollback(
         )
     )
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=[],
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=[],
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -497,16 +495,13 @@ def test_different_validation_targets_do_not_trigger_rollback(
         )
     )
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=regression,
-            messages=[],
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=regression,
+        messages=[],
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop
@@ -648,16 +643,13 @@ def test_same_revision_regression_does_not_trigger_rollback(
 
     messages = []
 
-    (
-        early_stop,
-        restart,
-    ) = (
-        apply_validation_evidence(
-            agent=agent,
-            evidence=second,
-            messages=messages,
-        )
+    decision = apply_validation_evidence(
+        agent=agent,
+        evidence=second,
+        messages=messages,
     )
+    early_stop = decision.early_stop
+    restart = decision.restart
 
     assert (
         early_stop

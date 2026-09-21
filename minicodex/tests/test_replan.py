@@ -1,4 +1,4 @@
-from ..tools.replan import ReplanTool
+from ..tools.planning import ReplanTool
 from ..tools.results import ToolResult
 
 def test_replan_returns_structured_success():

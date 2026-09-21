@@ -2,16 +2,16 @@ from types import (
     SimpleNamespace,
 )
 
-from ..agent.long_term_memory import (
+from ..agent.memory import (
     LongTermMemoryStore,
 )
-from ..agent.long_term_memory_runtime import (
+from ..agent.memory import (
     attach_long_term_memory,
 )
-from ..agent.working_memory import (
+from ..agent.memory import (
     MemoryKind,
 )
-from ..agent.working_summary import (
+from ..agent.memory import (
     WorkingSummary,
 )
 
@@ -178,7 +178,7 @@ def test_relevant_long_term_memory_is_injected(
     )
 
     assert (
-        "Relevant long-term memory"
+        "相关长期记忆"
         in agent.last_context
     )
 
@@ -188,7 +188,7 @@ def test_relevant_long_term_memory_is_injected(
     )
 
     assert (
-        "historical only"
+        "仅供历史参考"
         in agent.last_context
     )
 
@@ -346,7 +346,7 @@ def test_successful_task_is_promoted_to_long_term_memory(
     )
 
     assert (
-        "Acceptance=True"
+        "验收=True"
         in record.summary
     )
 

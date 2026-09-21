@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from ..agent.checkpoint import (
+from ..agent.editing import (
     CheckpointManager,
 )
-from ..agent.rollback import (
+from ..agent.editing import (
     RollbackEngine,
 )
 

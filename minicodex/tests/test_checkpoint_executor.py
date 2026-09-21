@@ -1,13 +1,13 @@
 import json
 from pathlib import Path
 
-from ..agent.checkpoint import (
+from ..agent.editing import (
     CheckpointManager,
 )
-from ..agent.checkpoint_executor import (
+from ..agent.editing import (
     CheckpointingToolExecutor,
 )
-from ..agent.tool_executor import (
+from ..agent.runtime import (
     ToolExecutor,
 )
 from ..tools.base import (

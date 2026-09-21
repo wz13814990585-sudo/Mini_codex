@@ -1,6 +1,8 @@
 import subprocess
 
-from ..agent.git_awareness import (
+import pytest
+
+from ..agent.runtime import (
     GitAwareness,
     GitRepositoryInspector,
 )
@@ -147,6 +149,74 @@ def test_read_tool_is_safe(
         decision.level
         == SafetyLevel.SAFE
     )
+
+
+def test_dependency_install_tool_is_caution(
+    tmp_path,
+):
+    policy = SafetyPolicy(
+        workspace=tmp_path
+    )
+
+    decision = policy.assess(
+        "install_python_package",
+        {
+            "package": "requests",
+            "import_name": "requests",
+        },
+    )
+
+    assert decision.allowed is True
+    assert decision.level == SafetyLevel.CAUTION
+    assert decision.rule == "dependency_install"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'node -e "const f = x => x > 1"',
+        'python -c "print(\'a > b\')"',
+        'node -e "if (a > b) console.log(a)"',
+        'node -e "const s = \'</script>\'"',
+        "command 2>&1",
+        "command >/dev/null 2>&1",
+    ],
+)
+def test_quoted_greater_than_is_not_redirection(
+    tmp_path,
+    command,
+):
+    policy = SafetyPolicy(workspace=tmp_path)
+    decision = policy.assess(
+        "run_command",
+        {"command": command},
+    )
+
+    assert decision.allowed is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node app.js > output.txt",
+        "node app.js >> output.txt",
+        "command 2> error.log",
+        'echo "$(node app.js > output.txt)"',
+        'echo "`node app.js > output.txt`"',
+    ],
+)
+def test_real_redirection_remains_blocked(
+    tmp_path,
+    command,
+):
+    policy = SafetyPolicy(workspace=tmp_path)
+    decision = policy.assess(
+        "run_command",
+        {"command": command},
+    )
+
+    assert decision.allowed is False
+    assert decision.rule == "checkpoint_bypass_redirection"
 
 
 # =============================================================

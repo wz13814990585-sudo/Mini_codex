@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from ..agent.symbol_index import (
+from ..agent.context import (
     SymbolIndex,
 )
-from ..tools.replace_symbol import (
+from ..tools.editing import (
     ReplaceSymbolTool,
 )
 
@@ -143,7 +143,7 @@ def test_replace_symbol_rejects_invalid_python(
 
     with pytest.raises(
         ValueError,
-        match="invalid Python syntax",
+        match="无效的 Python 语法",
     ):
 
         tool.execute(
@@ -186,7 +186,7 @@ def test_replace_symbol_rejects_missing_symbol(
 
     with pytest.raises(
         ValueError,
-        match="was not found",
+        match="未找到",
     ):
 
         tool.execute(
@@ -235,7 +235,7 @@ def test_replace_symbol_rejects_ambiguous_short_name(
 
     with pytest.raises(
         ValueError,
-        match="ambiguous",
+        match="匹配不唯一",
     ):
 
         tool.execute(
@@ -329,22 +329,23 @@ def test_replace_symbol_expected_text_guard(
         symbol_index=index,
     )
 
-    with pytest.raises(
-        ValueError,
-        match="no longer matches",
-    ):
+    result = tool.execute(
+        symbol="run",
+        expected_text=(
+            "def run():\n"
+            "    return 1"
+        ),
+        new_text=(
+            "def run():\n"
+            "    return 2"
+        ),
+    )
 
-        tool.execute(
-            symbol="run",
-            expected_text=(
-                "def run():\n"
-                "    return 1"
-            ),
-            new_text=(
-                "def run():\n"
-                "    return 2"
-            ),
-        )
+    assert result.success is False
+    assert result.data["failure_type"] == "stale_context"
+    assert result.data["path"] == "demo.py"
+    assert result.data["edit_kind"] == "symbol"
+    assert file_path.read_text() == "def run():\n    return 10\n"
 
 
 def test_symbol_index_refreshes_after_replacement(

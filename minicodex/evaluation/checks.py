@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import subprocess
+from ..agent.context.project_execution_environment import ProjectExecutionEnvironment
 
 from .models import (
     CheckResult,
@@ -25,6 +28,10 @@ class EvaluationCheckRunner:
         "file_not_contains",
         "output_contains",
         "output_not_contains",
+        "command_succeeds",
+        "python_assertion",
+        "pytest_passes",
+        "python_oracle",
     }
 
     def run(
@@ -33,6 +40,7 @@ class EvaluationCheckRunner:
         check: EvaluationCheck,
         workspace,
         output: str,
+        oracle_root=None,
     ) -> CheckResult:
 
         if (
@@ -48,8 +56,8 @@ class EvaluationCheckRunner:
                 description=(
                     check.description
                     or (
-                        "Unsupported evaluation "
-                        f"check: {check.kind}"
+                        "不支持的评测检查："
+                        f"{check.kind}"
                     )
                 ),
                 path=(
@@ -69,6 +77,9 @@ class EvaluationCheckRunner:
             )
             .resolve()
         )
+
+        if check.kind in {"command_succeeds", "python_assertion", "pytest_passes", "python_oracle"}:
+            return self._run_process_check(check, workspace_path, oracle_root=oracle_root)
 
         # =====================================================
         # Output Checks
@@ -106,7 +117,7 @@ class EvaluationCheckRunner:
                 passed=False,
                 description=(
                     check.description
-                    or "File check requires a path."
+                    or "文件检查需要提供路径。"
                 ),
                 path=(
                     check.path
@@ -143,8 +154,7 @@ class EvaluationCheckRunner:
                 description=(
                     check.description
                     or (
-                        "Evaluation check path "
-                        "escaped the workspace."
+                        "评测检查路径越出了工作区。"
                     )
                 ),
                 path=(
@@ -181,8 +191,8 @@ class EvaluationCheckRunner:
                 description=(
                     check.description
                     or (
-                        f"File '{check.path}' "
-                        "should exist."
+                        f"文件 '{check.path}' "
+                        "应存在。"
                     )
                 ),
                 path=(
@@ -218,8 +228,8 @@ class EvaluationCheckRunner:
                 description=(
                     check.description
                     or (
-                        f"File '{check.path}' "
-                        "should not exist."
+                        f"文件 '{check.path}' "
+                        "不应存在。"
                     )
                 ),
                 path=(
@@ -248,8 +258,8 @@ class EvaluationCheckRunner:
                 description=(
                     check.description
                     or (
-                        f"File '{check.path}' "
-                        "could not be checked."
+                        f"文件 '{check.path}' "
+                        "无法检查。"
                     )
                 ),
                 path=(
@@ -281,8 +291,8 @@ class EvaluationCheckRunner:
                 description=(
                     check.description
                     or (
-                        f"File '{check.path}' "
-                        "could not be read."
+                        f"文件 '{check.path}' "
+                        "无法读取。"
                     )
                 ),
                 path=(
@@ -329,8 +339,8 @@ class EvaluationCheckRunner:
             description=(
                 check.description
                 or (
-                    f"Check {check.kind} "
-                    f"for '{check.path}'."
+                    f"检查 {check.kind}（"
+                    f"'{check.path}'）。"
                 )
             ),
             path=(
@@ -384,11 +394,70 @@ class EvaluationCheckRunner:
             description=(
                 check.description
                 or (
-                    f"Check {check.kind} "
-                    "against Agent output."
+                    f"检查 {check.kind}（对照 Agent 输出）。"
                 )
             ),
             expected=(
                 expected
             ),
         )
+
+    @staticmethod
+    def _run_process_check(check: EvaluationCheck, workspace: Path, *, oracle_root=None) -> CheckResult:
+        environment = ProjectExecutionEnvironment.discover(workspace)
+        if not environment.command_available:
+            return CheckResult(check.kind, False, check.description or "目标项目运行环境不可用。",
+                               path=check.path, error="environment_unavailable")
+        if check.kind == "python_assertion":
+            # Avoid benchmark results being contaminated by a stale timestamp-
+            # based bytecode cache after an agent edits a fixture rapidly.
+            argv = [*environment.python_argv("-B", "-c", check.command or check.expected or "")]
+        elif check.kind == "python_oracle":
+            target = check.path or ""
+            if oracle_root is not None and target:
+                root = Path(oracle_root).resolve()
+                resolved = (root / target).resolve()
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    return CheckResult(check.kind, False, check.description or "Oracle 路径越出了其根目录。", error="oracle_escape")
+                target = str(resolved)
+            if not target:
+                return CheckResult(check.kind, False, check.description or "隐藏的 Python oracle 目标缺失。", error="missing_oracle_target")
+            argv = [*environment.python_argv("-B", target)]
+        elif check.kind == "pytest_passes":
+            target = check.path or check.command or ""
+            if oracle_root is not None and target:
+                root = Path(oracle_root).resolve()
+                resolved = (root / target).resolve()
+                try:
+                    resolved.relative_to(root)
+                except ValueError:
+                    return CheckResult(check.kind, False, check.description or "Oracle 路径越出了其根目录。", error="oracle_escape")
+                target = str(resolved)
+            if not target:
+                return CheckResult(check.kind, False, check.description or "隐藏的 pytest oracle 目标缺失。", error="missing_oracle_target")
+            argv = [*environment.pytest_argv("-p", "no:debugging", "-q", target)]
+        else:
+            import shlex
+            try:
+                argv = shlex.split(check.command or check.expected or "")
+            except ValueError:
+                argv = []
+        if not argv:
+            return CheckResult(check.kind, False, check.description or "缺少 Oracle 命令。", error="missing_command")
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (str(workspace / "src"), str(workspace), os.environ.get("PYTHONPATH", "")))),
+               # Oracles need deterministic project behavior, not arbitrary
+               # host pytest plugins (some are process-wide/debugger plugins).
+               "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+        try:
+            completed = subprocess.run(argv, cwd=workspace, env=env, text=True, capture_output=True,
+                                       timeout=check.timeout_seconds or 15, check=False)
+            passed = completed.returncode == 0
+            actual = (completed.stdout + completed.stderr)[-2000:]
+            return CheckResult(check.kind, passed, check.description or f"Oracle {check.kind} 应通过。",
+                               path=check.path, expected=check.expected, actual=actual,
+                               error=None if passed else f"exit_code={completed.returncode}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return CheckResult(check.kind, False, check.description or f"Oracle {check.kind} 无法运行。",
+                               path=check.path, error=f"{type(exc).__name__}: {exc}")

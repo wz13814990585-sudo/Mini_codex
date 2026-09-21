@@ -1,6 +1,6 @@
 import json
 
-from ..agent.trace import (
+from ..agent.observability import (
     TraceEventType,
     TraceRecorder,
 )

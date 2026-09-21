@@ -1,0 +1,81 @@
+{
+  "total": 8,
+  "passed": 1,
+  "failed": 7,
+  "counts": {
+    "environment_failure": 1,
+    "tool_error": 1,
+    "wrong_validation_target": 5
+  },
+  "clusters": {
+    "environment_failure": [
+      {
+        "case_id": "create_fastapi_login",
+        "run_index": 1,
+        "reason": "max_steps",
+        "agent_steps": 20,
+        "tool_calls": 21,
+        "llm_calls": 25,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/create_fastapi_login.jsonl"
+      }
+    ],
+    "tool_error": [
+      {
+        "case_id": "already_health_ok",
+        "run_index": 1,
+        "reason": "max_steps",
+        "agent_steps": 20,
+        "tool_calls": 8,
+        "llm_calls": 22,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/already_health_ok.jsonl"
+      }
+    ],
+    "wrong_validation_target": [
+      {
+        "case_id": "create_calculator_service",
+        "run_index": 1,
+        "reason": "max_steps",
+        "agent_steps": 20,
+        "tool_calls": 13,
+        "llm_calls": 23,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/create_calculator_service.jsonl"
+      },
+      {
+        "case_id": "create_web_counter",
+        "run_index": 1,
+        "reason": "\u6709\u754c\u590d\u6838\u540e\u9a8c\u8bc1\u4ecd\u4e0d\u7a33\u5b9a\uff1b\u65e0\u6cd5\u636e\u6b64\u5f97\u51fa\u56de\u5f52\u7ed3\u8bba\u3002",
+        "agent_steps": 16,
+        "tool_calls": 17,
+        "llm_calls": 19,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/create_web_counter.jsonl"
+      },
+      {
+        "case_id": "modify_web_keyboard",
+        "run_index": 1,
+        "reason": "max_steps",
+        "agent_steps": 20,
+        "tool_calls": 16,
+        "llm_calls": 24,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/modify_web_keyboard.jsonl"
+      },
+      {
+        "case_id": "modify_typescript_sum",
+        "run_index": 1,
+        "reason": "max_steps",
+        "agent_steps": 20,
+        "tool_calls": 17,
+        "llm_calls": 24,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/modify_typescript_sum.jsonl"
+      },
+      {
+        "case_id": "fix_python_sort_key",
+        "run_index": 1,
+        "reason": "\u6709\u754c\u590d\u6838\u540e\u9a8c\u8bc1\u4ecd\u4e0d\u7a33\u5b9a\uff1b\u65e0\u6cd5\u636e\u6b64\u5f97\u51fa\u56de\u5f52\u7ed3\u8bba\u3002",
+        "agent_steps": 9,
+        "tool_calls": 10,
+        "llm_calls": 12,
+        "trace_path": "benchmark_results/minicodex-bench-v1/20260920T125253Z/traces/minicodex/run_001/fix_python_sort_key.jsonl"
+      }
+    ]
+  }
+}

@@ -14,7 +14,12 @@ from .models import (
     EvaluationComparison,
     EvaluationResult,
     EvaluationSummary,
+    FAILURE_CATEGORIES,
 )
+from .benchmark_v1 import BENCHMARK_VERSION, BenchmarkFixture, fixtures, smoke_fixtures
+from .profiles import EvaluationProfile
+from .preflight import BenchmarkPreflightResult, PreflightCheck, benchmark_preflight
+from .reporting import compare_profiles, failure_clusters
 
 
 __all__ = [
@@ -27,4 +32,15 @@ __all__ = [
     "EvaluationResult",
     "EvaluationSummary",
     "compare_summaries",
+    "BENCHMARK_VERSION",
+    "BenchmarkFixture",
+    "EvaluationProfile",
+    "fixtures",
+    "smoke_fixtures",
+    "compare_profiles",
+    "failure_clusters",
+    "FAILURE_CATEGORIES",
+    "BenchmarkPreflightResult",
+    "PreflightCheck",
+    "benchmark_preflight",
 ]

@@ -1,7 +1,7 @@
 import os
 import sys
 
-from ..agent.sandbox import (
+from ..agent.safety import (
     SandboxLimits,
     SandboxRunner,
 )
@@ -310,7 +310,7 @@ def test_sandbox_output_is_bounded(
     )
 
     assert (
-        "[Sandbox output truncated]"
+        "[沙箱输出已截断]"
         in result.stdout
     )
 
