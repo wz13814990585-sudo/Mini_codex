@@ -202,7 +202,7 @@ DiffQualityGate 会检查：
 
 修复后的 `minicodex-bench-v1-r2` 在线 smoke（DeepSeek `deepseek-chat`，temperature 0，单次运行）为 8/8。`fix_python_sort_key` 从旧结果的零编辑误完成变为一次正确 patch 后通过；`create_calculator_service` 从旧 trace 的 6 次编辑降为严格位于 `src/calculator/` 的 2 次编辑。平均每题 3.5 次 LLM 调用、7207.6 tokens、6.97 秒。原始结果位于 `benchmark_results/minicodex-bench-v1-r2/product_gate_r2_online/`。
 
-随后在 commit `b54a61c` 上执行了完整 30 题单次在线 R2：26/30（86.67%），错误完成、越权编辑与错误文件编辑均为 0。四个失败的隐藏 oracle 实际全部通过，但完成门禁因内部验收未通过而安全停止。其中三个 Flask 场景复现为子进程 `Flask.test_client()` 的 `SIGSEGV (-11)`；另一个折扣边界场景由“越界仍返回非负值”和“越界必须抛 ValueError”两个互相矛盾的提取契约造成。运行后已改为对 Flask 使用受控回环服务探测，并增加边界异常契约一致性清理；这些修复已通过本地端到端验证，但尚未再次使用在线模型复测。原始结果位于 `benchmark_results/minicodex-bench-v1-r2/product_full_r2_online/`。
+随后在 commit `b54a61c` 上执行了完整 30 题单次在线 R2：26/30（86.67%），错误完成与越权编辑均为 0。四个失败的隐藏 oracle 实际全部通过，但完成门禁因内部验收未通过而安全停止。其中三个 Flask 场景复现为子进程 `Flask.test_client()` 的 `SIGSEGV (-11)`；另一个折扣边界场景由“越界仍返回非负值”和“越界必须抛 ValueError”两个互相矛盾的提取契约造成。运行后已改为对 Flask 使用受控回环服务探测，并增加边界异常契约一致性清理。成功用例复盘还发现旧指标会漏报“改对文件同时又改了无关文件”，现已改为逐个检查 allowed scope；JSON fragment 也改用结构化验证，Python contract 会按真实 import 锚定已有源码。这些修复已通过本地端到端验证，但尚未再次使用在线模型复测。原始结果位于 `benchmark_results/minicodex-bench-v1-r2/product_full_r2_online/`。
 
 ### 行动效率指标
 
@@ -251,7 +251,8 @@ python -m minicodex.evaluation.vibebench
 | 预真实测试集成 | 572 passed / 12.86s | 再绑定 / 参数校验 / 外置 oracle |
 | 执行闭环 | 579 passed / 13.09s | 完成初始执行闭环 |
 | 产品门禁与 R2 oracle | 654 passed / 21.63s | 离线 VibeBench 15/15 |
-| Dogfood、发布门禁与完整 R2 修复 | **662 passed / 19.92s** | 当前最新；离线 VibeBench 15/15；Flask 服务端到端探测通过 |
+| Dogfood、发布门禁与完整 R2 修复 | 662 passed / 19.92s | 离线 VibeBench 15/15；Flask 服务端到端探测通过 |
+| 成功用例质量口径收紧 | **665 passed / 20.11s** | 当前最新；逐路径 wrong-file、结构化 JSON、import 路径锚定 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 

@@ -262,6 +262,22 @@ def test_requirement_paths_resolve_src_layout_aliases(tmp_path):
     assert requirements.items[0].contract.path == "src/calculator/service.py"
 
 
+def test_python_contract_import_replaces_nonexistent_model_path(tmp_path):
+    package = tmp_path / "src" / "calculator"
+    package.mkdir(parents=True)
+    (package / "service.py").write_text("def add(a, b): return a + b\n")
+    item = TaskRequirement(
+        "R1", "增加 subtract", RequirementCategory.BEHAVIOR, ("calculator.js",),
+        PythonBehaviorContract(
+            "from calculator.service import add; assert add(2, 3) == 5"
+        ),
+    )
+
+    result = RequirementsExtractor._canonicalize_paths([item], tmp_path, ())
+
+    assert result[0].paths == ("src/calculator/service.py",)
+
+
 def test_requirements_do_not_rewrite_http_contract_to_benchmark_callable(tmp_path):
     (tmp_path / "app.py").write_text(
         "def login(user, password):\n"
@@ -445,6 +461,25 @@ def test_sanitize_inverts_absence_file_contains():
     assert isinstance(fixed[0].contract, PythonBehaviorContract)
     assert "not in text" in fixed[0].contract.code
     assert "def _clean(value):" in fixed[0].contract.code
+
+
+def test_sanitize_json_fragment_uses_structural_validation(monkeypatch, tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"name":"tiny-app","scripts":{"test":"node tests/run.mjs"}}',
+        encoding="utf-8",
+    )
+    item = TaskRequirement(
+        "R1", "npm test 脚本", RequirementCategory.FILE, ("package.json",),
+        FileContainsContract("package.json", '"test": "node tests/run.mjs"'),
+    )
+
+    fixed = RequirementsExtractor._sanitize_contracts([item], "Fix package.json test script")
+
+    assert isinstance(fixed[0].contract, PythonBehaviorContract)
+    assert "json.loads" in fixed[0].contract.code
+    assert "contains(data)" in fixed[0].contract.code
+    monkeypatch.chdir(tmp_path)
+    exec(fixed[0].contract.code, {})
 
 
 def test_sanitize_does_not_invent_move_symbol_behavior():

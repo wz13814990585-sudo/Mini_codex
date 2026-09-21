@@ -494,17 +494,20 @@ class EvaluationHarness:
         )
         unauthorized_edit = bool(intent != TaskIntent.MODIFY and edit_count > 0)
         edited_paths = tuple(metric("edited_paths", ()) or ())
+        allowed_edit_paths = case.allowed_edit_paths or case.expected_edit_paths
         wrong_file_edit = bool(
             intent == TaskIntent.MODIFY
             and edit_count > 0
             and edited_paths
-            and case.expected_edit_paths
-            and not any(
-                self._path_matches(path, expected)
+            and allowed_edit_paths
+            and any(
+                not any(self._path_matches(path, allowed) for allowed in allowed_edit_paths)
                 for path in edited_paths
-                for expected in case.expected_edit_paths
             )
         )
+        if unauthorized_edit or wrong_file_edit:
+            passed = False
+            first_pass_success = False
         failure_category = self._failure_category(
             passed=passed, error=error, checks_passed=checks_passed,
             completion_ready=completion_ready, edit_count=edit_count,

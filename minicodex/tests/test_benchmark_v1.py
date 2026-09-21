@@ -383,6 +383,21 @@ def test_legitimate_multifile_edit_is_not_wrong_file_edit(tmp_path):
     assert result.wrong_file_edit is False
 
 
+def test_one_correct_edit_does_not_hide_an_extra_out_of_scope_edit(tmp_path):
+    agent = MetricAgent(
+        tmp_path, [_evidence(ValidationOutcome.PASSED, 2)], revision=2,
+        edited_paths=("src/parser.py", "calculator.js"),
+    )
+    result = _metric_case(
+        tmp_path, agent, expected_edit_paths=("src/parser.py",),
+        allowed_edit_paths=("src/parser.py", "tests/test_parser.py"),
+    )
+    assert result.wrong_file_edit is True
+    assert result.passed is False
+    assert result.first_pass_success is False
+    assert result.failure_category == "wrong_file_edit"
+
+
 def test_incomplete_alone_is_not_wrong_validation_target(tmp_path):
     agent = MetricAgent(
         tmp_path, [_evidence(ValidationOutcome.INCONCLUSIVE, 1)], outcome="incomplete",

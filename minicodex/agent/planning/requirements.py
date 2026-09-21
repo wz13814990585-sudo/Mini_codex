@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field, replace
 from enum import Enum
 import ast
+import json
 import os
 import time
 import re
@@ -296,6 +297,12 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                 file, separator, node = contract.target.partition("::")
                 target = canonical(file) + (separator + node if separator else "")
                 contract = replace(contract, target=target)
+            elif isinstance(contract, PythonBehaviorContract):
+                imported_paths = cls._existing_python_import_paths(root, contract.code)
+                if imported_paths and not any((root / path).exists() for path in paths):
+                    # A non-existent model path such as calculator.js cannot
+                    # override the actual module imported by its own contract.
+                    paths = imported_paths
             normalized.append(TaskRequirement(
                 item.id,
                 item.description,
@@ -305,6 +312,32 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                 item.kind,
             ))
         return normalized
+
+    @staticmethod
+    def _existing_python_import_paths(root: Path, code: str) -> tuple[str, ...]:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return ()
+        modules = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                modules.append(node.module.removeprefix("src."))
+            elif isinstance(node, ast.Import):
+                modules.extend(alias.name.removeprefix("src.") for alias in node.names)
+        found = []
+        for module in modules:
+            relative = module.replace(".", "/")
+            for candidate in (
+                f"{relative}.py",
+                f"{relative}/__init__.py",
+                f"src/{relative}.py",
+                f"src/{relative}/__init__.py",
+            ):
+                if (root / candidate).is_file():
+                    found.append(candidate)
+                    break
+        return tuple(dict.fromkeys(found))
 
     @classmethod
     def _user_message(cls, user_request: str, target_paths, workspace) -> str:
@@ -449,8 +482,44 @@ create/fix/change/update/refactor 等要求实际变更的任务必须设为 fal
                         )
                     )
                     continue
+                json_contract = cls._json_fragment_contract(contract)
+                if json_contract is not None:
+                    sanitized.append(
+                        TaskRequirement(
+                            item.id, item.description, RequirementCategory.BEHAVIOR,
+                            item.paths, json_contract, RequirementKind.BEHAVIORAL,
+                        )
+                    )
+                    continue
             sanitized.append(item)
         return cls._prune_conflicting_boundary_assertions(sanitized, user_request)
+
+    @staticmethod
+    def _json_fragment_contract(contract: FileContainsContract) -> PythonBehaviorContract | None:
+        if not contract.path.casefold().endswith(".json"):
+            return None
+        try:
+            fragment = json.loads("{" + contract.text + "}")
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(fragment, dict) or not fragment:
+            return None
+        code = (
+            "import json\n"
+            "from pathlib import Path\n"
+            f"data = json.loads(Path({contract.path!r}).read_text(encoding='utf-8'))\n"
+            f"expected = {fragment!r}\n"
+            "def contains(value):\n"
+            "    if isinstance(value, dict):\n"
+            "        if all(key in value and value[key] == item for key, item in expected.items()):\n"
+            "            return True\n"
+            "        return any(contains(item) for item in value.values())\n"
+            "    if isinstance(value, list):\n"
+            "        return any(contains(item) for item in value)\n"
+            "    return False\n"
+            "assert contains(data)\n"
+        )
+        return PythonBehaviorContract(code)
 
     @classmethod
     def _prune_conflicting_boundary_assertions(
