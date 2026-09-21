@@ -252,7 +252,8 @@ python -m minicodex.evaluation.vibebench
 | 执行闭环 | 579 passed / 13.09s | 完成初始执行闭环 |
 | 产品门禁与 R2 oracle | 654 passed / 21.63s | 离线 VibeBench 15/15 |
 | Dogfood、发布门禁与完整 R2 修复 | 662 passed / 19.92s | 离线 VibeBench 15/15；Flask 服务端到端探测通过 |
-| 成功用例质量口径收紧 | **665 passed / 20.11s** | 当前最新；逐路径 wrong-file、结构化 JSON、import 路径锚定 |
+| 成功用例质量口径收紧 | 665 passed / 20.11s | 逐路径 wrong-file、结构化 JSON、import 路径锚定 |
+| 工具 schema 路径约束 | **666 passed / 20.70s** | 当前最新；读取与编辑路径在生成阶段即限制到当前契约范围 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 

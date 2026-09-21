@@ -140,8 +140,10 @@ class ToolAvailabilityResolver:
             edit_retry_path=edit_retry_path,
         )
 
-    def filter_schemas(self, agent, schemas: list[dict]) -> list[dict]:
-        snapshot = self.snapshot(agent)
+    def filter_schemas(
+        self, agent, schemas: list[dict], *, snapshot: ToolAvailabilitySnapshot | None = None,
+    ) -> list[dict]:
+        snapshot = snapshot or self.snapshot(agent)
         registry = getattr(agent, "registry", None)
         allowed = snapshot.allowed_capabilities
         denied = snapshot.denied_tool_names
@@ -183,10 +185,33 @@ class ToolSchemaProvider:
                 if callable(current_schemas)
                 else agent.registry.get_schemas()
             )
+        snapshot = self.availability.snapshot(agent)
+        scoped_paths = tuple(dict.fromkeys(
+            path for path in (
+                snapshot.state.validation_paths or snapshot.state.target_paths
+            ) if path
+        ))
         for schema in schemas:
             function = schema["function"]
             capabilities = agent.registry.capabilities_for(function["name"])
             properties = function["parameters"].setdefault("properties", {})
+            path_property = properties.get("path")
+            if (
+                scoped_paths
+                and isinstance(path_property, dict)
+                and (
+                    "code.edit" in capabilities
+                    or (
+                        function["name"] == "read_file"
+                        and snapshot.state.phase in {
+                            AgentPhase.FIXING,
+                            AgentPhase.VALIDATING,
+                            AgentPhase.FINALIZING,
+                        }
+                    )
+                )
+            ):
+                path_property["enum"] = list(scoped_paths)
             if "code.edit" in capabilities:
                 properties["edit_intent"] = {
                     "type": "object",
@@ -202,6 +227,8 @@ class ToolSchemaProvider:
                     "required": ["path", "expected_text"],
                     "additionalProperties": False,
                 }
+                if scoped_paths:
+                    properties["edit_intent"]["properties"]["path"]["enum"] = list(scoped_paths)
             if capabilities & {
                 "test.run",
                 "process.run",
@@ -215,7 +242,7 @@ class ToolSchemaProvider:
                         "Exact V-id from the current verification contracts."
                     ),
                 }
-        return self.availability.filter_schemas(agent, schemas)
+        return self.availability.filter_schemas(agent, schemas, snapshot=snapshot)
 
 
 @dataclass(frozen=True)

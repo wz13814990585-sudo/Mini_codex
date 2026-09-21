@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from minicodex.agent.observability.metrics import ExecutionMetrics
-from minicodex.agent.orchestration.turn_builder import ToolAvailabilityResolver
+from minicodex.agent.orchestration.turn_builder import ToolAvailabilityResolver, ToolSchemaProvider
 from minicodex.agent.progress.action_controller import ActionController
 from minicodex.agent.progress.executable_tool_policy import ExecutableToolPolicy
 from minicodex.agent.progress.finalization import FinalizationController
@@ -22,12 +22,15 @@ class _StubTool:
         self.capabilities = capabilities
 
     def to_schema(self):
+        properties = {}
+        if self.capabilities & {"file.read", "code.edit"}:
+            properties["path"] = {"type": "string"}
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.name,
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": {"type": "object", "properties": properties},
             },
         }
 
@@ -175,6 +178,25 @@ def test_fixing_without_targeted_read_allows_one_read():
     assert "list_files" not in names
     assert "search_code" not in names
     assert "write_file" in names
+
+
+def test_fixing_schemas_constrain_read_and_edit_paths_to_current_obligation():
+    agent = _agent(
+        phase=AgentPhase.FIXING,
+        contract="python_behavior",
+        validation_paths=("src/calculator/service.py",),
+    )
+
+    schemas = ToolSchemaProvider().build(agent)
+    by_name = {schema["function"]["name"]: schema for schema in schemas}
+
+    read_path = by_name["read_file"]["function"]["parameters"]["properties"]["path"]
+    edit = by_name["write_file"]["function"]["parameters"]["properties"]
+    assert read_path["enum"] == ["src/calculator/service.py"]
+    assert edit["path"]["enum"] == ["src/calculator/service.py"]
+    assert edit["edit_intent"]["properties"]["path"]["enum"] == [
+        "src/calculator/service.py"
+    ]
 
 
 def test_fixing_after_targeted_read_hides_inspection():
