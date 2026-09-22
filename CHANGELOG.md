@@ -6,6 +6,19 @@ All notable changes to MiniCodex are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Manual editing of existing UTF-8 workspace files with revision checks and task-review conflict guards.
+- Checkpoint-based Agent diff review when the workspace is not a Git repository.
+- Opt-in PTY terminal, CodeMirror multi-tab editor with find/replace, file management, and resizable panes.
+
+### Fixed
+
+- Scope-aware edit permission for instructions that only prohibit changes outside the workspace, and a conventional `index.html` target for unspecified browser-game creation.
+- Early stop on task-level edit denials, live file-tree refresh after edits, and the collapsed code-pane layout.
+- Chinese how-to questions remain informational rather than becoming file-creation tasks.
+- CSP-nonce support for the editor's injected styles while keeping script restrictions.
+
 ## 0.4.1 - 2026-09-22
 
 ### Fixed

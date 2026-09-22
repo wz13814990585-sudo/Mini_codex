@@ -4,18 +4,23 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+import difflib
 from functools import partial
+import hashlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
 import mimetypes
+import os
 from pathlib import Path
 import secrets
 import socket
+import tempfile
 import threading
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+import uuid
 import webbrowser
 
 from .. import __version__
@@ -25,6 +30,7 @@ from ..doctor import diagnose
 from ..llm import ModelConfig, ModelConfigurationError
 from ..utils.paths import resolve_workspace_path
 from ..workspace import WorkspaceConfig
+from .terminal import TerminalError, WorkspaceTerminal
 
 
 _IGNORED_DIRECTORIES = frozenset({
@@ -37,8 +43,8 @@ _SENSITIVE_FILE_NAMES = frozenset({
     "id_dsa", "id_ed25519", "id_ecdsa", "id_rsa",
 })
 _SENSITIVE_FILE_SUFFIXES = frozenset({".key", ".p12", ".pfx", ".pem"})
-_MAX_REQUEST_BYTES = 64 * 1024
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+_MAX_REQUEST_BYTES = _MAX_FILE_BYTES + 64 * 1024
 
 
 class UIRequestError(ValueError):
@@ -58,7 +64,7 @@ def _enum_value(value: Any) -> Any:
 
 
 class WorkspaceBrowser:
-    """Read-only, workspace-confined file browsing for the UI."""
+    """Workspace-confined text browsing and revision-checked manual editing."""
 
     def __init__(self, workspace: str | Path):
         self.workspace = Path(workspace).resolve()
@@ -127,6 +133,9 @@ class WorkspaceBrowser:
             target = resolve_workspace_path(self.workspace, normalized)
         except ValueError as exc:
             raise UIRequestError(str(exc), HTTPStatus.FORBIDDEN) from exc
+        relative = target.relative_to(self.workspace)
+        if any(part in _IGNORED_DIRECTORIES or part.endswith(".egg-info") for part in relative.parts):
+            raise UIRequestError("This workspace path is not available in the editor.", HTTPStatus.FORBIDDEN)
         if not target.is_file():
             raise UIRequestError("File does not exist.", HTTPStatus.NOT_FOUND)
         if _is_sensitive_file(target):
@@ -136,12 +145,121 @@ class WorkspaceBrowser:
         content = target.read_bytes()
         if b"\x00" in content[:8192]:
             raise UIRequestError("Binary files cannot be previewed.", HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        try:
+            display_content = content.decode("utf-8")
+            editable = True
+        except UnicodeDecodeError:
+            display_content = content.decode("utf-8", errors="replace")
+            editable = False
         return {
-            "path": target.relative_to(self.workspace).as_posix(),
-            "content": content.decode("utf-8", errors="replace"),
+            "path": relative.as_posix(),
+            "content": display_content,
             "size": len(content),
             "language": _language_for(target.suffix),
+            "revision": hashlib.sha256(content).hexdigest(),
+            "editable": editable,
         }
+
+    def save(self, relative_path: str, content: str, expected_revision: str) -> dict[str, Any]:
+        """Save an existing UTF-8 file without silently overwriting external edits."""
+
+        if not isinstance(content, str) or not isinstance(expected_revision, str):
+            raise UIRequestError("Text content and file revision are required.")
+        encoded = content.encode("utf-8")
+        if len(encoded) > _MAX_FILE_BYTES:
+            raise UIRequestError("File is too large to save.", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        current = self.read(relative_path)
+        if not current["editable"]:
+            raise UIRequestError("Non-UTF-8 files cannot be edited here.", HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        if not hmac.compare_digest(current["revision"], expected_revision):
+            raise UIRequestError("File changed on disk. Reload it before saving.", HTTPStatus.CONFLICT)
+        target = self.workspace / current["path"]
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".minicodex-edit-", delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(encoded)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.chmod(temporary_path, target.stat().st_mode & 0o777)
+            # Detect edits made by an external IDE during the save operation.
+            if hashlib.sha256(target.read_bytes()).hexdigest() != expected_revision:
+                raise UIRequestError("File changed on disk. Reload it before saving.", HTTPStatus.CONFLICT)
+            os.replace(temporary_path, target)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+        return self.read(relative_path)
+
+    def _managed_target(self, path: str) -> Path:
+        """Resolve a UI file-operation path without exposing hidden/internal files."""
+        raw = Path(str(path or ""))
+        if not str(path or "").strip() or raw.is_absolute() or ".." in raw.parts:
+            raise UIRequestError("Use a relative path inside the workspace.", HTTPStatus.FORBIDDEN)
+        current = self.workspace
+        for part in raw.parts:
+            if part in _IGNORED_DIRECTORIES or part.endswith(".egg-info"):
+                raise UIRequestError("This workspace path is not available in the editor.", HTTPStatus.FORBIDDEN)
+            current = current / part
+            if current.is_symlink():
+                raise UIRequestError("Symlink paths cannot be changed here.", HTTPStatus.FORBIDDEN)
+        try:
+            target = resolve_workspace_path(self.workspace, raw)
+        except ValueError as exc:
+            raise UIRequestError(str(exc), HTTPStatus.FORBIDDEN) from exc
+        if target == self.workspace or _is_sensitive_file(target):
+            raise UIRequestError("This workspace path cannot be changed here.", HTTPStatus.FORBIDDEN)
+        return target
+
+    def create(self, path: str, *, kind: str = "file") -> dict[str, Any]:
+        target = self._managed_target(path)
+        if kind not in {"file", "directory"}:
+            raise UIRequestError("Unknown workspace item type.")
+        if not target.parent.is_dir():
+            raise UIRequestError("Parent directory does not exist.", HTTPStatus.NOT_FOUND)
+        if target.exists():
+            raise UIRequestError("A file or folder already exists at that path.", HTTPStatus.CONFLICT)
+        try:
+            if kind == "directory":
+                target.mkdir()
+                return {"path": target.relative_to(self.workspace).as_posix(), "type": kind}
+            with target.open("x", encoding="utf-8"):
+                pass
+        except FileExistsError as exc:
+            raise UIRequestError("A file or folder already exists at that path.", HTTPStatus.CONFLICT) from exc
+        return self.read(path)
+
+    def rename(self, path: str, new_path: str, *, expected_revision: str | None = None) -> dict[str, Any]:
+        source = self._managed_target(path)
+        destination = self._managed_target(new_path)
+        if not source.exists():
+            raise UIRequestError("File or folder does not exist.", HTTPStatus.NOT_FOUND)
+        if destination.exists():
+            raise UIRequestError("Destination already exists.", HTTPStatus.CONFLICT)
+        if not destination.parent.is_dir() or source in destination.parents:
+            raise UIRequestError("Invalid destination directory.")
+        if source.is_file():
+            current = self.read(path)
+            if expected_revision is None or not hmac.compare_digest(current["revision"], expected_revision):
+                raise UIRequestError("File changed on disk. Reload it before renaming.", HTTPStatus.CONFLICT)
+        source.rename(destination)
+        return {"path": destination.relative_to(self.workspace).as_posix(),
+                "type": "directory" if destination.is_dir() else "file"}
+
+    def trash(self, path: str, *, expected_revision: str | None = None) -> dict[str, Any]:
+        target = self._managed_target(path)
+        if not target.exists():
+            raise UIRequestError("File or folder does not exist.", HTTPStatus.NOT_FOUND)
+        if target.is_file():
+            current = self.read(path)
+            if expected_revision is None or not hmac.compare_digest(current["revision"], expected_revision):
+                raise UIRequestError("File changed on disk. Reload it before deleting.", HTTPStatus.CONFLICT)
+        trash_dir = self.workspace / ".minicodex" / "trash"
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        destination = trash_dir / f"{uuid.uuid4().hex}-{target.name}"
+        target.rename(destination)
+        return {"path": path, "trash_path": destination.relative_to(self.workspace).as_posix()}
 
 
 def _language_for(suffix: str) -> str:
@@ -175,6 +293,7 @@ class MiniCodexUIController:
         self.model_config = model_config
         self.output_level = output_level
         self.browser = WorkspaceBrowser(config.workspace_root)
+        self.terminal = WorkspaceTerminal(config.workspace_root)
         self.git = GitRepositoryInspector(config.workspace_root)
         self._agent_factory = agent_factory or self._default_agent_factory
         self._runner_factory = runner_factory
@@ -233,6 +352,8 @@ class MiniCodexUIController:
             raise UIRequestError("Unknown permission mode.") from exc
 
         with self._lock:
+            if self.terminal.running:
+                raise UIRequestError("Close the interactive terminal before starting an Agent task.", HTTPStatus.CONFLICT)
             if self._task is not None and not self._task.done:
                 raise UIRequestError("A task is already running.", HTTPStatus.CONFLICT)
             if self._review_status == "pending":
@@ -412,6 +533,9 @@ class MiniCodexUIController:
                 task_git = agent.git_awareness.task_state().to_dict()
             except Exception:
                 task_git = None
+        if not git_state["is_repo"]:
+            task_git = task_git or {}
+            task_git["agent_current_changed_files"] = self._checkpoint_paths()
         return {
             "task": task,
             "runtime": runtime,
@@ -445,10 +569,139 @@ class MiniCodexUIController:
 
     def diff(self, path: str | None = None) -> dict[str, Any]:
         normalized = str(path or "").strip() or None
+        if not self.git.snapshot().is_repo:
+            return self._checkpoint_diff(normalized)
         result = self.git.diff(path=normalized, staged=False, max_chars=500_000)
         if not result.success:
             raise UIRequestError(result.error or "Unable to read Git diff.", HTTPStatus.CONFLICT)
         return asdict(result)
+
+    def _checkpoint_paths(self) -> list[str]:
+        manager = getattr(self._agent, "checkpoint_manager", None)
+        if manager is None:
+            return []
+        paths = []
+        for checkpoint in manager.all_checkpoints():
+            snapshot = getattr(checkpoint, "snapshot", None)
+            if checkpoint.sealed and not checkpoint.rolled_back and snapshot is not None:
+                try:
+                    target = resolve_workspace_path(self.config.workspace_root, snapshot.path)
+                    relative = target.relative_to(self.config.workspace_root)
+                except ValueError:
+                    continue
+                if _is_sensitive_file(target) or any(
+                    part in _IGNORED_DIRECTORIES or part.endswith(".egg-info")
+                    for part in relative.parts
+                ):
+                    continue
+                paths.append(relative.as_posix())
+        return list(dict.fromkeys(paths))
+
+    def _checkpoint_diff(self, path: str | None) -> dict[str, Any]:
+        if path is not None:
+            try:
+                target = resolve_workspace_path(self.config.workspace_root, path)
+                path = target.relative_to(self.config.workspace_root).as_posix()
+            except ValueError as exc:
+                raise UIRequestError(str(exc), HTTPStatus.FORBIDDEN) from exc
+        manager = getattr(self._agent, "checkpoint_manager", None)
+        checkpoints = manager.all_checkpoints() if manager is not None else ()
+        before = {}
+        latest = {}
+        for checkpoint in checkpoints:
+            snapshot = getattr(checkpoint, "snapshot", None)
+            if not checkpoint.sealed or checkpoint.rolled_back or snapshot is None:
+                continue
+            try:
+                target = resolve_workspace_path(self.config.workspace_root, snapshot.path)
+                changed_path = target.relative_to(self.config.workspace_root).as_posix()
+            except ValueError:
+                continue
+            if path is not None and changed_path != path:
+                continue
+            before.setdefault(changed_path, snapshot)
+            latest[changed_path] = checkpoint
+        parts = []
+        for changed_path, snapshot in before.items():
+            target = resolve_workspace_path(self.config.workspace_root, changed_path)
+            relative = target.relative_to(self.config.workspace_root)
+            if _is_sensitive_file(target) or any(
+                part in _IGNORED_DIRECTORIES or part.endswith(".egg-info")
+                for part in relative.parts
+            ):
+                continue
+            after = target.read_text(encoding="utf-8") if target.is_file() else ""
+            actual_hash = hashlib.sha256(after.encode("utf-8")).hexdigest() if target.is_file() else None
+            if actual_hash != latest[changed_path].after_sha256:
+                raise UIRequestError(
+                    f"{changed_path} changed after the Agent edit; reload or resolve the conflict before reviewing.",
+                    HTTPStatus.CONFLICT,
+                )
+            parts.extend(difflib.unified_diff(
+                (snapshot.content or "").splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=f"a/{changed_path}" if snapshot.existed else "/dev/null",
+                tofile=f"b/{changed_path}" if target.is_file() else "/dev/null",
+            ))
+        text = "".join(parts)
+        return {
+            "success": True, "staged": False, "path": path,
+            "text": text[:500_000], "total_chars": len(text),
+            "truncated": len(text) > 500_000, "error": None,
+        }
+
+    def save_file(self, path: str, content: str, expected_revision: str) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.save(path, content, expected_revision)
+
+    def create_item(self, path: str, kind: str) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.create(path, kind=kind)
+
+    def rename_item(self, path: str, new_path: str, expected_revision: str | None) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.rename(path, new_path, expected_revision=expected_revision)
+
+    def trash_item(self, path: str, expected_revision: str | None) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.trash(path, expected_revision=expected_revision)
+
+    def _require_idle_workspace(self) -> None:
+        if self._task is not None and not self._task.done:
+            raise UIRequestError("Stop the running task before changing workspace files.", HTTPStatus.CONFLICT)
+        if self._review_status == "pending":
+            raise UIRequestError("Accept or reject Agent changes before changing workspace files.", HTTPStatus.CONFLICT)
+
+    def start_terminal(self, *, cols: int, rows: int) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            try:
+                return self.terminal.start(cols=cols, rows=rows)
+            except TerminalError as exc:
+                raise UIRequestError(str(exc), HTTPStatus.CONFLICT) from exc
+
+    def terminal_state(self, *, after: int = 0) -> dict[str, Any]:
+        return self.terminal.snapshot(after=after)
+
+    def terminal_input(self, data: str) -> dict[str, Any]:
+        try:
+            self.terminal.write(data)
+        except TerminalError as exc:
+            raise UIRequestError(str(exc), HTTPStatus.CONFLICT) from exc
+        return {"ok": True}
+
+    def terminal_resize(self, *, cols: int, rows: int) -> dict[str, Any]:
+        try:
+            return self.terminal.resize(cols=cols, rows=rows)
+        except TerminalError as exc:
+            raise UIRequestError(str(exc), HTTPStatus.CONFLICT) from exc
+
+    def stop_terminal(self) -> dict[str, Any]:
+        return self.terminal.stop()
 
 
 def _runtime_payload(state: Any) -> dict[str, Any] | None:
@@ -484,6 +737,10 @@ class MiniCodexHTTPServer(ThreadingHTTPServer):
             self.address_family = socket.AF_INET6
         super().__init__(server_address, MiniCodexRequestHandler)
 
+    def server_close(self) -> None:
+        self.controller.stop_terminal()
+        super().server_close()
+
 
 class MiniCodexRequestHandler(BaseHTTPRequestHandler):
     """Small same-origin JSON API and static-file server."""
@@ -511,6 +768,12 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
             elif route.path == "/api/diff":
                 query = parse_qs(route.query)
                 self._json(self.server.controller.diff(query.get("path", [""])[0]))
+            elif route.path == "/api/terminal":
+                if not self._valid_token():
+                    self._error(HTTPStatus.FORBIDDEN, "Invalid UI session token.")
+                    return
+                query = parse_qs(route.query)
+                self._json(self.server.controller.terminal_state(after=int(query.get("after", ["0"])[0])))
             elif route.path in {"/", "/index.html"}:
                 index = (self.server.static_root / "index.html").read_text(encoding="utf-8")
                 index = index.replace("__MINICODEX_TOKEN__", self.server.token)
@@ -539,9 +802,7 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
-        if not hmac.compare_digest(
-            self.headers.get("X-MiniCodex-Token", ""), self.server.token,
-        ):
+        if not self._valid_token():
             self._error(HTTPStatus.FORBIDDEN, "Invalid UI session token.")
             return
         try:
@@ -561,6 +822,36 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
                 self._json(self.server.controller.resolve_approval(
                     payload.get("request_id", ""), payload.get("decision", ""),
                 ))
+            elif route == "/api/file":
+                self._json(self.server.controller.save_file(
+                    payload.get("path", ""), payload.get("content"),
+                    payload.get("expected_revision"),
+                ))
+            elif route == "/api/items/create":
+                self._json(self.server.controller.create_item(
+                    payload.get("path", ""), payload.get("kind", "file"),
+                ), HTTPStatus.CREATED)
+            elif route == "/api/items/rename":
+                self._json(self.server.controller.rename_item(
+                    payload.get("path", ""), payload.get("new_path", ""),
+                    payload.get("expected_revision"),
+                ))
+            elif route == "/api/items/trash":
+                self._json(self.server.controller.trash_item(
+                    payload.get("path", ""), payload.get("expected_revision"),
+                ))
+            elif route == "/api/terminal/start":
+                self._json(self.server.controller.start_terminal(
+                    cols=payload.get("cols", 80), rows=payload.get("rows", 24),
+                ))
+            elif route == "/api/terminal/input":
+                self._json(self.server.controller.terminal_input(payload.get("data")))
+            elif route == "/api/terminal/resize":
+                self._json(self.server.controller.terminal_resize(
+                    cols=payload.get("cols", 80), rows=payload.get("rows", 24),
+                ))
+            elif route == "/api/terminal/stop":
+                self._json(self.server.controller.stop_terminal())
             else:
                 self._error(HTTPStatus.NOT_FOUND, "Not found.")
         except UIRequestError as exc:
@@ -594,8 +885,11 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
             hostname = host.split(":", 1)[0]
         return hostname in {"127.0.0.1", "localhost", "::1"}
 
+    def _valid_token(self) -> bool:
+        return hmac.compare_digest(self.headers.get("X-MiniCodex-Token", ""), self.server.token)
+
     def _static(self, name: str) -> None:
-        if name not in {"app.js", "styles.css"}:
+        if name not in {"app.js", "app.bundle.js", "app.bundle.css", "styles.css"}:
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
             return
         target = self.server.static_root / name
@@ -617,7 +911,7 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", f"default-src 'self'; img-src 'self' data:; style-src 'self' 'nonce-{self.server.token}'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")

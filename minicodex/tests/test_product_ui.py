@@ -1,8 +1,9 @@
-"""Product-level tests for the dependency-free local Web UI."""
+"""Product-level tests for the local Web UI and bundled frontend."""
 
 from __future__ import annotations
 
 from http.client import HTTPConnection
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import threading
@@ -12,6 +13,7 @@ import pytest
 
 import minicodex.main as main_module
 from ..agent.observability import TraceEventType, TraceRecorder
+from ..agent.editing.checkpoint import CheckpointManager
 from ..agent.runtime import AsyncTaskStatus
 from ..agent.runtime import PreparedToolCall
 from ..agent.safety import PermissionMode, SafetyDecision, SafetyLevel
@@ -24,6 +26,7 @@ from ..ui.server import (
     WorkspaceBrowser,
     create_ui_server,
 )
+from ..ui.terminal import TerminalError, WorkspaceTerminal
 from ..workspace import WorkspaceConfig
 
 
@@ -166,10 +169,148 @@ def test_workspace_browser_is_confined_and_skips_runtime_directories(tmp_path):
     tree = browser.tree()
     assert [node["name"] for node in tree["children"]] == ["src", ".env.example"]
     assert browser.read("src/app.py")["language"] == "python"
+    with pytest.raises(UIRequestError, match="not available"):
+        browser.read(".git/config")
     with pytest.raises(UIRequestError, match="credential"):
         browser.read(".env")
     with pytest.raises(UIRequestError, match="工作区之外"):
         browser.read("../outside-ui-test.txt")
+
+
+def test_workspace_browser_manual_save_is_confined_and_revision_checked(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("SECRET=yes", encoding="utf-8")
+    browser = WorkspaceBrowser(tmp_path)
+    first = browser.read("app.py")
+    assert first["editable"] is True
+    saved = browser.save("app.py", "value = 2\n", first["revision"])
+    assert saved["revision"] != first["revision"]
+    assert source.read_text(encoding="utf-8") == "value = 2\n"
+    with pytest.raises(UIRequestError, match="changed on disk") as stale:
+        browser.save("app.py", "value = 3\n", first["revision"])
+    assert stale.value.status == 409
+    with pytest.raises(UIRequestError, match="credential"):
+        browser.save(".env", "SECRET=no", first["revision"])
+    with pytest.raises(UIRequestError, match="工作区之外"):
+        browser.save("../outside.py", "x", first["revision"])
+    assert source.read_text(encoding="utf-8") == "value = 2\n"
+
+
+def test_workspace_browser_create_rename_and_recoverable_trash(tmp_path):
+    browser = WorkspaceBrowser(tmp_path)
+    folder = browser.create("src", kind="directory")
+    assert folder["type"] == "directory"
+    created = browser.create("src/app.py")
+    assert created["content"] == ""
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    fresh = browser.read("src/app.py")
+    with pytest.raises(UIRequestError, match="changed on disk"):
+        browser.rename("src/app.py", "src/new.py", expected_revision=created["revision"])
+    renamed = browser.rename("src/app.py", "src/new.py", expected_revision=fresh["revision"])
+    assert renamed["path"] == "src/new.py"
+    with pytest.raises(UIRequestError, match="relative path"):
+        browser.create("../outside.py")
+    with pytest.raises(UIRequestError, match="cannot be changed"):
+        browser.create(".env")
+    with pytest.raises(UIRequestError, match="not available"):
+        browser.create(".git/config")
+    with pytest.raises(UIRequestError, match="already exists"):
+        browser.create("src/new.py")
+    removed = browser.trash("src/new.py", expected_revision=fresh["revision"])
+    assert not (tmp_path / "src" / "new.py").exists()
+    assert (tmp_path / removed["trash_path"]).read_text(encoding="utf-8") == "print('ok')\n"
+
+
+def test_workspace_terminal_is_real_pty_and_bounded(tmp_path):
+    terminal = WorkspaceTerminal(tmp_path, shell="/bin/sh")
+    with pytest.raises(TerminalError, match="size"):
+        terminal.start(cols=1, rows=1)
+    started = terminal.start(cols=80, rows=24)
+    assert started["running"] is True
+    try:
+        terminal.write("pwd; printf 'PTY_READY\\n'; exit\n")
+        deadline = time.monotonic() + 5
+        output = ""
+        while time.monotonic() < deadline:
+            snapshot = terminal.snapshot()
+            output = "".join(chunk["data"] for chunk in snapshot["chunks"])
+            if "PTY_READY" in output and not snapshot["running"]:
+                break
+            time.sleep(0.02)
+        assert str(tmp_path) in output
+        assert "PTY_READY" in output
+        assert terminal.snapshot(after=terminal.snapshot()["sequence"])["chunks"] == []
+    finally:
+        terminal.stop()
+    assert terminal.running is False
+
+
+def test_controller_manual_save_waits_for_agent_review(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    controller, _ = _controller(tmp_path)
+    revision = controller.browser.read("app.py")["revision"]
+    controller.start_task("change app")
+    _wait_for_task(controller)
+    with pytest.raises(UIRequestError, match="Accept or reject"):
+        controller.save_file("app.py", "value = 2\n", revision)
+    controller.accept()
+    saved = controller.save_file("app.py", "value = 2\n", revision)
+    assert saved["content"] == "value = 2\n"
+
+
+def test_controller_keeps_shell_and_agent_tasks_separate(tmp_path):
+    controller, _ = _controller(tmp_path)
+    controller.terminal.shell = "/bin/sh"
+    controller.start_terminal(cols=80, rows=24)
+    try:
+        with pytest.raises(UIRequestError, match="Close the interactive terminal"):
+            controller.start_task("change app")
+    finally:
+        controller.stop_terminal()
+    controller.start_task("change app")
+    assert _wait_for_task(controller)["review_status"] == "pending"
+    with pytest.raises(UIRequestError, match="Accept or reject"):
+        controller.start_terminal(cols=80, rows=24)
+
+
+def test_non_git_workspace_uses_agent_checkpoints_for_review_diff(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    manager = CheckpointManager(tmp_path)
+    checkpoint = manager.capture(path="app.py", edit_revision=1)
+    source.write_text("value = 2\n", encoding="utf-8")
+    manager.seal(checkpoint.checkpoint_id)
+    controller = MiniCodexUIController(_workspace_config(tmp_path), _ready_model())
+    controller._agent = SimpleNamespace(checkpoint_manager=manager)
+
+    assert controller.state()["task_git"]["agent_current_changed_files"] == ["app.py"]
+    diff = controller.diff("app.py")
+    assert diff["success"] is True
+    assert "-value = 1" in diff["text"]
+    assert "+value = 2" in diff["text"]
+    with pytest.raises(UIRequestError, match="工作区之外"):
+        controller.diff("../outside.py")
+
+    source.write_text("value = 3\n", encoding="utf-8")
+    with pytest.raises(UIRequestError, match="changed after") as stale:
+        controller.diff("app.py")
+    assert stale.value.status == 409
+
+
+def test_non_git_new_file_has_reviewable_diff(tmp_path):
+    manager = CheckpointManager(tmp_path)
+    checkpoint = manager.capture(path="index.html", edit_revision=1)
+    (tmp_path / "index.html").write_text("<h1>Snake</h1>\n", encoding="utf-8")
+    manager.seal(checkpoint.checkpoint_id)
+    controller = MiniCodexUIController(_workspace_config(tmp_path), _ready_model())
+    controller._agent = SimpleNamespace(checkpoint_manager=manager)
+
+    diff = controller.diff("index.html")
+    assert "--- /dev/null" in diff["text"]
+    assert "+++ b/index.html" in diff["text"]
+    assert "+<h1>Snake</h1>" in diff["text"]
 
 
 def test_controller_runs_agent_and_rejects_through_checkpoint_rollback(tmp_path):
@@ -291,6 +432,7 @@ def test_controller_cancellation_rejects_pending_approval(tmp_path):
 def test_http_server_serves_shell_and_protects_mutations(tmp_path):
     (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
     server = create_ui_server(_workspace_config(tmp_path), _ready_model(), port=0)
+    server.controller.terminal.shell = "/bin/sh"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
@@ -303,7 +445,16 @@ def test_http_server_serves_shell_and_protects_mutations(tmp_path):
         assert 'data-mode="review"' in html
         assert 'id="diff-file-bar"' in html
         assert server.token in html
-        assert "frame-ancestors 'none'" in response.getheader("Content-Security-Policy")
+        policy = response.getheader("Content-Security-Policy")
+        assert "frame-ancestors 'none'" in policy
+        assert f"style-src 'self' 'nonce-{server.token}'" in policy
+        assert "script-src 'self'" in policy
+        assert "'unsafe-inline'" not in policy
+        for asset in ("app.bundle.js", "app.bundle.css"):
+            connection.request("GET", f"/static/{asset}")
+            response = connection.getresponse()
+            assert response.status == 200
+            assert len(response.read()) > 1000
 
         connection.request(
             "POST", "/api/tasks", body='{"prompt":"test"}',
@@ -312,6 +463,89 @@ def test_http_server_serves_shell_and_protects_mutations(tmp_path):
         response = connection.getresponse()
         assert response.status == 403
         response.read()
+
+        connection.request("GET", "/api/file?path=README.md")
+        response = connection.getresponse()
+        file_state = json.loads(response.read())
+        assert response.status == 200
+        save_body = json.dumps({
+            "path": "README.md", "content": "# Updated\n",
+            "expected_revision": file_state["revision"],
+        })
+        connection.request(
+            "POST", "/api/file", body=save_body,
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+        connection.request(
+            "POST", "/api/file", body=save_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-MiniCodex-Token": server.token,
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read())["content"] == "# Updated\n"
+        assert (tmp_path / "README.md").read_text(encoding="utf-8") == "# Updated\n"
+
+        mutation_headers = {"Content-Type": "application/json", "X-MiniCodex-Token": server.token}
+        connection.request(
+            "POST", "/api/items/create", body='{"path":"scratch.py","kind":"file"}',
+            headers=mutation_headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 201
+        new_file = json.loads(response.read())
+        assert new_file["path"] == "scratch.py"
+        connection.request(
+            "POST", "/api/items/rename",
+            body=json.dumps({"path": "scratch.py", "new_path": "renamed.py",
+                             "expected_revision": new_file["revision"]}),
+            headers=mutation_headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        connection.request(
+            "POST", "/api/items/trash",
+            body=json.dumps({"path": "renamed.py", "expected_revision": new_file["revision"]}),
+            headers=mutation_headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        trashed = json.loads(response.read())
+        assert (tmp_path / trashed["trash_path"]).is_file()
+
+        connection.request("GET", "/api/terminal?after=0")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+        terminal_headers = mutation_headers
+        connection.request(
+            "POST", "/api/terminal/start", body='{"cols":80,"rows":24}', headers=terminal_headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read())["running"] is True
+        connection.request(
+            "POST", "/api/terminal/input", body=json.dumps({"data": "printf 'HTTP_PTY_OK\\n'; exit\n"}),
+            headers=terminal_headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        observed = ""
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "HTTP_PTY_OK" not in observed:
+            connection.request("GET", "/api/terminal?after=0", headers=terminal_headers)
+            response = connection.getresponse()
+            assert response.status == 200
+            observed = "".join(chunk["data"] for chunk in json.loads(response.read())["chunks"])
+            time.sleep(0.02)
+        assert "HTTP_PTY_OK" in observed
 
         connection.request("GET", "/", headers={"Host": "malicious.example"})
         response = connection.getresponse()

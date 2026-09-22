@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="minicodex-token" content="__MINICODEX_TOKEN__">
   <title>MiniCodex Workspace</title>
+  <link rel="stylesheet" href="/static/app.bundle.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -34,7 +35,11 @@
           <span class="eyebrow" data-i18n="workspace">WORKSPACE</span>
           <h2 data-i18n="files">文件</h2>
         </div>
-        <button class="icon-button" id="refresh-tree" type="button" aria-label="Refresh files">↻</button>
+        <div class="panel-actions">
+          <button class="icon-button" id="new-file" type="button" aria-label="New file" title="New file">＋</button>
+          <button class="icon-button" id="new-folder" type="button" aria-label="New folder" title="New folder">▣</button>
+          <button class="icon-button" id="refresh-tree" type="button" aria-label="Refresh files">↻</button>
+        </div>
       </div>
       <label class="search-box">
         <span aria-hidden="true">⌕</span>
@@ -42,6 +47,7 @@
       </label>
       <nav class="file-tree" id="file-tree" aria-label="Workspace files"></nav>
     </aside>
+    <div class="pane-resizer" id="left-resizer" role="separator" tabindex="0" aria-label="Resize file sidebar" aria-orientation="vertical"></div>
 
     <section class="workbench panel">
       <div class="editor-toolbar">
@@ -49,9 +55,14 @@
           <button class="view-tab active" id="code-tab" type="button" role="tab" data-i18n="code">代码</button>
           <button class="view-tab" id="diff-tab" type="button" role="tab" data-i18n="diff">变更</button>
         </div>
-        <span class="active-path" id="active-path" title="">README.md</span>
+        <span class="active-path" id="active-path" title="">—</span>
+        <button class="text-button" id="find-file" type="button" data-i18n="findFile">查找</button>
+        <button class="text-button" id="rename-file" type="button" data-i18n="renameFile">重命名</button>
+        <button class="text-button danger-text" id="trash-file" type="button" data-i18n="trashFile">删除</button>
+        <button class="secondary-button" id="save-file" type="button" data-i18n="saveFile">保存</button>
         <button class="icon-button" id="refresh-view" type="button" aria-label="Refresh view">↻</button>
       </div>
+      <div class="open-file-tabs" id="open-file-tabs" role="tablist" aria-label="Open files"></div>
       <div class="diff-file-bar hidden" id="diff-file-bar" aria-label="Changed files"></div>
       <div class="editor" id="editor">
         <div class="empty-state" id="editor-empty">
@@ -59,26 +70,36 @@
           <strong data-i18n="selectFile">选择一个文件开始查看</strong>
           <span data-i18n="selectFileHint">任务运行后可切换到 Diff 审查修改</span>
         </div>
+        <div class="code-editor hidden" id="code-editor"></div>
         <pre class="code-view hidden" id="code-view" tabindex="0"><code id="code-content"></code></pre>
       </div>
 
+      <div class="pane-resizer horizontal" id="bottom-resizer" role="separator" tabindex="0" aria-label="Resize terminal" aria-orientation="horizontal"></div>
       <section class="terminal-panel">
         <div class="terminal-heading">
           <div class="terminal-title">
             <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
-            <strong data-i18n="activity">运行活动</strong>
+            <button class="terminal-tab active" id="shell-tab" type="button" data-i18n="terminal">终端</button>
+            <button class="terminal-tab" id="activity-tab" type="button" data-i18n="activity">运行活动</button>
           </div>
           <div class="terminal-stats">
+            <button class="text-button" id="start-terminal" type="button" data-i18n="startTerminal">启动终端</button>
+            <button class="text-button danger-text hidden" id="stop-terminal" type="button" data-i18n="stopTerminal">关闭终端</button>
             <span id="tool-count">0 tools</span>
             <span id="validation-count">0 checks</span>
             <button class="text-button" id="clear-terminal" type="button" data-i18n="clear">清空</button>
           </div>
         </div>
-        <div class="terminal-output" id="terminal-output" aria-live="polite">
+        <div class="terminal-shell" id="terminal-shell" tabindex="0">
+          <div class="terminal-notice" id="terminal-notice" data-i18n="terminalNotice">终端以当前系统用户权限执行命令。点击“启动终端”后连接到当前工作区。</div>
+          <div id="xterm-container" class="xterm-container hidden"></div>
+        </div>
+        <div class="terminal-output hidden" id="terminal-output" aria-live="polite">
           <div class="terminal-line muted"><span>›</span> <span data-i18n="ready">等待任务…</span></div>
         </div>
       </section>
     </section>
+    <div class="pane-resizer" id="right-resizer" role="separator" tabindex="0" aria-label="Resize Agent sidebar" aria-orientation="vertical"></div>
 
     <aside class="agent-panel panel">
       <div class="agent-heading">
@@ -161,7 +182,18 @@
     </aside>
   </main>
 
+  <dialog class="workspace-dialog" id="workspace-dialog" aria-labelledby="workspace-dialog-title">
+    <form id="workspace-dialog-form">
+      <h2 id="workspace-dialog-title"></h2>
+      <p id="workspace-dialog-message"></p>
+      <input id="workspace-dialog-input" type="text" autocomplete="off" spellcheck="false" required>
+      <div class="workspace-dialog-actions">
+        <button class="secondary-button" id="workspace-dialog-cancel" type="button"></button>
+        <button class="accept-button" id="workspace-dialog-confirm" type="submit"></button>
+      </div>
+    </form>
+  </dialog>
   <div class="toast-region" id="toast-region" aria-live="assertive"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.bundle.js" defer></script>
 </body>
 </html>

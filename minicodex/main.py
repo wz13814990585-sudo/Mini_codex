@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from openai import OpenAIError
 
 from . import __version__
+from .cli_review import review_task
 from .agent.agent import MiniCodexAgent
 from .agent.context import RepoMap, SymbolIndex
 from .agent.memory import LongTermMemoryStore, attach_long_term_memory
@@ -85,7 +86,7 @@ def build_agent(config: WorkspaceConfig, *, llm=None, control_llm=None, judge_ll
 
 
 def run_interactive(config: WorkspaceConfig, *, model_config: ModelConfig | None = None,
-                    output_level="normal") -> None:
+                    output_level="normal", review: bool = False) -> None:
     agent, recorder, _memory = build_agent(
         config, model_config=model_config, output_level=output_level,
     )
@@ -107,6 +108,11 @@ def run_interactive(config: WorkspaceConfig, *, model_config: ModelConfig | None
             config.trace_root.mkdir(parents=True, exist_ok=True)
             recorder.save_jsonl(config.trace_root / "latest.jsonl")
         print(f"\nMiniCodex >\n{result}")
+        if review:
+            outcome = review_task(agent, config.workspace_root)
+            if outcome in {"pending", "conflict"}:
+                print("[审查] 本会话已停止；请先手动处理保留的改动，再启动新任务。")
+                return
 
 
 def run_once(config: WorkspaceConfig, prompt: str, *, model_config: ModelConfig | None = None,
@@ -119,6 +125,24 @@ def run_once(config: WorkspaceConfig, prompt: str, *, model_config: ModelConfig 
     )
     try:
         return agent.run(prompt.strip())
+    finally:
+        config.trace_root.mkdir(parents=True, exist_ok=True)
+        recorder.save_jsonl(config.trace_root / "latest.jsonl")
+
+
+def run_once_review(config: WorkspaceConfig, prompt: str, *,
+                    model_config: ModelConfig | None = None,
+                    output_level="normal") -> str:
+    """Run one task, show its report and diff, then request terminal review."""
+
+    if not prompt.strip():
+        raise ValueError("单任务 prompt 不能为空")
+    agent, recorder, _memory = build_agent(
+        config, model_config=model_config, output_level=output_level,
+    )
+    try:
+        print(agent.run(prompt.strip()))
+        return review_task(agent, config.workspace_root)
     finally:
         config.trace_root.mkdir(parents=True, exist_ok=True)
         recorder.save_jsonl(config.trace_root / "latest.jsonl")
@@ -155,9 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="执行一个编码任务后退出")
     run.add_argument("task", help="要执行的自然语言任务")
+    run.add_argument("--review", action="store_true",
+                     help="显示本次 Agent Diff，并在终端接受或撤销改动")
     _add_runtime_options(run, preserve_parent=True)
 
     chat = commands.add_parser("chat", help="启动交互式编码会话")
+    chat.add_argument("--review", action="store_true",
+                      help="每轮任务后显示 Diff 并请求接受或撤销")
     _add_runtime_options(chat, preserve_parent=True)
 
     ui = commands.add_parser("ui", help="启动本地 MiniCodex Web 工作台")
@@ -248,12 +276,18 @@ def main(argv=None) -> int:
 
     if prompt is not None:
         try:
-            print(run_once(
-                config,
-                prompt,
-                model_config=model_config,
-                output_level=args.output,
-            ))
+            if args.command == "run" and args.review:
+                review_outcome = run_once_review(
+                    config, prompt, model_config=model_config,
+                    output_level=args.output,
+                )
+            else:
+                print(run_once(
+                    config,
+                    prompt,
+                    model_config=model_config,
+                    output_level=args.output,
+                ))
         except ValueError as exc:
             parser.error(str(exc))
         except OpenAIError as exc:
@@ -262,9 +296,13 @@ def main(argv=None) -> int:
             return 3
         if args.output in {"verbose", "debug"}:
             print(f"\n运行记录：{config.trace_root / 'latest.jsonl'}")
-        return 0
+        return 5 if args.command == "run" and args.review and review_outcome in {"pending", "conflict"} else 0
     try:
-        run_interactive(config, model_config=model_config, output_level=args.output)
+        if args.command == "chat" and args.review:
+            run_interactive(config, model_config=model_config,
+                            output_level=args.output, review=True)
+        else:
+            run_interactive(config, model_config=model_config, output_level=args.output)
     except KeyboardInterrupt:
         print("\n任务已取消；已保留当前工作区和可用运行记录。", file=sys.stderr)
         return 130

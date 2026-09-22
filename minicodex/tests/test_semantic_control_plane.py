@@ -159,6 +159,49 @@ def test_requirements_extracts_explicit_dom_interaction_as_browser_contract():
     assert "要求实际变更的任务必须设为 false" in RequirementsExtractor.SYSTEM_PROMPT
 
 
+def test_unspecified_game_does_not_promote_invented_files_or_dom_to_hard_checks(tmp_path):
+    request = "创建一个可以在浏览器玩的贪吃蛇游戏"
+    llm = StubLLM({
+        "requirements": [
+            {"description": "必须创建 plane.html", "category": "file",
+             "paths": ["plane.html"],
+             "contract": {"type": "file_exists", "path": "plane.html"}},
+            {"description": "状态元素必须存在", "category": "behavior",
+             "paths": ["index.html"],
+             "contract": {"type": "browser_interaction", "path": "index.html",
+                          "action": {"type": "keypress", "selector": "#status", "value": "ArrowUp"},
+                          "assertion": {"type": "text_equals", "selector": "#status", "value": "playing"}}},
+        ],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    extracted = RequirementsExtractor(llm).extract(
+        request, mode=ExecutionMode.STANDARD,
+        target_paths=("index.html",), workspace=tmp_path,
+    )
+    assert len(extracted.items) == 1
+    assert extracted.items[0].contract == SemanticContract("index.html", request)
+    assert extracted.items[0].description == request
+
+
+def test_explicit_new_file_and_dom_details_remain_hard_checks(tmp_path):
+    request = "创建 index.html，按 ArrowUp 后把 #status 的文字设为 playing。"
+    llm = StubLLM({
+        "requirements": [{
+            "description": "方向键更新状态", "category": "behavior",
+            "paths": ["index.html"],
+            "contract": {"type": "browser_interaction", "path": "index.html",
+                         "action": {"type": "keypress", "selector": "#status", "value": "ArrowUp"},
+                         "assertion": {"type": "text_equals", "selector": "#status", "value": "playing"}},
+        }],
+        "policy": {"no_edit_if_already_satisfied": False},
+    })
+    extracted = RequirementsExtractor(llm).extract(
+        request, mode=ExecutionMode.STANDARD,
+        target_paths=("index.html",), workspace=tmp_path,
+    )
+    assert isinstance(extracted.items[0].contract, BrowserInteractionContract)
+
+
 def test_requirements_user_message_includes_workspace_facts(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "pricing.py").write_text(
@@ -711,6 +754,40 @@ def test_raw_no_edit_constraint_overrides_wrong_semantic_route(tmp_path):
     policy.begin_task("Review foo.py but do not modify anything", routed_intent=TaskIntent.MODIFY)
     decision = policy.assess("write_file", {"path": "foo.py", "content": "x"})
     assert decision.allowed is False
+    assert decision.rule == "task_no_edit_constraint"
+
+
+@pytest.mark.parametrize("scope", [
+    "不要修改工作区外的文件",
+    "不要修改当前工作区以外的文件",
+    "do not modify files outside the workspace",
+])
+def test_external_workspace_limit_keeps_internal_edit_authorized(tmp_path, scope):
+    policy = SafetyPolicy(workspace=tmp_path)
+    policy.begin_task(f"创建 index.html。{scope}", routed_intent=TaskIntent.MODIFY)
+    decision = policy.assess("write_file", {"path": "index.html", "content": "ok"})
+    assert decision.allowed is True
+    outside = policy.assess("write_file", {"path": "../outside.html", "content": "no"})
+    assert outside.rule == "workspace_escape"
+
+
+def test_global_no_edit_survives_external_workspace_limit(tmp_path):
+    policy = SafetyPolicy(workspace=tmp_path)
+    policy.begin_task(
+        "不要修改工作区外的文件，也不要修改工作区内的任何文件",
+        routed_intent=TaskIntent.MODIFY,
+    )
+    decision = policy.assess("write_file", {"path": "index.html", "content": "ok"})
+    assert decision.rule == "task_no_edit_constraint"
+
+
+def test_external_and_internal_limits_in_one_clause_still_block_edit(tmp_path):
+    policy = SafetyPolicy(workspace=tmp_path)
+    policy.begin_task(
+        "不要修改工作区外的文件或仓库里的任何文件",
+        routed_intent=TaskIntent.MODIFY,
+    )
+    decision = policy.assess("write_file", {"path": "index.html", "content": "ok"})
     assert decision.rule == "task_no_edit_constraint"
 
 
