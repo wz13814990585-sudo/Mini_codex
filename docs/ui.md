@@ -4,7 +4,7 @@
 
 Web 工作台是 MiniCodex Runtime 之上的薄界面层。它不重新实现规划、工具调用、安全、验证或完成判定；同一个 `build_agent()` 组合根仍然负责真正的代码任务。
 
-> `minicodex ui` 属于当前源码版本，公开的 `v0.2.0` wheel 尚未包含该命令。
+> `minicodex ui` 从 `v0.3.0` 起随 wheel 一同发布。
 
 ## 启动
 

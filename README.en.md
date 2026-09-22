@@ -11,7 +11,7 @@ MiniCodex is an autonomous coding agent that works on local code repositories. I
 
 Its central boundary is: **the model handles understanding and decisions; the deterministic Harness owns facts, permissions, safety, execution, validation, recovery, and final completion.** A model message saying “done” can never finish a modification task by itself.
 
-> Current public release: [`v0.2.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.2.0) (Alpha). Use it in a committed or backed-up workspace.
+> Current public release: [`v0.3.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.3.0) (Alpha). Use it in a committed or backed-up workspace.
 
 ## Why MiniCodex
 
@@ -74,11 +74,11 @@ py -3.11 -m venv .venv
 python -m pip install -e .
 ```
 
-You can also install the `v0.2.0` wheel directly:
+You can also install the `v0.3.0` wheel directly:
 
 ```bash
 python -m pip install \
-  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.2.0/mini_codex-0.2.0-py3-none-any.whl
+  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.3.0/mini_codex-0.3.0-py3-none-any.whl
 ```
 
 Install development and test dependencies with:
@@ -127,7 +127,7 @@ minicodex ui --workspace /path/to/project
 
 The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, Git diff, and task-level Accept / Reject. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
 
-The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. This command is available in the current source version; the public `v0.2.0` wheel does not include the UI yet.
+The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. The `v0.3.0` wheel includes the UI static assets and launch command.
 
 ### 5. Run a task from the CLI
 
@@ -317,6 +317,7 @@ Run the full test suite before submitting a focused change.
 | Validation Core V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |
 | Refactoring delivery report | [中文](docs/vibecoding-refactor-report.md) | [English](docs/vibecoding-refactor-report.en.md) |
+| v0.3.0 release notes | [中文](docs/releases/v0.3.0.zh-CN.md) | [English](docs/releases/v0.3.0.md) |
 | v0.2.0 release notes | [中文](docs/releases/v0.2.0.zh-CN.md) | [English](docs/releases/v0.2.0.md) |
 | Changelog | [中文](CHANGELOG.zh-CN.md) | [English](CHANGELOG.md) |
 | MIT License | [中文参考译文](LICENSE.zh-CN.md) | [English](LICENSE) |

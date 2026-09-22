@@ -6,6 +6,8 @@ All notable changes to MiniCodex are documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-22
+
 ### Added
 
 - A dependency-free local Web workspace launched with `minicodex ui`.

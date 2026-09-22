@@ -4,7 +4,7 @@
 
 | Item | Result |
 | --- | --- |
-| Branch | Historical refactoring branch `demo_game_try`; `v0.2.0` is merged into `main`; UI development branch `codex/minimal-ui` |
+| Release line | `v0.2.0` productized the CLI; `v0.3.0` adds the local Web workspace; the current Git tree is authoritative |
 | Pre-change baseline | `e3510ac` |
 | Latest full regression | **689 passed in 23.15s** |
 | Offline VibeBench | **15/15**, false-completion rate **0** |

@@ -4,7 +4,7 @@
 
 The Web workspace is a thin interface over the MiniCodex Runtime. It does not reimplement planning, tool calls, safety, validation, or completion; the same `build_agent()` composition root still owns real coding tasks.
 
-> `minicodex ui` is available in the current source version. The public `v0.2.0` wheel does not include this command yet.
+> `minicodex ui` ships in the wheel starting with `v0.3.0`.
 
 ## Start
 

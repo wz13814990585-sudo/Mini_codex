@@ -11,7 +11,7 @@ MiniCodex 是一个运行在本地代码仓库上的自主编程 Agent。它使�
 
 它的核心边界是：**模型负责理解与决策，确定性 Harness 负责事实、权限、安全、执行、验证、恢复和最终完成判定。** 模型不能仅靠回复“已完成”结束修改任务。
 
-> 当前公开版本：[`v0.2.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.2.0)（Alpha）。请先在已提交或已备份的工作区中使用。
+> 当前公开版本：[`v0.3.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.3.0)（Alpha）。请先在已提交或已备份的工作区中使用。
 
 ## 为什么是 MiniCodex
 
@@ -74,11 +74,11 @@ py -3.11 -m venv .venv
 python -m pip install -e .
 ```
 
-也可以直接安装 `v0.2.0` wheel：
+也可以直接安装 `v0.3.0` wheel：
 
 ```bash
 python -m pip install \
-  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.2.0/mini_codex-0.2.0-py3-none-any.whl
+  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.3.0/mini_codex-0.3.0-py3-none-any.whl
 ```
 
 开发和测试依赖：
@@ -127,7 +127,7 @@ minicodex ui --workspace /path/to/project
 
 浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、Git Diff，以及任务级 Accept / Reject。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
 
-UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。该命令属于当前源码版本，公开的 `v0.2.0` wheel 尚未包含 UI。
+UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。`v0.3.0` wheel 已包含 UI 静态资源与启动命令。
 
 ### 5. 使用 CLI 执行任务
 
@@ -317,6 +317,7 @@ python -m minicodex.evaluation.run_benchmark \
 | 验证核心 V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |
 | 重构交付报告 | [中文](docs/vibecoding-refactor-report.md) | [English](docs/vibecoding-refactor-report.en.md) |
+| v0.3.0 Release notes | [中文](docs/releases/v0.3.0.zh-CN.md) | [English](docs/releases/v0.3.0.md) |
 | v0.2.0 Release notes | [中文](docs/releases/v0.2.0.zh-CN.md) | [English](docs/releases/v0.2.0.md) |
 | Changelog | [中文](CHANGELOG.zh-CN.md) | [English](CHANGELOG.md) |
 | MIT License | [中文参考译文](LICENSE.zh-CN.md) | [English](LICENSE) |
