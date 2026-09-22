@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+import difflib
 from functools import partial
+import hashlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
 import mimetypes
+import os
 from pathlib import Path
 import secrets
 import socket
+import tempfile
 import threading
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
@@ -37,8 +41,8 @@ _SENSITIVE_FILE_NAMES = frozenset({
     "id_dsa", "id_ed25519", "id_ecdsa", "id_rsa",
 })
 _SENSITIVE_FILE_SUFFIXES = frozenset({".key", ".p12", ".pfx", ".pem"})
-_MAX_REQUEST_BYTES = 64 * 1024
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+_MAX_REQUEST_BYTES = _MAX_FILE_BYTES + 64 * 1024
 
 
 class UIRequestError(ValueError):
@@ -58,7 +62,7 @@ def _enum_value(value: Any) -> Any:
 
 
 class WorkspaceBrowser:
-    """Read-only, workspace-confined file browsing for the UI."""
+    """Workspace-confined text browsing and revision-checked manual editing."""
 
     def __init__(self, workspace: str | Path):
         self.workspace = Path(workspace).resolve()
@@ -127,6 +131,9 @@ class WorkspaceBrowser:
             target = resolve_workspace_path(self.workspace, normalized)
         except ValueError as exc:
             raise UIRequestError(str(exc), HTTPStatus.FORBIDDEN) from exc
+        relative = target.relative_to(self.workspace)
+        if any(part in _IGNORED_DIRECTORIES or part.endswith(".egg-info") for part in relative.parts):
+            raise UIRequestError("This workspace path is not available in the editor.", HTTPStatus.FORBIDDEN)
         if not target.is_file():
             raise UIRequestError("File does not exist.", HTTPStatus.NOT_FOUND)
         if _is_sensitive_file(target):
@@ -136,12 +143,52 @@ class WorkspaceBrowser:
         content = target.read_bytes()
         if b"\x00" in content[:8192]:
             raise UIRequestError("Binary files cannot be previewed.", HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        try:
+            display_content = content.decode("utf-8")
+            editable = True
+        except UnicodeDecodeError:
+            display_content = content.decode("utf-8", errors="replace")
+            editable = False
         return {
-            "path": target.relative_to(self.workspace).as_posix(),
-            "content": content.decode("utf-8", errors="replace"),
+            "path": relative.as_posix(),
+            "content": display_content,
             "size": len(content),
             "language": _language_for(target.suffix),
+            "revision": hashlib.sha256(content).hexdigest(),
+            "editable": editable,
         }
+
+    def save(self, relative_path: str, content: str, expected_revision: str) -> dict[str, Any]:
+        """Save an existing UTF-8 file without silently overwriting external edits."""
+
+        if not isinstance(content, str) or not isinstance(expected_revision, str):
+            raise UIRequestError("Text content and file revision are required.")
+        encoded = content.encode("utf-8")
+        if len(encoded) > _MAX_FILE_BYTES:
+            raise UIRequestError("File is too large to save.", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        current = self.read(relative_path)
+        if not current["editable"]:
+            raise UIRequestError("Non-UTF-8 files cannot be edited here.", HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        if not hmac.compare_digest(current["revision"], expected_revision):
+            raise UIRequestError("File changed on disk. Reload it before saving.", HTTPStatus.CONFLICT)
+        target = self.workspace / current["path"]
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".minicodex-edit-", delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(encoded)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.chmod(temporary_path, target.stat().st_mode & 0o777)
+            # Detect edits made by an external IDE during the save operation.
+            if hashlib.sha256(target.read_bytes()).hexdigest() != expected_revision:
+                raise UIRequestError("File changed on disk. Reload it before saving.", HTTPStatus.CONFLICT)
+            os.replace(temporary_path, target)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+        return self.read(relative_path)
 
 
 def _language_for(suffix: str) -> str:
@@ -412,6 +459,9 @@ class MiniCodexUIController:
                 task_git = agent.git_awareness.task_state().to_dict()
             except Exception:
                 task_git = None
+        if not git_state["is_repo"]:
+            task_git = task_git or {}
+            task_git["agent_current_changed_files"] = self._checkpoint_paths()
         return {
             "task": task,
             "runtime": runtime,
@@ -445,10 +495,94 @@ class MiniCodexUIController:
 
     def diff(self, path: str | None = None) -> dict[str, Any]:
         normalized = str(path or "").strip() or None
+        if not self.git.snapshot().is_repo:
+            return self._checkpoint_diff(normalized)
         result = self.git.diff(path=normalized, staged=False, max_chars=500_000)
         if not result.success:
             raise UIRequestError(result.error or "Unable to read Git diff.", HTTPStatus.CONFLICT)
         return asdict(result)
+
+    def _checkpoint_paths(self) -> list[str]:
+        manager = getattr(self._agent, "checkpoint_manager", None)
+        if manager is None:
+            return []
+        paths = []
+        for checkpoint in manager.all_checkpoints():
+            snapshot = getattr(checkpoint, "snapshot", None)
+            if checkpoint.sealed and not checkpoint.rolled_back and snapshot is not None:
+                try:
+                    target = resolve_workspace_path(self.config.workspace_root, snapshot.path)
+                    relative = target.relative_to(self.config.workspace_root)
+                except ValueError:
+                    continue
+                if _is_sensitive_file(target) or any(
+                    part in _IGNORED_DIRECTORIES or part.endswith(".egg-info")
+                    for part in relative.parts
+                ):
+                    continue
+                paths.append(relative.as_posix())
+        return list(dict.fromkeys(paths))
+
+    def _checkpoint_diff(self, path: str | None) -> dict[str, Any]:
+        if path is not None:
+            try:
+                target = resolve_workspace_path(self.config.workspace_root, path)
+                path = target.relative_to(self.config.workspace_root).as_posix()
+            except ValueError as exc:
+                raise UIRequestError(str(exc), HTTPStatus.FORBIDDEN) from exc
+        manager = getattr(self._agent, "checkpoint_manager", None)
+        checkpoints = manager.all_checkpoints() if manager is not None else ()
+        before = {}
+        latest = {}
+        for checkpoint in checkpoints:
+            snapshot = getattr(checkpoint, "snapshot", None)
+            if not checkpoint.sealed or checkpoint.rolled_back or snapshot is None:
+                continue
+            try:
+                target = resolve_workspace_path(self.config.workspace_root, snapshot.path)
+                changed_path = target.relative_to(self.config.workspace_root).as_posix()
+            except ValueError:
+                continue
+            if path is not None and changed_path != path:
+                continue
+            before.setdefault(changed_path, snapshot)
+            latest[changed_path] = checkpoint
+        parts = []
+        for changed_path, snapshot in before.items():
+            target = resolve_workspace_path(self.config.workspace_root, changed_path)
+            relative = target.relative_to(self.config.workspace_root)
+            if _is_sensitive_file(target) or any(
+                part in _IGNORED_DIRECTORIES or part.endswith(".egg-info")
+                for part in relative.parts
+            ):
+                continue
+            after = target.read_text(encoding="utf-8") if target.is_file() else ""
+            actual_hash = hashlib.sha256(after.encode("utf-8")).hexdigest() if target.is_file() else None
+            if actual_hash != latest[changed_path].after_sha256:
+                raise UIRequestError(
+                    f"{changed_path} changed after the Agent edit; reload or resolve the conflict before reviewing.",
+                    HTTPStatus.CONFLICT,
+                )
+            parts.extend(difflib.unified_diff(
+                (snapshot.content or "").splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=f"a/{changed_path}" if snapshot.existed else "/dev/null",
+                tofile=f"b/{changed_path}" if target.is_file() else "/dev/null",
+            ))
+        text = "".join(parts)
+        return {
+            "success": True, "staged": False, "path": path,
+            "text": text[:500_000], "total_chars": len(text),
+            "truncated": len(text) > 500_000, "error": None,
+        }
+
+    def save_file(self, path: str, content: str, expected_revision: str) -> dict[str, Any]:
+        with self._lock:
+            if self._task is not None and not self._task.done:
+                raise UIRequestError("Stop the running task before editing a file.", HTTPStatus.CONFLICT)
+            if self._review_status == "pending":
+                raise UIRequestError("Accept or reject Agent changes before editing a file.", HTTPStatus.CONFLICT)
+            return self.browser.save(path, content, expected_revision)
 
 
 def _runtime_payload(state: Any) -> dict[str, Any] | None:
@@ -560,6 +694,11 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
             elif route == "/api/approvals":
                 self._json(self.server.controller.resolve_approval(
                     payload.get("request_id", ""), payload.get("decision", ""),
+                ))
+            elif route == "/api/file":
+                self._json(self.server.controller.save_file(
+                    payload.get("path", ""), payload.get("content"),
+                    payload.get("expected_revision"),
                 ))
             else:
                 self._error(HTTPStatus.NOT_FOUND, "Not found.")

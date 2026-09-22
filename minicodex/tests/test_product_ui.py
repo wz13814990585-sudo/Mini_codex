@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http.client import HTTPConnection
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import threading
@@ -12,6 +13,7 @@ import pytest
 
 import minicodex.main as main_module
 from ..agent.observability import TraceEventType, TraceRecorder
+from ..agent.editing.checkpoint import CheckpointManager
 from ..agent.runtime import AsyncTaskStatus
 from ..agent.runtime import PreparedToolCall
 from ..agent.safety import PermissionMode, SafetyDecision, SafetyLevel
@@ -166,10 +168,84 @@ def test_workspace_browser_is_confined_and_skips_runtime_directories(tmp_path):
     tree = browser.tree()
     assert [node["name"] for node in tree["children"]] == ["src", ".env.example"]
     assert browser.read("src/app.py")["language"] == "python"
+    with pytest.raises(UIRequestError, match="not available"):
+        browser.read(".git/config")
     with pytest.raises(UIRequestError, match="credential"):
         browser.read(".env")
     with pytest.raises(UIRequestError, match="工作区之外"):
         browser.read("../outside-ui-test.txt")
+
+
+def test_workspace_browser_manual_save_is_confined_and_revision_checked(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("SECRET=yes", encoding="utf-8")
+    browser = WorkspaceBrowser(tmp_path)
+    first = browser.read("app.py")
+    assert first["editable"] is True
+    saved = browser.save("app.py", "value = 2\n", first["revision"])
+    assert saved["revision"] != first["revision"]
+    assert source.read_text(encoding="utf-8") == "value = 2\n"
+    with pytest.raises(UIRequestError, match="changed on disk") as stale:
+        browser.save("app.py", "value = 3\n", first["revision"])
+    assert stale.value.status == 409
+    with pytest.raises(UIRequestError, match="credential"):
+        browser.save(".env", "SECRET=no", first["revision"])
+    with pytest.raises(UIRequestError, match="工作区之外"):
+        browser.save("../outside.py", "x", first["revision"])
+    assert source.read_text(encoding="utf-8") == "value = 2\n"
+
+
+def test_controller_manual_save_waits_for_agent_review(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    controller, _ = _controller(tmp_path)
+    revision = controller.browser.read("app.py")["revision"]
+    controller.start_task("change app")
+    _wait_for_task(controller)
+    with pytest.raises(UIRequestError, match="Accept or reject"):
+        controller.save_file("app.py", "value = 2\n", revision)
+    controller.accept()
+    saved = controller.save_file("app.py", "value = 2\n", revision)
+    assert saved["content"] == "value = 2\n"
+
+
+def test_non_git_workspace_uses_agent_checkpoints_for_review_diff(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    manager = CheckpointManager(tmp_path)
+    checkpoint = manager.capture(path="app.py", edit_revision=1)
+    source.write_text("value = 2\n", encoding="utf-8")
+    manager.seal(checkpoint.checkpoint_id)
+    controller = MiniCodexUIController(_workspace_config(tmp_path), _ready_model())
+    controller._agent = SimpleNamespace(checkpoint_manager=manager)
+
+    assert controller.state()["task_git"]["agent_current_changed_files"] == ["app.py"]
+    diff = controller.diff("app.py")
+    assert diff["success"] is True
+    assert "-value = 1" in diff["text"]
+    assert "+value = 2" in diff["text"]
+    with pytest.raises(UIRequestError, match="工作区之外"):
+        controller.diff("../outside.py")
+
+    source.write_text("value = 3\n", encoding="utf-8")
+    with pytest.raises(UIRequestError, match="changed after") as stale:
+        controller.diff("app.py")
+    assert stale.value.status == 409
+
+
+def test_non_git_new_file_has_reviewable_diff(tmp_path):
+    manager = CheckpointManager(tmp_path)
+    checkpoint = manager.capture(path="index.html", edit_revision=1)
+    (tmp_path / "index.html").write_text("<h1>Snake</h1>\n", encoding="utf-8")
+    manager.seal(checkpoint.checkpoint_id)
+    controller = MiniCodexUIController(_workspace_config(tmp_path), _ready_model())
+    controller._agent = SimpleNamespace(checkpoint_manager=manager)
+
+    diff = controller.diff("index.html")
+    assert "--- /dev/null" in diff["text"]
+    assert "+++ b/index.html" in diff["text"]
+    assert "+<h1>Snake</h1>" in diff["text"]
 
 
 def test_controller_runs_agent_and_rejects_through_checkpoint_rollback(tmp_path):
@@ -312,6 +388,33 @@ def test_http_server_serves_shell_and_protects_mutations(tmp_path):
         response = connection.getresponse()
         assert response.status == 403
         response.read()
+
+        connection.request("GET", "/api/file?path=README.md")
+        response = connection.getresponse()
+        file_state = json.loads(response.read())
+        assert response.status == 200
+        save_body = json.dumps({
+            "path": "README.md", "content": "# Updated\n",
+            "expected_revision": file_state["revision"],
+        })
+        connection.request(
+            "POST", "/api/file", body=save_body,
+            headers={"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+        connection.request(
+            "POST", "/api/file", body=save_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-MiniCodex-Token": server.token,
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read())["content"] == "# Updated\n"
+        assert (tmp_path / "README.md").read_text(encoding="utf-8") == "# Updated\n"
 
         connection.request("GET", "/", headers={"Host": "malicious.example"})
         response = connection.getresponse()

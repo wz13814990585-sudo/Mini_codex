@@ -125,7 +125,7 @@ minicodex doctor --json
 minicodex ui --workspace /path/to/project
 ```
 
-浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、文件级 Git Diff 导航，以及任务级 Accept / Reject。v0.4.0 提供审查、自动和只读三种每任务权限模式；审查模式会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝，并把决策写入 Trace 审计记录。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
+浏览器工作台提供文件树、代码查看与手动编辑、Agent 对话、实时任务阶段、Trace 活动日志、文件级 Diff 导航，以及任务级 Accept / Reject。有 Git 的工作区使用 Git Diff；无 Git 的工作区可用本次 Agent 的 checkpoint 查看改动。打开现有 UTF-8 文本文件后点击“编辑”，保存时会检查文件是否已被外部 IDE 修改；Agent 运行中或有待审批改动时，手动保存不可用。这里的“终端”是活动日志，不是交互式 Shell。v0.4.0 提供审查、自动和只读三种 Agent 任务权限模式；审查模式会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝，并把决策写入 Trace 审计记录。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
 
 UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。`v0.4.0` wheel 已包含 UI 静态资源与启动命令。
 

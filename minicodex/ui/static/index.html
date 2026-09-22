@@ -49,7 +49,10 @@
           <button class="view-tab active" id="code-tab" type="button" role="tab" data-i18n="code">代码</button>
           <button class="view-tab" id="diff-tab" type="button" role="tab" data-i18n="diff">变更</button>
         </div>
-        <span class="active-path" id="active-path" title="">README.md</span>
+        <span class="active-path" id="active-path" title="">—</span>
+        <button class="text-button" id="edit-file" type="button" data-i18n="editFile">编辑</button>
+        <button class="text-button hidden" id="cancel-edit" type="button" data-i18n="cancelEdit">取消</button>
+        <button class="secondary-button hidden" id="save-file" type="button" data-i18n="saveFile">保存</button>
         <button class="icon-button" id="refresh-view" type="button" aria-label="Refresh view">↻</button>
       </div>
       <div class="diff-file-bar hidden" id="diff-file-bar" aria-label="Changed files"></div>
@@ -60,6 +63,7 @@
           <span data-i18n="selectFileHint">任务运行后可切换到 Diff 审查修改</span>
         </div>
         <pre class="code-view hidden" id="code-view" tabindex="0"><code id="code-content"></code></pre>
+        <textarea class="file-editor hidden" id="file-editor" spellcheck="false" aria-label="Edit file"></textarea>
       </div>
 
       <section class="terminal-panel">

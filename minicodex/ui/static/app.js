@@ -5,6 +5,11 @@ const ui = {
   filter: document.getElementById('file-filter'),
   code: document.getElementById('code-content'),
   codeView: document.getElementById('code-view'),
+  workbench: document.querySelector('.workbench'),
+  fileEditor: document.getElementById('file-editor'),
+  editFile: document.getElementById('edit-file'),
+  cancelEdit: document.getElementById('cancel-edit'),
+  saveFile: document.getElementById('save-file'),
   empty: document.getElementById('editor-empty'),
   activePath: document.getElementById('active-path'),
   codeTab: document.getElementById('code-tab'),
@@ -38,14 +43,16 @@ const translations = {
     reject: 'Reject', accept: 'Accept', promptPlaceholder: '例如：为用户 API 添加分页，并补充测试',
     submitHint: '⌘/Ctrl + Enter 发送', stop: '停止', run: '运行任务', running: '运行中',
     pending: '待确认', accepted: '已接受', rejected: '已回滚', failed: '失败', cancelled: '已取消',
-    noDiff: '当前文件没有未提交变更。', treeError: '无法读取文件树', requestFailed: '请求失败',
+    noDiff: '当前文件没有可显示的变更。', treeError: '无法读取文件树', requestFailed: '请求失败',
     approvalTitle: '操作需要批准', approvalWaiting: '等待批准', deny: '拒绝',
     allowTask: '本任务允许', allowOnce: '允许一次',
     modeReview: '审查', modeAuto: '自动', modeReadOnly: '只读',
     modeReviewHelp: '警示操作执行前询问，任务结束后审查全部修改',
     modeAutoHelp: '安全策略允许的操作自动执行，任务结束后仍可审查修改',
-    modeReadOnlyHelp: '仅开放读取、搜索和 Git 检查，不允许修改或运行进程',
+    modeReadOnlyHelp: 'Agent 仅开放读取、搜索和 Git 检查，不允许修改或运行进程',
     allChanges: '全部变更', changedFiles: '个文件等待审查',
+    editFile: '编辑', cancelEdit: '取消', saveFile: '保存', savedFile: '文件已保存',
+    discardEdit: '有未保存的修改，确定放弃吗？',
   },
   en: {
     workspace: 'WORKSPACE', files: 'Files', searchFiles: 'Search files', code: 'Code', diff: 'Changes',
@@ -57,14 +64,16 @@ const translations = {
     reject: 'Reject', accept: 'Accept', promptPlaceholder: 'Example: add pagination to the users API and test it',
     submitHint: '⌘/Ctrl + Enter to send', stop: 'Stop', run: 'Run task', running: 'Running',
     pending: 'Review', accepted: 'Accepted', rejected: 'Reverted', failed: 'Failed', cancelled: 'Cancelled',
-    noDiff: 'This file has no uncommitted changes.', treeError: 'Unable to load file tree', requestFailed: 'Request failed',
+    noDiff: 'No reviewable changes for this file.', treeError: 'Unable to load file tree', requestFailed: 'Request failed',
     approvalTitle: 'Approval required', approvalWaiting: 'Approval', deny: 'Deny',
     allowTask: 'Allow for task', allowOnce: 'Allow once',
     modeReview: 'Review', modeAuto: 'Auto', modeReadOnly: 'Read-only',
     modeReviewHelp: 'Ask before caution operations, then review the complete task diff',
     modeAutoHelp: 'Run safety-allowed operations automatically; final changes remain reviewable',
-    modeReadOnlyHelp: 'Allow reads, search, and Git inspection only; block edits and processes',
+    modeReadOnlyHelp: 'Agent may only read, search, and inspect Git; block its edits and processes',
     allChanges: 'All changes', changedFiles: 'files awaiting review',
+    editFile: 'Edit', cancelEdit: 'Cancel', saveFile: 'Save', savedFile: 'File saved',
+    discardEdit: 'Discard unsaved file changes?',
   },
 };
 
@@ -85,6 +94,11 @@ const state = {
     ? localStorage.getItem('minicodex-permission-mode') : 'review',
   changedPaths: [],
   diffPath: '',
+  activeContent: '',
+  activeRevision: '',
+  fileEditable: false,
+  editing: false,
+  canEditNow: true,
 };
 
 function t(key) {
@@ -107,6 +121,7 @@ function applyLanguage() {
   renderPermissionMode();
   renderDiffFiles();
   renderReviewHint();
+  renderEditorActions();
 }
 
 async function request(path, options = {}) {
@@ -244,22 +259,28 @@ function fileGlyph(name) {
 }
 
 async function openFile(path) {
-  state.activePath = path;
-  state.diffPath = '';
-  state.mode = 'code';
-  syncTabs();
-  renderTree();
+  if (!path || !leaveEditor()) return;
   try {
     const payload = await request(`/api/file?path=${encodeURIComponent(path)}`);
+    state.activePath = path;
+    state.diffPath = '';
+    state.mode = 'code';
+    state.activeContent = payload.content;
+    state.activeRevision = payload.revision || '';
+    state.fileEditable = Boolean(payload.editable);
     renderCode(payload.content, false);
     ui.activePath.textContent = path;
     ui.activePath.title = path;
+    syncTabs();
+    renderDiffFiles();
+    renderTree();
   } catch (error) {
     toast(error.message, 'error');
   }
 }
 
 async function openDiff(path) {
+  if (!leaveEditor()) return;
   const target = path === undefined ? (state.diffPath || state.activePath || '') : path;
   state.mode = 'diff';
   state.diffPath = target || '';
@@ -276,6 +297,7 @@ async function openDiff(path) {
 }
 
 function renderCode(content, isDiff) {
+  ui.fileEditor.classList.add('hidden');
   ui.code.replaceChildren();
   const lines = String(content).replace(/\n$/, '').split('\n');
   lines.forEach((line, index) => {
@@ -299,6 +321,60 @@ function renderCode(content, isDiff) {
 function syncTabs() {
   ui.codeTab.classList.toggle('active', state.mode === 'code');
   ui.diffTab.classList.toggle('active', state.mode === 'diff');
+  renderEditorActions();
+}
+
+function renderEditorActions() {
+  ui.editFile.classList.toggle('hidden', state.mode !== 'code' || state.editing || !state.activePath);
+  ui.editFile.disabled = !state.fileEditable || !state.canEditNow;
+  ui.cancelEdit.classList.toggle('hidden', !state.editing);
+  ui.saveFile.classList.toggle('hidden', !state.editing);
+  ui.saveFile.disabled = !state.canEditNow;
+}
+
+function leaveEditor() {
+  if (!state.editing) return true;
+  if (ui.fileEditor.value !== state.activeContent && !window.confirm(t('discardEdit'))) return false;
+  state.editing = false;
+  ui.fileEditor.classList.add('hidden');
+  ui.codeView.classList.remove('hidden');
+  renderEditorActions();
+  return true;
+}
+
+function beginEdit() {
+  if (state.mode !== 'code' || !state.fileEditable || !state.canEditNow) return;
+  state.editing = true;
+  ui.fileEditor.value = state.activeContent;
+  ui.codeView.classList.add('hidden');
+  ui.fileEditor.classList.remove('hidden');
+  renderEditorActions();
+  ui.fileEditor.focus();
+  ui.fileEditor.setSelectionRange(0, 0);
+  ui.fileEditor.scrollTop = 0;
+  ui.fileEditor.scrollLeft = 0;
+}
+
+async function saveFile() {
+  if (!state.editing || !state.canEditNow) return;
+  try {
+    const payload = await request('/api/file', {
+      method: 'POST',
+      body: JSON.stringify({
+        path: state.activePath,
+        content: ui.fileEditor.value,
+        expected_revision: state.activeRevision,
+      }),
+    });
+    state.activeContent = payload.content;
+    state.activeRevision = payload.revision;
+    state.editing = false;
+    renderCode(payload.content, false);
+    renderEditorActions();
+    toast(t('savedFile'));
+  } catch (error) {
+    toast(error.message, 'error');
+  }
 }
 
 async function pollState() {
@@ -335,7 +411,7 @@ function renderDynamicState(payload) {
   document.getElementById('validation-count').textContent = `${summary.validation_runs || 0} checks`;
   renderDiffFiles();
   const signature = JSON.stringify(changed || []);
-  if (payload.task && payload.task.done && changed && changed.length && state.taskSignature !== `${payload.task.id}:${signature}`) {
+  if (!state.editing && payload.task && payload.task.done && changed && changed.length && state.taskSignature !== `${payload.task.id}:${signature}`) {
     state.taskSignature = `${payload.task.id}:${signature}`;
     state.activePath = changed[0];
     state.diffPath = changed[0];
@@ -366,6 +442,8 @@ function renderTask(task, runtime) {
   ui.review.classList.toggle('hidden', review !== 'pending');
   ui.cancel.classList.toggle('hidden', !(task && task.can_cancel));
   ui.run.disabled = Boolean(task && (!task.done || review === 'pending')) || !state.modelReady;
+  state.canEditNow = !(task && (!task.done || review === 'pending'));
+  renderEditorActions();
   ui.prompt.disabled = Boolean(task && (!task.done || review === 'pending'));
   ui.modeButtons.forEach((button) => {
     button.disabled = Boolean(task && (!task.done || review === 'pending'));
@@ -393,9 +471,11 @@ function renderReviewHint() {
 }
 
 function renderDiffFiles() {
-  ui.diffFiles.classList.toggle('hidden', state.mode !== 'diff' || !state.changedPaths.length);
+  const hasDiffFiles = state.mode === 'diff' && state.changedPaths.length > 0;
+  ui.diffFiles.classList.toggle('hidden', !hasDiffFiles);
+  ui.workbench.classList.toggle('has-diff-files', hasDiffFiles);
   ui.diffFiles.replaceChildren();
-  if (state.mode !== 'diff' || !state.changedPaths.length) return;
+  if (!hasDiffFiles) return;
   const entries = [['', t('allChanges')], ...state.changedPaths.map((path) => [path, path])];
   for (const [path, label] of entries) {
     const button = document.createElement('button');
@@ -523,6 +603,7 @@ async function submitTask(event) {
   event.preventDefault();
   const prompt = ui.prompt.value.trim();
   if (!prompt) return;
+  if (!leaveEditor()) return;
   try {
     await request('/api/tasks', {
       method: 'POST',
@@ -576,6 +657,15 @@ document.getElementById('allow-task-approval').addEventListener('click', () => a
 document.getElementById('allow-once-approval').addEventListener('click', () => approvalAction('allow_once'));
 document.getElementById('refresh-tree').addEventListener('click', loadTree);
 document.getElementById('refresh-view').addEventListener('click', () => state.mode === 'diff' ? openDiff(state.diffPath) : openFile(state.activePath));
+ui.editFile.addEventListener('click', beginEdit);
+ui.cancelEdit.addEventListener('click', leaveEditor);
+ui.saveFile.addEventListener('click', saveFile);
+ui.fileEditor.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    saveFile();
+  }
+});
 ui.filter.addEventListener('input', renderTree);
 ui.codeTab.addEventListener('click', () => state.activePath && openFile(state.activePath));
 ui.diffTab.addEventListener('click', () => openDiff(state.activePath || ''));
