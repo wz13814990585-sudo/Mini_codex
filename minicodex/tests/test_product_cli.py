@@ -123,6 +123,23 @@ def test_run_subcommand_dispatches_with_resolved_configuration(
     assert "latest.jsonl" in output
 
 
+def test_run_review_dispatches_and_reports_unresolved_review(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _clear_model_environment(monkeypatch)
+    monkeypatch.setenv("MINICODEX_API_KEY", "secret")
+    seen = []
+
+    def fake_review(config, prompt, *, model_config, output_level):
+        seen.append((config.workspace_root, prompt, output_level))
+        return "pending"
+
+    monkeypatch.setattr(main_module, "run_once_review", fake_review)
+    assert main_module.main([
+        "run", "create a game", "--workspace", str(tmp_path), "--review",
+    ]) == 5
+    assert seen == [(tmp_path.resolve(), "create a game", "normal")]
+
+
 def test_global_runtime_options_work_before_subcommand(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _clear_model_environment(monkeypatch)

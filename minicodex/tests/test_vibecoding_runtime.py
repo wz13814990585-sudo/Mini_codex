@@ -455,7 +455,9 @@ def test_vibebench_executes_real_workspace_scenarios(tmp_path):
     from minicodex.evaluation.vibebench import run_vibebench
     summary = run_vibebench(tmp_path)
     assert summary.total_cases == 15
-    assert all(r.error is None for r in summary.results)
+    assert all(r.error is None for r in summary.results), [
+        (r.case_id, r.error) for r in summary.results if r.error is not None
+    ]
     assert summary.vibe_metrics()["false_completion_rate"] == 0
 
 

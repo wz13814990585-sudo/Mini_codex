@@ -119,17 +119,21 @@ minicodex doctor --connect
 minicodex doctor --json
 ```
 
-### 4. 启动本地 Web 工作台
+### 4. 可选：启动本地 Web 工作台
+
+当前推荐先使用第 5 步的 CLI 完成完整编码闭环。Web 工作台继续保留用于可视化演示，但不是运行 MiniCodex 的前提。
 
 ```bash
 minicodex ui --workspace /path/to/project
 ```
 
-浏览器工作台提供文件树、代码查看与手动编辑、Agent 对话、实时任务阶段、Trace 活动日志、文件级 Diff 导航，以及任务级 Accept / Reject。有 Git 的工作区使用 Git Diff；无 Git 的工作区可用本次 Agent 的 checkpoint 查看改动。打开现有 UTF-8 文本文件后点击“编辑”，保存时会检查文件是否已被外部 IDE 修改；Agent 运行中或有待审批改动时，手动保存不可用。这里的“终端”是活动日志，不是交互式 Shell。v0.4.0 提供审查、自动和只读三种 Agent 任务权限模式；审查模式会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝，并把决策写入 Trace 审计记录。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
+浏览器工作台提供文件树、可编辑的多标签代码区、交互式终端、Agent 对话、实时任务阶段、Trace 活动日志、文件级 Diff 导航，以及任务级 Accept / Reject。代码区支持语法高亮、行号、撤销/重做、查找/替换、快捷键保存；可新建文件/文件夹、重命名文件，并将删除的文件移到工作区 `.minicodex/trash/`。左侧文件区、右侧 Agent 区和底部终端区都可拖动分隔线调整大小，也可聚焦分隔线后用方向键调整。保存时会检查文件是否已被其他程序修改；Agent 运行中或有待审批改动时，手动修改不可用。这里是轻量 IDE 工作台，尚不提供语言服务器、调试器或扩展系统。
 
-UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。`v0.4.0` wheel 已包含 UI 静态资源与启动命令。
+底部默认是交互式 Shell；点击“启动终端”后才会创建会话。它以当前系统用户身份运行，**不受 Agent 工具安全策略约束**，可访问工作区外的文件和网络。请只在可信的本地工作区使用，并在启动 Agent 任务前关闭终端。“运行活动”标签仍提供 Agent Trace。Git 工作区使用 Git Diff；无 Git 工作区可用本次 Agent 的 checkpoint 查看改动。v0.4.0 提供审查、自动和只读三种 Agent 任务权限模式；审查模式会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝，并把决策写入 Trace 审计记录。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
 
-### 5. 使用 CLI 执行任务
+UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。安装包内已包含编译后的 UI 资源，普通使用无需安装 Node.js；修改前端源码时运行 `npm ci && npm run build:ui`。
+
+### 5. 推荐：使用 CLI 执行任务
 
 执行单个任务后退出：
 
@@ -145,6 +149,17 @@ minicodex run "修复用户注册接口的邮箱校验，并运行相关测试" 
 minicodex chat --workspace /path/to/project
 ```
 
+需要在终端逐次查看本次 Agent 的 Diff 并选择接受或撤销时，加 `--review`：
+
+```bash
+minicodex run "在 index.html 中创建一个可用方向键控制的贪吃蛇游戏" \
+  --workspace /path/to/project --review
+
+minicodex chat --workspace /path/to/project --review
+```
+
+`--review` 只审查有检查点的 Agent 编辑；撤销不会重置整个 Git 仓库。若文件在 Agent 编辑后又被外部修改，终端会拒绝覆盖。中断审查会保留当前文件并返回待处理状态。
+
 不带子命令时仍进入交互模式；`--prompt` 旧入口继续兼容：
 
 ```bash
@@ -157,8 +172,8 @@ minicodex --workspace /path/to/project --prompt "修复失败测试"
 | 命令 | 用途 | 是否访问模型 |
 | --- | --- | --- |
 | `minicodex ui` | 启动本地 Web 工作台；提交任务后调用同一 Runtime | 启动时否，执行任务时是 |
-| `minicodex run "任务"` | 执行一个任务并退出 | 是 |
-| `minicodex chat` | 启动连续交互会话 | 是 |
+| `minicodex run "任务"` | 执行一个任务并退出；可加 `--review` 审查 Diff | 是 |
+| `minicodex chat` | 启动连续交互会话；可加 `--review` 每轮审查 | 是 |
 | `minicodex doctor` | 检查 Python、工作区、Git 与模型配置 | 否 |
 | `minicodex doctor --connect` | 额外验证真实模型连接 | 是，最小请求 |
 | `minicodex --version` | 显示版本 | 否 |
@@ -193,6 +208,7 @@ python -m pytest -q "$demo_dir/tests"
 ## 支持的工作流
 
 - 信息咨询和只读代码审查
+- 终端内输入任务、查看本次 Agent Diff，并接受或撤销检查点改动
 - 通过本地 Web UI 浏览文件、查看代码和 Diff、跟踪任务并 Accept / Reject
 - 在警示级操作执行前通过 Web UI 做 Human-in-the-loop 审批
 - 创建、修改、修复和重构 Python / JavaScript / TypeScript / HTML 项目
@@ -214,11 +230,14 @@ python -m pytest -q "$demo_dir/tests"
 
 每个需求先变成独立的 `ValidationCheck`，再绑定文件、测试、命令、HTTP、浏览器或语义契约。`ValidatorResolver` 只根据契约和已注册能力选择验证器；`ValidationLedger` 保存带编辑版本的证据。只有当前版本的全部必需检查都被证明，`TaskCompletionPolicy` 才允许成功结束。
 
+控制模型提出的新增文件名、精确文本或 DOM 状态若无法由用户请求或现有仓库支撑，不会被升级为硬验收；此时保留原始用户目标作语义验证。语义验证可能无定论，MiniCodex 会如实报告，而不会声称已通过运行时行为测试。
+
 关键边界：
 
 - 只读任务不会获得编辑或依赖安装能力
 - 文件、命令与依赖操作都经过安全策略和工作区检查
 - 命令受超时、输出、文件大小、CPU 和内存限制
+- `run_command` 会拦截常见的 heredoc、内联写文件和重定向绕过；进程沙箱**不提供文件系统隔离**，只应在可信的本地工作区运行
 - checkpoint 只覆盖 Agent 自己的编辑；发现外部并发修改时拒绝覆盖
 - 静态 HTML 检查不能替代点击、键盘或运行时状态验证
 - 缺少必需能力或可靠目标时，任务明确阻塞，不会伪造成功

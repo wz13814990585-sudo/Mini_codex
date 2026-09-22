@@ -1,3 +1,8 @@
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import { WorkspaceEditor } from './workspace_editor.js';
+
 const token = document.querySelector('meta[name="minicodex-token"]').content;
 
 const ui = {
@@ -5,16 +10,27 @@ const ui = {
   filter: document.getElementById('file-filter'),
   code: document.getElementById('code-content'),
   codeView: document.getElementById('code-view'),
+  editorHost: document.getElementById('code-editor'),
+  openTabs: document.getElementById('open-file-tabs'),
   workbench: document.querySelector('.workbench'),
-  fileEditor: document.getElementById('file-editor'),
-  editFile: document.getElementById('edit-file'),
-  cancelEdit: document.getElementById('cancel-edit'),
+  findFile: document.getElementById('find-file'),
+  renameFile: document.getElementById('rename-file'),
+  trashFile: document.getElementById('trash-file'),
   saveFile: document.getElementById('save-file'),
+  newFile: document.getElementById('new-file'),
+  newFolder: document.getElementById('new-folder'),
   empty: document.getElementById('editor-empty'),
   activePath: document.getElementById('active-path'),
   codeTab: document.getElementById('code-tab'),
   diffTab: document.getElementById('diff-tab'),
   terminal: document.getElementById('terminal-output'),
+  terminalShell: document.getElementById('terminal-shell'),
+  terminalNotice: document.getElementById('terminal-notice'),
+  terminalContainer: document.getElementById('xterm-container'),
+  startTerminal: document.getElementById('start-terminal'),
+  stopTerminal: document.getElementById('stop-terminal'),
+  shellTab: document.getElementById('shell-tab'),
+  activityTab: document.getElementById('activity-tab'),
   chat: document.getElementById('chat-log'),
   badge: document.getElementById('task-badge'),
   review: document.getElementById('review-bar'),
@@ -30,6 +46,13 @@ const ui = {
   modeHelp: document.getElementById('permission-mode-help'),
   modeButtons: Array.from(document.querySelectorAll('[data-mode]')),
   reviewHint: document.getElementById('review-hint'),
+  dialog: document.getElementById('workspace-dialog'),
+  dialogForm: document.getElementById('workspace-dialog-form'),
+  dialogTitle: document.getElementById('workspace-dialog-title'),
+  dialogMessage: document.getElementById('workspace-dialog-message'),
+  dialogInput: document.getElementById('workspace-dialog-input'),
+  dialogCancel: document.getElementById('workspace-dialog-cancel'),
+  dialogConfirm: document.getElementById('workspace-dialog-confirm'),
 };
 
 const translations = {
@@ -51,8 +74,15 @@ const translations = {
     modeAutoHelp: '安全策略允许的操作自动执行，任务结束后仍可审查修改',
     modeReadOnlyHelp: 'Agent 仅开放读取、搜索和 Git 检查，不允许修改或运行进程',
     allChanges: '全部变更', changedFiles: '个文件等待审查',
-    editFile: '编辑', cancelEdit: '取消', saveFile: '保存', savedFile: '文件已保存',
-    discardEdit: '有未保存的修改，确定放弃吗？',
+    findFile: '查找', renameFile: '重命名', trashFile: '删除', saveFile: '保存', savedFile: '文件已保存',
+    newFile: '新建文件', newFolder: '新建文件夹', namePrompt: '输入工作区内的相对路径：',
+    renamePrompt: '输入新路径：', deleteConfirm: '移到可恢复的本地回收区？',
+    unsavedTab: '该文件有未保存修改，确定关闭标签吗？', unsavedTask: '请先保存所有已修改文件，再启动 Agent 任务。',
+    terminal: '终端', startTerminal: '启动终端', stopTerminal: '关闭终端',
+    terminalNotice: '终端以当前系统用户权限执行命令，可访问工作区外的文件和网络。点击“启动终端”后连接到当前工作区。运行 Agent 前请先关闭终端。',
+    terminalClosed: '终端已关闭。', terminalStartError: '终端启动失败',
+    dialogCancel: '取消', dialogConfirm: '确认',
+    movedToTrash: '文件已移到 .minicodex/trash/，可通过终端恢复。',
   },
   en: {
     workspace: 'WORKSPACE', files: 'Files', searchFiles: 'Search files', code: 'Code', diff: 'Changes',
@@ -72,8 +102,15 @@ const translations = {
     modeAutoHelp: 'Run safety-allowed operations automatically; final changes remain reviewable',
     modeReadOnlyHelp: 'Agent may only read, search, and inspect Git; block its edits and processes',
     allChanges: 'All changes', changedFiles: 'files awaiting review',
-    editFile: 'Edit', cancelEdit: 'Cancel', saveFile: 'Save', savedFile: 'File saved',
-    discardEdit: 'Discard unsaved file changes?',
+    findFile: 'Find', renameFile: 'Rename', trashFile: 'Delete', saveFile: 'Save', savedFile: 'File saved',
+    newFile: 'New file', newFolder: 'New folder', namePrompt: 'Enter a path relative to the workspace:',
+    renamePrompt: 'Enter the new path:', deleteConfirm: 'Move this item to the recoverable local trash?',
+    unsavedTab: 'This file has unsaved changes. Close its tab?', unsavedTask: 'Save all edited files before starting an Agent task.',
+    terminal: 'Terminal', startTerminal: 'Start terminal', stopTerminal: 'Close terminal',
+    terminalNotice: 'This shell runs with your OS user permissions and can access files and the network outside the workspace. Click Start terminal to connect. Close it before running an Agent task.',
+    terminalClosed: 'Terminal closed.', terminalStartError: 'Could not start terminal',
+    dialogCancel: 'Cancel', dialogConfirm: 'Confirm',
+    movedToTrash: 'File moved to .minicodex/trash/; it can be restored from the terminal.',
   },
 };
 
@@ -94,12 +131,30 @@ const state = {
     ? localStorage.getItem('minicodex-permission-mode') : 'review',
   changedPaths: [],
   diffPath: '',
-  activeContent: '',
-  activeRevision: '',
-  fileEditable: false,
-  editing: false,
   canEditNow: true,
+  agentBusy: false,
+  terminalRunning: false,
+  terminalSession: '',
+  terminalSequence: 0,
+  terminalTimer: null,
+  bottomMode: 'shell',
 };
+
+const editor = new WorkspaceEditor(ui.editorHost, {
+  onChange: () => { renderFileTabs(); renderEditorActions(); },
+  onSave: () => saveFile(),
+  styleNonce: token,
+});
+const terminalFit = new FitAddon();
+const shell = new Terminal({
+  cursorBlink: true, fontFamily: 'SFMono-Regular, Consolas, Menlo, monospace',
+  fontSize: 12, theme: { background: '#0b0e10', foreground: '#e5eee9', cursor: '#9fffc9' },
+  scrollback: 3000, allowProposedApi: false,
+});
+shell.loadAddon(terminalFit);
+shell.open(ui.terminalContainer);
+let terminalWrites = Promise.resolve();
+let lastTerminalSize = '';
 
 function t(key) {
   return translations[state.locale][key] || key;
@@ -128,6 +183,7 @@ async function request(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body) headers['Content-Type'] = 'application/json';
   if ((options.method || 'GET') !== 'GET') headers['X-MiniCodex-Token'] = token;
+  if (path.startsWith('/api/terminal')) headers['X-MiniCodex-Token'] = token;
   const response = await fetch(path, { ...options, headers });
   let payload;
   try {
@@ -160,6 +216,7 @@ async function bootstrap() {
     await loadTree();
     renderDynamicState(payload.state);
     schedulePoll(250);
+    scheduleTerminalPoll(0);
   } catch (error) {
     toast(error.message, 'error');
   }
@@ -259,28 +316,33 @@ function fileGlyph(name) {
 }
 
 async function openFile(path) {
-  if (!path || !leaveEditor()) return;
+  if (!path) return;
   try {
     const payload = await request(`/api/file?path=${encodeURIComponent(path)}`);
+    const existing = editor.tabs.get(path);
+    if (existing && editor.dirty(path) && existing.revision !== payload.revision) {
+      toast('File changed on disk; your unsaved draft was kept.', 'error');
+    }
+    editor.open(path, payload);
     state.activePath = path;
     state.diffPath = '';
     state.mode = 'code';
-    state.activeContent = payload.content;
-    state.activeRevision = payload.revision || '';
-    state.fileEditable = Boolean(payload.editable);
-    renderCode(payload.content, false);
     ui.activePath.textContent = path;
     ui.activePath.title = path;
+    ui.empty.classList.add('hidden');
+    ui.codeView.classList.add('hidden');
+    ui.editorHost.classList.remove('hidden');
     syncTabs();
+    renderFileTabs();
     renderDiffFiles();
     renderTree();
+    editor.requestMeasure();
   } catch (error) {
     toast(error.message, 'error');
   }
 }
 
 async function openDiff(path) {
-  if (!leaveEditor()) return;
   const target = path === undefined ? (state.diffPath || state.activePath || '') : path;
   state.mode = 'diff';
   state.diffPath = target || '';
@@ -297,7 +359,7 @@ async function openDiff(path) {
 }
 
 function renderCode(content, isDiff) {
-  ui.fileEditor.classList.add('hidden');
+  ui.editorHost.classList.add('hidden');
   ui.code.replaceChildren();
   const lines = String(content).replace(/\n$/, '').split('\n');
   lines.forEach((line, index) => {
@@ -325,56 +387,185 @@ function syncTabs() {
 }
 
 function renderEditorActions() {
-  ui.editFile.classList.toggle('hidden', state.mode !== 'code' || state.editing || !state.activePath);
-  ui.editFile.disabled = !state.fileEditable || !state.canEditNow;
-  ui.cancelEdit.classList.toggle('hidden', !state.editing);
-  ui.saveFile.classList.toggle('hidden', !state.editing);
-  ui.saveFile.disabled = !state.canEditNow;
+  const current = editor.current();
+  const inCode = state.mode === 'code' && current;
+  ui.findFile.disabled = !inCode;
+  ui.renameFile.disabled = !inCode || !state.canEditNow || current.dirty;
+  ui.trashFile.disabled = !inCode || !state.canEditNow || current.dirty;
+  ui.saveFile.disabled = !inCode || !state.canEditNow || !current.editable || !current.dirty;
+  ui.newFile.disabled = !state.canEditNow;
+  ui.newFolder.disabled = !state.canEditNow;
 }
 
-function leaveEditor() {
-  if (!state.editing) return true;
-  if (ui.fileEditor.value !== state.activeContent && !window.confirm(t('discardEdit'))) return false;
-  state.editing = false;
-  ui.fileEditor.classList.add('hidden');
-  ui.codeView.classList.remove('hidden');
-  renderEditorActions();
-  return true;
+function renderFileTabs() {
+  ui.openTabs.replaceChildren();
+  for (const [path] of editor.tabs) {
+    const button = document.createElement('div');
+    button.className = `file-tab${path === editor.activePath && state.mode === 'code' ? ' active' : ''}`;
+    button.setAttribute('role', 'tab');
+    button.tabIndex = 0;
+    button.title = path;
+    const name = document.createElement('span');
+    name.className = 'file-tab-name';
+    name.textContent = path.split('/').at(-1);
+    const dirty = document.createElement('span');
+    dirty.className = 'file-tab-dirty';
+    dirty.textContent = editor.dirty(path) ? '●' : '';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'file-tab-close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', `Close ${path}`);
+    close.addEventListener('click', (event) => { event.stopPropagation(); closeFileTab(path); });
+    button.append(name, dirty, close);
+    button.addEventListener('click', () => activateFileTab(path));
+    button.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activateFileTab(path); }
+    });
+    ui.openTabs.append(button);
+  }
 }
 
-function beginEdit() {
-  if (state.mode !== 'code' || !state.fileEditable || !state.canEditNow) return;
-  state.editing = true;
-  ui.fileEditor.value = state.activeContent;
+function activateFileTab(path) {
+  const tab = editor.activate(path);
+  if (!tab) return;
+  state.activePath = path;
+  state.mode = 'code';
+  state.diffPath = '';
+  ui.activePath.textContent = path;
+  ui.activePath.title = path;
+  ui.empty.classList.add('hidden');
   ui.codeView.classList.add('hidden');
-  ui.fileEditor.classList.remove('hidden');
-  renderEditorActions();
-  ui.fileEditor.focus();
-  ui.fileEditor.setSelectionRange(0, 0);
-  ui.fileEditor.scrollTop = 0;
-  ui.fileEditor.scrollLeft = 0;
+  ui.editorHost.classList.remove('hidden');
+  syncTabs();
+  renderDiffFiles();
+  renderFileTabs();
+  renderTree();
+  editor.requestMeasure();
+}
+
+function closeFileTab(path) {
+  if (editor.dirty(path) && !window.confirm(t('unsavedTab'))) return;
+  editor.close(path);
+  if (editor.activePath) activateFileTab(editor.activePath);
+  else {
+    state.activePath = '';
+    ui.activePath.textContent = '—';
+    ui.editorHost.classList.add('hidden');
+    ui.codeView.classList.add('hidden');
+    ui.empty.classList.remove('hidden');
+    renderEditorActions();
+    renderTree();
+  }
+  renderFileTabs();
 }
 
 async function saveFile() {
-  if (!state.editing || !state.canEditNow) return;
+  const current = editor.current();
+  if (!current || !current.dirty || !state.canEditNow || !current.editable) return;
   try {
     const payload = await request('/api/file', {
       method: 'POST',
       body: JSON.stringify({
-        path: state.activePath,
-        content: ui.fileEditor.value,
-        expected_revision: state.activeRevision,
+        path: current.path,
+        content: current.content,
+        expected_revision: current.revision,
       }),
     });
-    state.activeContent = payload.content;
-    state.activeRevision = payload.revision;
-    state.editing = false;
-    renderCode(payload.content, false);
+    editor.markSaved(current.path, payload);
+    renderFileTabs();
     renderEditorActions();
     toast(t('savedFile'));
   } catch (error) {
     toast(error.message, 'error');
   }
+}
+
+function defaultNewPath() {
+  const path = state.activePath;
+  return path.includes('/') ? `${path.slice(0, path.lastIndexOf('/') + 1)}` : '';
+}
+
+function workspaceDialog({ title, message, value = null, dangerous = false }) {
+  return new Promise((resolve) => {
+    ui.dialogTitle.textContent = title;
+    ui.dialogMessage.textContent = message;
+    ui.dialogInput.classList.toggle('hidden', value === null);
+    ui.dialogInput.required = value !== null;
+    ui.dialogInput.value = value || '';
+    ui.dialogCancel.textContent = t('dialogCancel');
+    ui.dialogConfirm.textContent = dangerous ? t('trashFile') : t('dialogConfirm');
+    ui.dialogConfirm.classList.toggle('danger', dangerous);
+    function finish(result) {
+      ui.dialogForm.removeEventListener('submit', submit);
+      ui.dialogCancel.removeEventListener('click', cancel);
+      ui.dialog.removeEventListener('cancel', cancel);
+      ui.dialog.close();
+      resolve(result);
+    }
+    function submit(event) {
+      event.preventDefault();
+      finish(value === null ? true : ui.dialogInput.value.trim());
+    }
+    function cancel(event) { event.preventDefault(); finish(null); }
+    ui.dialogForm.addEventListener('submit', submit);
+    ui.dialogCancel.addEventListener('click', cancel);
+    ui.dialog.addEventListener('cancel', cancel);
+    ui.dialog.showModal();
+    if (value !== null) { ui.dialogInput.focus(); ui.dialogInput.select(); }
+    else ui.dialogConfirm.focus();
+  });
+}
+
+async function createItem(kind) {
+  const path = await workspaceDialog({
+    title: t(kind === 'file' ? 'newFile' : 'newFolder'),
+    message: t('namePrompt'), value: defaultNewPath(),
+  });
+  if (!path || !path.trim()) return;
+  try {
+    const payload = await request('/api/items/create', {
+      method: 'POST', body: JSON.stringify({ path: path.trim(), kind }),
+    });
+    await loadTree();
+    if (kind === 'file') await openFile(payload.path);
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function renameFile() {
+  const current = editor.current();
+  if (!current || current.dirty || !state.canEditNow) return;
+  const newPath = await workspaceDialog({
+    title: t('renameFile'), message: t('renamePrompt'), value: current.path,
+  });
+  if (!newPath || newPath === current.path) return;
+  try {
+    const payload = await request('/api/items/rename', {
+      method: 'POST', body: JSON.stringify({
+        path: current.path, new_path: newPath.trim(), expected_revision: current.revision,
+      }),
+    });
+    editor.rename(current.path, payload.path);
+    await loadTree();
+    activateFileTab(payload.path);
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function trashFile() {
+  const current = editor.current();
+  if (!current || current.dirty || !state.canEditNow) return;
+  const confirmed = await workspaceDialog({
+    title: t('trashFile'), message: t('deleteConfirm'), dangerous: true,
+  });
+  if (!confirmed) return;
+  try {
+    await request('/api/items/trash', {
+      method: 'POST', body: JSON.stringify({ path: current.path, expected_revision: current.revision }),
+    });
+    closeFileTab(current.path);
+    await loadTree();
+    toast(t('movedToTrash'));
+  } catch (error) { toast(error.message, 'error'); }
 }
 
 async function pollState() {
@@ -411,7 +602,7 @@ function renderDynamicState(payload) {
   document.getElementById('validation-count').textContent = `${summary.validation_runs || 0} checks`;
   renderDiffFiles();
   const signature = JSON.stringify(changed || []);
-  if (!state.editing && payload.task && payload.task.done && changed && changed.length && state.taskSignature !== `${payload.task.id}:${signature}`) {
+  if (payload.task && payload.task.done && changed && changed.length && state.taskSignature !== `${payload.task.id}:${signature}`) {
     state.taskSignature = `${payload.task.id}:${signature}`;
     state.activePath = changed[0];
     state.diffPath = changed[0];
@@ -441,9 +632,12 @@ function renderTask(task, runtime) {
   ui.badge.className = `task-badge ${badgeClass}`;
   ui.review.classList.toggle('hidden', review !== 'pending');
   ui.cancel.classList.toggle('hidden', !(task && task.can_cancel));
-  ui.run.disabled = Boolean(task && (!task.done || review === 'pending')) || !state.modelReady;
+  state.agentBusy = Boolean(task && (!task.done || review === 'pending'));
+  ui.run.disabled = state.agentBusy || !state.modelReady || state.terminalRunning;
   state.canEditNow = !(task && (!task.done || review === 'pending'));
+  editor.setCanEdit(state.canEditNow);
   renderEditorActions();
+  ui.startTerminal.disabled = !state.canEditNow;
   ui.prompt.disabled = Boolean(task && (!task.done || review === 'pending'));
   ui.modeButtons.forEach((button) => {
     button.disabled = Boolean(task && (!task.done || review === 'pending'));
@@ -603,7 +797,10 @@ async function submitTask(event) {
   event.preventDefault();
   const prompt = ui.prompt.value.trim();
   if (!prompt) return;
-  if (!leaveEditor()) return;
+  if ([...editor.tabs.keys()].some((path) => editor.dirty(path))) {
+    toast(t('unsavedTask'), 'error');
+    return;
+  }
   try {
     await request('/api/tasks', {
       method: 'POST',
@@ -645,6 +842,173 @@ async function approvalAction(decision) {
   }
 }
 
+function renderBottomTabs() {
+  const shellMode = state.bottomMode === 'shell';
+  ui.shellTab.classList.toggle('active', shellMode);
+  ui.activityTab.classList.toggle('active', !shellMode);
+  ui.terminalShell.classList.toggle('hidden', !shellMode);
+  ui.terminal.classList.toggle('hidden', shellMode);
+  ui.startTerminal.classList.toggle('hidden', !shellMode || state.terminalRunning);
+  ui.stopTerminal.classList.toggle('hidden', !shellMode || !state.terminalRunning);
+  document.getElementById('tool-count').classList.toggle('hidden', shellMode);
+  document.getElementById('validation-count').classList.toggle('hidden', shellMode);
+  if (shellMode) {
+    requestAnimationFrame(() => { terminalFit.fit(); if (state.terminalRunning) resizeTerminal(); });
+  }
+}
+
+async function pollTerminal() {
+  try {
+    const payload = await request(`/api/terminal?after=${state.terminalSequence}`);
+    ui.terminalContainer.classList.toggle('hidden', !payload.session_id);
+    ui.terminalNotice.classList.toggle('hidden', Boolean(payload.session_id));
+    if (payload.session_id && state.bottomMode === 'shell') terminalFit.fit();
+    if (payload.session_id !== state.terminalSession) {
+      state.terminalSession = payload.session_id;
+      state.terminalSequence = 0;
+      shell.reset();
+      if (payload.session_id && !payload.chunks.length) return;
+    }
+    if (payload.reset) shell.reset();
+    for (const chunk of payload.chunks || []) {
+      shell.write(chunk.data);
+      state.terminalSequence = Math.max(state.terminalSequence, chunk.sequence);
+    }
+    state.terminalRunning = Boolean(payload.running);
+    ui.run.disabled = state.agentBusy || !state.modelReady || state.terminalRunning;
+    renderBottomTabs();
+    if (payload.session_id && !payload.running) {
+      ui.terminalNotice.textContent = t('terminalClosed');
+      ui.terminalNotice.classList.remove('hidden');
+    }
+  } catch (error) {
+    // A temporary polling failure should not erase a running shell's output.
+  } finally {
+    scheduleTerminalPoll(state.terminalRunning ? 180 : 1000);
+  }
+}
+
+function scheduleTerminalPoll(delay) {
+  window.clearTimeout(state.terminalTimer);
+  state.terminalTimer = window.setTimeout(pollTerminal, delay);
+}
+
+async function startTerminal() {
+  state.bottomMode = 'shell';
+  ui.terminalContainer.classList.remove('hidden');
+  renderBottomTabs();
+  terminalFit.fit();
+  try {
+    const payload = await request('/api/terminal/start', {
+      method: 'POST', body: JSON.stringify({ cols: Math.max(shell.cols, 20), rows: Math.max(shell.rows, 5) }),
+    });
+    state.terminalSession = payload.session_id;
+    state.terminalSequence = 0;
+    state.terminalRunning = true;
+    lastTerminalSize = '';
+    shell.reset();
+    ui.terminalNotice.classList.add('hidden');
+    renderBottomTabs();
+    shell.focus();
+    scheduleTerminalPoll(0);
+  } catch (error) {
+    toast(`${t('terminalStartError')}: ${error.message}`, 'error');
+    scheduleTerminalPoll(0);
+  }
+}
+
+async function stopTerminal() {
+  try {
+    await request('/api/terminal/stop', { method: 'POST', body: '{}' });
+    scheduleTerminalPoll(0);
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+let terminalResizeTimer;
+function resizeTerminal() {
+  if (state.bottomMode !== 'shell' || ui.terminalContainer.classList.contains('hidden')) return;
+  terminalFit.fit();
+  if (!state.terminalRunning) return;
+  const dimensions = `${shell.cols}x${shell.rows}`;
+  if (dimensions === lastTerminalSize) return;
+  lastTerminalSize = dimensions;
+  window.clearTimeout(terminalResizeTimer);
+  terminalResizeTimer = window.setTimeout(() => {
+    request('/api/terminal/resize', {
+      method: 'POST', body: JSON.stringify({ cols: shell.cols, rows: shell.rows }),
+    }).catch(() => {});
+  }, 120);
+}
+
+shell.onData((data) => {
+  if (!state.terminalRunning) return;
+  terminalWrites = terminalWrites.then(() => request('/api/terminal/input', {
+    method: 'POST', body: JSON.stringify({ data }),
+  })).catch((error) => toast(error.message, 'error'));
+});
+
+function setupResizers() {
+  const saved = {
+    left: Number(localStorage.getItem('minicodex-left-width')) || 250,
+    right: Number(localStorage.getItem('minicodex-right-width')) || 370,
+    bottom: Number(localStorage.getItem('minicodex-bottom-height')) || 240,
+  };
+  const apply = (which, value) => {
+    const grid = document.querySelector('.workspace-grid').getBoundingClientRect();
+    const bench = ui.workbench.getBoundingClientRect();
+    if (which === 'left') saved.left = Math.max(170, Math.min(value, Math.min(500, grid.width - saved.right - 400)));
+    else if (which === 'right') saved.right = Math.max(290, Math.min(value, Math.min(600, grid.width - saved.left - 400)));
+    else {
+      const diffHeight = ui.diffFiles.classList.contains('hidden') ? 0 : ui.diffFiles.getBoundingClientRect().height;
+      saved.bottom = Math.max(120, Math.min(value, Math.min(600, bench.height - 286 - diffHeight)));
+    }
+    document.documentElement.style.setProperty(`--${which === 'bottom' ? 'bottom-height' : `${which}-width`}`, `${Math.round(saved[which])}px`);
+    editor.requestMeasure();
+    resizeTerminal();
+  };
+  for (const which of ['left', 'right', 'bottom']) apply(which, saved[which]);
+  const config = [
+    ['left-resizer', 'left'], ['right-resizer', 'right'], ['bottom-resizer', 'bottom'],
+  ];
+  for (const [id, which] of config) {
+    const handle = document.getElementById(id);
+    handle.addEventListener('pointerdown', (event) => {
+      if (window.matchMedia('(max-width: 820px)').matches) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      handle.classList.add('dragging');
+      document.body.classList.add('resizing');
+      document.body.classList.toggle('resizing-vertical', which === 'bottom');
+    });
+    handle.addEventListener('pointermove', (event) => {
+      if (!handle.hasPointerCapture(event.pointerId)) return;
+      const rect = document.querySelector('.workspace-grid').getBoundingClientRect();
+      const bench = ui.workbench.getBoundingClientRect();
+      const value = which === 'left' ? event.clientX - rect.left
+        : which === 'right' ? rect.right - event.clientX : bench.bottom - event.clientY;
+      apply(which, value);
+    });
+    const finishResize = (event) => {
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing', 'resizing-vertical');
+      localStorage.setItem(`minicodex-${which}-${which === 'bottom' ? 'height' : 'width'}`, String(Math.round(saved[which])));
+    };
+    handle.addEventListener('pointerup', finishResize);
+    handle.addEventListener('pointercancel', finishResize);
+    handle.addEventListener('lostpointercapture', finishResize);
+    handle.addEventListener('keydown', (event) => {
+      const direction = (event.key === 'ArrowRight' || event.key === 'ArrowDown') ? 1
+        : (event.key === 'ArrowLeft' || event.key === 'ArrowUp') ? -1 : 0;
+      if (!direction) return;
+      event.preventDefault();
+      apply(which, saved[which] + (which === 'right' || which === 'bottom' ? -direction : direction) * 16);
+      localStorage.setItem(`minicodex-${which}-${which === 'bottom' ? 'height' : 'width'}`, String(Math.round(saved[which])));
+    });
+  }
+  new ResizeObserver(() => { editor.requestMeasure(); resizeTerminal(); }).observe(ui.workbench);
+}
+
 document.getElementById('task-form').addEventListener('submit', submitTask);
 ui.prompt.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submitTask(event);
@@ -657,30 +1021,50 @@ document.getElementById('allow-task-approval').addEventListener('click', () => a
 document.getElementById('allow-once-approval').addEventListener('click', () => approvalAction('allow_once'));
 document.getElementById('refresh-tree').addEventListener('click', loadTree);
 document.getElementById('refresh-view').addEventListener('click', () => state.mode === 'diff' ? openDiff(state.diffPath) : openFile(state.activePath));
-ui.editFile.addEventListener('click', beginEdit);
-ui.cancelEdit.addEventListener('click', leaveEditor);
+ui.newFile.addEventListener('click', () => createItem('file'));
+ui.newFolder.addEventListener('click', () => createItem('directory'));
+ui.findFile.addEventListener('click', () => editor.find());
+ui.renameFile.addEventListener('click', renameFile);
+ui.trashFile.addEventListener('click', trashFile);
 ui.saveFile.addEventListener('click', saveFile);
-ui.fileEditor.addEventListener('keydown', (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-    event.preventDefault();
-    saveFile();
-  }
-});
 ui.filter.addEventListener('input', renderTree);
-ui.codeTab.addEventListener('click', () => state.activePath && openFile(state.activePath));
+ui.codeTab.addEventListener('click', () => state.activePath && activateFileTab(state.activePath));
 ui.diffTab.addEventListener('click', () => openDiff(state.activePath || ''));
+ui.shellTab.addEventListener('click', () => { state.bottomMode = 'shell'; renderBottomTabs(); });
+ui.activityTab.addEventListener('click', () => { state.bottomMode = 'activity'; renderBottomTabs(); });
+ui.startTerminal.addEventListener('click', startTerminal);
+ui.stopTerminal.addEventListener('click', stopTerminal);
+ui.terminalShell.addEventListener('click', () => { if (state.terminalRunning) shell.focus(); });
 ui.modeButtons.forEach((button) => button.addEventListener('click', () => {
   if (button.disabled) return;
   state.permissionMode = button.dataset.mode;
   localStorage.setItem('minicodex-permission-mode', state.permissionMode);
   renderPermissionMode();
 }));
-document.getElementById('clear-terminal').addEventListener('click', () => ui.terminal.replaceChildren());
+document.getElementById('clear-terminal').addEventListener('click', () => {
+  if (state.bottomMode === 'shell') shell.clear();
+  else ui.terminal.replaceChildren();
+});
 document.getElementById('language-toggle').addEventListener('click', () => {
   state.locale = state.locale === 'zh' ? 'en' : 'zh';
   localStorage.setItem('minicodex-locale', state.locale);
   applyLanguage();
 });
 
+document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && state.mode === 'code') {
+    event.preventDefault();
+    saveFile();
+  }
+});
+window.addEventListener('beforeunload', (event) => {
+  if ([...editor.tabs.keys()].some((path) => editor.dirty(path))) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+});
+
 applyLanguage();
+setupResizers();
+renderBottomTabs();
 bootstrap();

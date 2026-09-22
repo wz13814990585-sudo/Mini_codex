@@ -119,17 +119,21 @@ Scripts and CI can consume JSON:
 minicodex doctor --json
 ```
 
-### 4. Start the local Web workspace
+### 4. Optional: start the local Web workspace
+
+The recommended path is now the CLI workflow in step 5. The Web workspace remains available for visual demos, but it is not required to run MiniCodex.
 
 ```bash
 minicodex ui --workspace /path/to/project
 ```
 
-The browser workspace provides a file tree, code viewing and manual editing, Agent chat, live task phases, a Trace activity log, per-file diff navigation, and task-level Accept / Reject. Git workspaces use Git diff; non-Git workspaces can review this Agent task from its checkpoints. Open an existing UTF-8 text file and click Edit; saving detects changes made by an external IDE. Manual saving is unavailable while the Agent runs or its changes await review. The “terminal” area is an activity log, not an interactive shell. v0.4.0 offers per-task Review, Auto, and Read-only Agent permission modes. Review pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, asks the user to Allow once, Allow for task, or Deny, and records that decision in the Trace audit trail. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
+The browser workspace provides a file tree, editable multi-file tabs, an interactive terminal, Agent chat, live task phases, a Trace activity log, per-file diff navigation, and task-level Accept / Reject. The editor supports syntax highlighting, line numbers, undo/redo, find/replace, and a save shortcut. You can create files/folders, rename files, and move deleted files to the workspace's `.minicodex/trash/` directory. Drag the dividers—or focus one and use arrow keys—to resize the file sidebar, Agent sidebar, and terminal. Saving detects changes made by another program. Manual changes are unavailable while an Agent task runs or awaits review. This is a lightweight IDE workspace; it does not yet include a language server, debugger, or extension system.
 
-The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. The `v0.4.0` wheel includes the UI static assets and launch command.
+The bottom pane defaults to an interactive shell that starts only when you click **Start terminal**. It runs as your OS user and **does not inherit the Agent tool safety policy**; it can access files and the network outside the workspace. Use it only with trusted local workspaces and close it before starting an Agent task. The **Run activity** tab still shows Agent Trace events. Git workspaces use Git diff; non-Git workspaces can review this Agent task from its checkpoints. v0.4.0 offers per-task Review, Auto, and Read-only Agent permission modes. Review pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, asks the user to Allow once, Allow for task, or Deny, and records that decision in the Trace audit trail. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
 
-### 5. Run a task from the CLI
+The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. Built UI assets are included in the package, so Node.js is not required to run it. Frontend contributors should run `npm ci && npm run build:ui` after changing source files.
+
+### 5. Recommended: run a task from the CLI
 
 Execute one task and exit:
 
@@ -145,6 +149,17 @@ Start an interactive session:
 minicodex chat --workspace /path/to/project
 ```
 
+Add `--review` to see this task's Agent diff in the terminal and accept or reject its edits:
+
+```bash
+minicodex run "Create a keyboard-controlled snake game in index.html" \
+  --workspace /path/to/project --review
+
+minicodex chat --workspace /path/to/project --review
+```
+
+`--review` covers checkpointed Agent edits only; rejecting does not reset the Git repository. If a file changes externally after the Agent edits it, the CLI refuses to overwrite it. Interrupting review leaves the files in place with review pending.
+
 Running without a subcommand still starts interactive mode. The original `--prompt` entry point also remains compatible:
 
 ```bash
@@ -157,8 +172,8 @@ minicodex --workspace /path/to/project --prompt "Fix the failing tests"
 | Command | Purpose | Model access |
 | --- | --- | --- |
 | `minicodex ui` | Start the local Web workspace; submitted tasks use the same Runtime | No at startup; yes when a task runs |
-| `minicodex run "task"` | Execute one task and exit | Yes |
-| `minicodex chat` | Start a continuous interactive session | Yes |
+| `minicodex run "task"` | Execute one task and exit; optional `--review` shows the diff | Yes |
+| `minicodex chat` | Start a continuous interactive session; optional `--review` after each task | Yes |
 | `minicodex doctor` | Check Python, workspace, Git, and model configuration | No |
 | `minicodex doctor --connect` | Also verify a real model connection | Yes, one minimal request |
 | `minicodex --version` | Print the version | No |
@@ -193,6 +208,7 @@ This flow demonstrates repository inspection, requirement decomposition, code ed
 ## Supported workflows
 
 - Informational questions and read-only code review
+- Entering tasks, reviewing the Agent diff, and accepting or rejecting checkpointed edits in the terminal
 - Browsing files, reviewing code and diffs, tracking tasks, and Accept / Reject through the local Web UI
 - Human-in-the-loop approval in the Web UI before caution-level operations execute
 - Creating, modifying, fixing, and refactoring Python, JavaScript, TypeScript, and HTML projects
@@ -214,11 +230,14 @@ The Harness selects an execution mode from task semantics:
 
 Each requirement becomes an independent `ValidationCheck`, then binds to a file, test, command, HTTP, browser, or semantic contract. `ValidatorResolver` chooses a validator only from the contract and registered capabilities. `ValidationLedger` stores revision-aware evidence. `TaskCompletionPolicy` permits success only when every required check has proof for the current revision.
 
+New filenames, exact text, or DOM states suggested only by the control model are not promoted to hard acceptance checks unless grounded in the user's request or existing repository. The original user goal remains a semantic check instead. Semantic validation can be inconclusive; MiniCodex reports that honestly rather than claiming runtime behavior was proven.
+
 Important boundaries:
 
 - Read-only tasks never receive editing or dependency-install capabilities.
 - File, command, and dependency operations pass through safety and workspace checks.
 - Commands have timeout, output, file-size, CPU, and memory limits.
+- `run_command` blocks common heredoc, inline-file-write, and redirection bypasses; the process sandbox **does not isolate the filesystem**, so run it only in a trusted local workspace.
 - Checkpoints cover only agent-owned edits; rollback refuses to overwrite concurrent external changes.
 - Static HTML checks cannot substitute for click, keyboard, or runtime-state validation.
 - Missing required capabilities or reliable targets produce an explicit blocker, not fabricated success.

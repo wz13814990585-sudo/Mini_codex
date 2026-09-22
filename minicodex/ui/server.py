@@ -20,6 +20,7 @@ import tempfile
 import threading
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+import uuid
 import webbrowser
 
 from .. import __version__
@@ -29,6 +30,7 @@ from ..doctor import diagnose
 from ..llm import ModelConfig, ModelConfigurationError
 from ..utils.paths import resolve_workspace_path
 from ..workspace import WorkspaceConfig
+from .terminal import TerminalError, WorkspaceTerminal
 
 
 _IGNORED_DIRECTORIES = frozenset({
@@ -190,6 +192,75 @@ class WorkspaceBrowser:
                 temporary_path.unlink(missing_ok=True)
         return self.read(relative_path)
 
+    def _managed_target(self, path: str) -> Path:
+        """Resolve a UI file-operation path without exposing hidden/internal files."""
+        raw = Path(str(path or ""))
+        if not str(path or "").strip() or raw.is_absolute() or ".." in raw.parts:
+            raise UIRequestError("Use a relative path inside the workspace.", HTTPStatus.FORBIDDEN)
+        current = self.workspace
+        for part in raw.parts:
+            if part in _IGNORED_DIRECTORIES or part.endswith(".egg-info"):
+                raise UIRequestError("This workspace path is not available in the editor.", HTTPStatus.FORBIDDEN)
+            current = current / part
+            if current.is_symlink():
+                raise UIRequestError("Symlink paths cannot be changed here.", HTTPStatus.FORBIDDEN)
+        try:
+            target = resolve_workspace_path(self.workspace, raw)
+        except ValueError as exc:
+            raise UIRequestError(str(exc), HTTPStatus.FORBIDDEN) from exc
+        if target == self.workspace or _is_sensitive_file(target):
+            raise UIRequestError("This workspace path cannot be changed here.", HTTPStatus.FORBIDDEN)
+        return target
+
+    def create(self, path: str, *, kind: str = "file") -> dict[str, Any]:
+        target = self._managed_target(path)
+        if kind not in {"file", "directory"}:
+            raise UIRequestError("Unknown workspace item type.")
+        if not target.parent.is_dir():
+            raise UIRequestError("Parent directory does not exist.", HTTPStatus.NOT_FOUND)
+        if target.exists():
+            raise UIRequestError("A file or folder already exists at that path.", HTTPStatus.CONFLICT)
+        try:
+            if kind == "directory":
+                target.mkdir()
+                return {"path": target.relative_to(self.workspace).as_posix(), "type": kind}
+            with target.open("x", encoding="utf-8"):
+                pass
+        except FileExistsError as exc:
+            raise UIRequestError("A file or folder already exists at that path.", HTTPStatus.CONFLICT) from exc
+        return self.read(path)
+
+    def rename(self, path: str, new_path: str, *, expected_revision: str | None = None) -> dict[str, Any]:
+        source = self._managed_target(path)
+        destination = self._managed_target(new_path)
+        if not source.exists():
+            raise UIRequestError("File or folder does not exist.", HTTPStatus.NOT_FOUND)
+        if destination.exists():
+            raise UIRequestError("Destination already exists.", HTTPStatus.CONFLICT)
+        if not destination.parent.is_dir() or source in destination.parents:
+            raise UIRequestError("Invalid destination directory.")
+        if source.is_file():
+            current = self.read(path)
+            if expected_revision is None or not hmac.compare_digest(current["revision"], expected_revision):
+                raise UIRequestError("File changed on disk. Reload it before renaming.", HTTPStatus.CONFLICT)
+        source.rename(destination)
+        return {"path": destination.relative_to(self.workspace).as_posix(),
+                "type": "directory" if destination.is_dir() else "file"}
+
+    def trash(self, path: str, *, expected_revision: str | None = None) -> dict[str, Any]:
+        target = self._managed_target(path)
+        if not target.exists():
+            raise UIRequestError("File or folder does not exist.", HTTPStatus.NOT_FOUND)
+        if target.is_file():
+            current = self.read(path)
+            if expected_revision is None or not hmac.compare_digest(current["revision"], expected_revision):
+                raise UIRequestError("File changed on disk. Reload it before deleting.", HTTPStatus.CONFLICT)
+        trash_dir = self.workspace / ".minicodex" / "trash"
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        destination = trash_dir / f"{uuid.uuid4().hex}-{target.name}"
+        target.rename(destination)
+        return {"path": path, "trash_path": destination.relative_to(self.workspace).as_posix()}
+
 
 def _language_for(suffix: str) -> str:
     return {
@@ -222,6 +293,7 @@ class MiniCodexUIController:
         self.model_config = model_config
         self.output_level = output_level
         self.browser = WorkspaceBrowser(config.workspace_root)
+        self.terminal = WorkspaceTerminal(config.workspace_root)
         self.git = GitRepositoryInspector(config.workspace_root)
         self._agent_factory = agent_factory or self._default_agent_factory
         self._runner_factory = runner_factory
@@ -280,6 +352,8 @@ class MiniCodexUIController:
             raise UIRequestError("Unknown permission mode.") from exc
 
         with self._lock:
+            if self.terminal.running:
+                raise UIRequestError("Close the interactive terminal before starting an Agent task.", HTTPStatus.CONFLICT)
             if self._task is not None and not self._task.done:
                 raise UIRequestError("A task is already running.", HTTPStatus.CONFLICT)
             if self._review_status == "pending":
@@ -578,11 +652,56 @@ class MiniCodexUIController:
 
     def save_file(self, path: str, content: str, expected_revision: str) -> dict[str, Any]:
         with self._lock:
-            if self._task is not None and not self._task.done:
-                raise UIRequestError("Stop the running task before editing a file.", HTTPStatus.CONFLICT)
-            if self._review_status == "pending":
-                raise UIRequestError("Accept or reject Agent changes before editing a file.", HTTPStatus.CONFLICT)
+            self._require_idle_workspace()
             return self.browser.save(path, content, expected_revision)
+
+    def create_item(self, path: str, kind: str) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.create(path, kind=kind)
+
+    def rename_item(self, path: str, new_path: str, expected_revision: str | None) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.rename(path, new_path, expected_revision=expected_revision)
+
+    def trash_item(self, path: str, expected_revision: str | None) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            return self.browser.trash(path, expected_revision=expected_revision)
+
+    def _require_idle_workspace(self) -> None:
+        if self._task is not None and not self._task.done:
+            raise UIRequestError("Stop the running task before changing workspace files.", HTTPStatus.CONFLICT)
+        if self._review_status == "pending":
+            raise UIRequestError("Accept or reject Agent changes before changing workspace files.", HTTPStatus.CONFLICT)
+
+    def start_terminal(self, *, cols: int, rows: int) -> dict[str, Any]:
+        with self._lock:
+            self._require_idle_workspace()
+            try:
+                return self.terminal.start(cols=cols, rows=rows)
+            except TerminalError as exc:
+                raise UIRequestError(str(exc), HTTPStatus.CONFLICT) from exc
+
+    def terminal_state(self, *, after: int = 0) -> dict[str, Any]:
+        return self.terminal.snapshot(after=after)
+
+    def terminal_input(self, data: str) -> dict[str, Any]:
+        try:
+            self.terminal.write(data)
+        except TerminalError as exc:
+            raise UIRequestError(str(exc), HTTPStatus.CONFLICT) from exc
+        return {"ok": True}
+
+    def terminal_resize(self, *, cols: int, rows: int) -> dict[str, Any]:
+        try:
+            return self.terminal.resize(cols=cols, rows=rows)
+        except TerminalError as exc:
+            raise UIRequestError(str(exc), HTTPStatus.CONFLICT) from exc
+
+    def stop_terminal(self) -> dict[str, Any]:
+        return self.terminal.stop()
 
 
 def _runtime_payload(state: Any) -> dict[str, Any] | None:
@@ -618,6 +737,10 @@ class MiniCodexHTTPServer(ThreadingHTTPServer):
             self.address_family = socket.AF_INET6
         super().__init__(server_address, MiniCodexRequestHandler)
 
+    def server_close(self) -> None:
+        self.controller.stop_terminal()
+        super().server_close()
+
 
 class MiniCodexRequestHandler(BaseHTTPRequestHandler):
     """Small same-origin JSON API and static-file server."""
@@ -645,6 +768,12 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
             elif route.path == "/api/diff":
                 query = parse_qs(route.query)
                 self._json(self.server.controller.diff(query.get("path", [""])[0]))
+            elif route.path == "/api/terminal":
+                if not self._valid_token():
+                    self._error(HTTPStatus.FORBIDDEN, "Invalid UI session token.")
+                    return
+                query = parse_qs(route.query)
+                self._json(self.server.controller.terminal_state(after=int(query.get("after", ["0"])[0])))
             elif route.path in {"/", "/index.html"}:
                 index = (self.server.static_root / "index.html").read_text(encoding="utf-8")
                 index = index.replace("__MINICODEX_TOKEN__", self.server.token)
@@ -673,9 +802,7 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
-        if not hmac.compare_digest(
-            self.headers.get("X-MiniCodex-Token", ""), self.server.token,
-        ):
+        if not self._valid_token():
             self._error(HTTPStatus.FORBIDDEN, "Invalid UI session token.")
             return
         try:
@@ -700,6 +827,31 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
                     payload.get("path", ""), payload.get("content"),
                     payload.get("expected_revision"),
                 ))
+            elif route == "/api/items/create":
+                self._json(self.server.controller.create_item(
+                    payload.get("path", ""), payload.get("kind", "file"),
+                ), HTTPStatus.CREATED)
+            elif route == "/api/items/rename":
+                self._json(self.server.controller.rename_item(
+                    payload.get("path", ""), payload.get("new_path", ""),
+                    payload.get("expected_revision"),
+                ))
+            elif route == "/api/items/trash":
+                self._json(self.server.controller.trash_item(
+                    payload.get("path", ""), payload.get("expected_revision"),
+                ))
+            elif route == "/api/terminal/start":
+                self._json(self.server.controller.start_terminal(
+                    cols=payload.get("cols", 80), rows=payload.get("rows", 24),
+                ))
+            elif route == "/api/terminal/input":
+                self._json(self.server.controller.terminal_input(payload.get("data")))
+            elif route == "/api/terminal/resize":
+                self._json(self.server.controller.terminal_resize(
+                    cols=payload.get("cols", 80), rows=payload.get("rows", 24),
+                ))
+            elif route == "/api/terminal/stop":
+                self._json(self.server.controller.stop_terminal())
             else:
                 self._error(HTTPStatus.NOT_FOUND, "Not found.")
         except UIRequestError as exc:
@@ -733,8 +885,11 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
             hostname = host.split(":", 1)[0]
         return hostname in {"127.0.0.1", "localhost", "::1"}
 
+    def _valid_token(self) -> bool:
+        return hmac.compare_digest(self.headers.get("X-MiniCodex-Token", ""), self.server.token)
+
     def _static(self, name: str) -> None:
-        if name not in {"app.js", "styles.css"}:
+        if name not in {"app.js", "app.bundle.js", "app.bundle.css", "styles.css"}:
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
             return
         target = self.server.static_root / name
@@ -756,7 +911,7 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", f"default-src 'self'; img-src 'self' data:; style-src 'self' 'nonce-{self.server.token}'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")

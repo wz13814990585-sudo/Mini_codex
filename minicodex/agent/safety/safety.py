@@ -240,6 +240,18 @@ class SafetyPolicy:
         re.IGNORECASE,
     )
 
+    # The process sandbox does not isolate the filesystem. Inline programs
+    # must not become an alternative to checkpointed editing tools.
+    INLINE_WRITE_PATTERN = re.compile(
+        r"\b(?:write_text|write_bytes|writeFileSync|appendFileSync|"
+        r"writeFile|appendFile|mkdirSync|unlinkSync|renameSync|"
+        r"copyFileSync|removeSync|rmSync)\s*\(|"
+        r"\bopen\s*\([^\n)]*,\s*['\"](?:w|a|x)[bt+]*['\"]|"
+        r"\b(?:fs|pathlib|os)\s*\.\s*(?:write|remove|unlink|rename|mkdir)\w*\s*\(",
+        re.IGNORECASE,
+    )
+    HEREDOC_PATTERN = re.compile(r"<<-?\s*['\"]?[A-Za-z_][\w-]*['\"]?")
+
     # =========================================================
     # Constructor
     # =========================================================
@@ -633,6 +645,20 @@ class SafetyPolicy:
                 ),
                 tool_name=tool_name,
                 command=command,
+            )
+
+        if self.HEREDOC_PATTERN.search(command):
+            return self._blocked_command(
+                tool_name=tool_name,
+                command=command,
+                rule="checkpoint_bypass_heredoc",
+            )
+
+        if self.INLINE_WRITE_PATTERN.search(command):
+            return self._blocked_command(
+                tool_name=tool_name,
+                command=command,
+                rule="checkpoint_bypass_inline_write",
             )
 
         # =====================================================

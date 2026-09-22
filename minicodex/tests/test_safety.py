@@ -219,6 +219,20 @@ def test_real_redirection_remains_blocked(
     assert decision.rule == "checkpoint_bypass_redirection"
 
 
+@pytest.mark.parametrize("command, rule", [
+    ("python - <<'PY'\nfrom pathlib import Path\nPath('index.html').write_text('x')\nPY", "checkpoint_bypass_heredoc"),
+    ("python -c 'from pathlib import Path; Path(\"index.html\").write_text(\"x\")'", "checkpoint_bypass_inline_write"),
+    ("node -e 'require(\"fs\").writeFileSync(\"index.html\", \"x\")'", "checkpoint_bypass_inline_write"),
+    ("python -c 'open(\"index.html\", \"w\").write(\"x\")'", "checkpoint_bypass_inline_write"),
+])
+def test_inline_program_cannot_bypass_checkpointed_edits(tmp_path, command, rule):
+    decision = SafetyPolicy(workspace=tmp_path).assess(
+        "run_command", {"command": command},
+    )
+    assert decision.allowed is False
+    assert decision.rule == rule
+
+
 # =============================================================
 # SAFE Edit
 # =============================================================
