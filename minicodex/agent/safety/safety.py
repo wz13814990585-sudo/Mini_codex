@@ -59,7 +59,11 @@ class SafetyDecision:
     @property
     def intervention(self) -> InterventionCategory:
         if self.allowed:
-            return InterventionCategory.AUTONOMOUS
+            return (
+                InterventionCategory.APPROVAL
+                if self.requires_attention
+                else InterventionCategory.AUTONOMOUS
+            )
         if self.rule in {"task_no_edit_constraint", "dependency_forbidden"}:
             return InterventionCategory.CLARIFICATION
         return InterventionCategory.APPROVAL

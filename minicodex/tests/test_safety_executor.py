@@ -1,4 +1,5 @@
 from ..agent.safety import (
+    InterventionCategory,
     SafetyLevel,
     SafetyDecision,
 )
@@ -343,6 +344,62 @@ def test_caution_call_executes_with_warning():
         "safety_warning"
         in execution.result.data
     )
+
+
+def test_caution_call_waits_for_hook_and_records_approval():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.CAUTION, True, "Needs review.", "network_access",
+        "run_command", command="curl https://example.test",
+    )
+    calls = []
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        intervention_hook=lambda category, safety, prepared: calls.append(
+            (category, safety.rule, prepared.tool_name)
+        ) or True,
+    )
+
+    execution = executor.execute_prepared(PreparedToolCall(
+        "run_command", {"command": "curl https://example.test"},
+    ))
+
+    assert execution.result.success is True
+    assert downstream.execution_count == 1
+    assert execution.result.data["approval"] == {"required": True, "granted": True}
+    assert calls[0][1:] == ("network_access", "run_command")
+
+
+def test_rejected_caution_never_reaches_downstream():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.CAUTION, True, "Needs review.", "dependency_install",
+        "install_python_package",
+    )
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        intervention_hook=lambda *_args: False,
+    )
+
+    execution = executor.execute_prepared(PreparedToolCall(
+        "install_python_package", {"package": "demo", "import_name": "demo"},
+    ))
+
+    assert execution.result.success is False
+    assert execution.result.data["failure_type"] == "permission_denied"
+    assert execution.result.data["reason_code"] == "permission_denied"
+    assert downstream.execution_count == 0
+
+
+def test_caution_decision_requests_approval_category():
+    decision = SafetyDecision(
+        SafetyLevel.CAUTION, True, "Needs review.", "network_access",
+        "run_command", command="curl https://example.test",
+    )
+
+    assert decision.intervention == InterventionCategory.APPROVAL
 
 
 # =============================================================

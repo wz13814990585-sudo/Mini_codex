@@ -6,7 +6,7 @@
 | --- | --- |
 | Release line | `v0.2.0` productized the CLI; `v0.3.0` adds the local Web workspace; the current Git tree is authoritative |
 | Pre-change baseline | `e3510ac` |
-| Latest full regression | **689 passed in 23.15s** |
+| Latest full regression | **700 passed in 22.78s** |
 | Offline VibeBench | **15/15**, false-completion rate **0** |
 | Online R2 smoke | **8/8**, with zero false completion, wrong validation target, or step exhaustion |
 | Compile / diff checks | `compileall` and `git diff --check` pass |
@@ -261,14 +261,15 @@ The CI path runs deterministic pytest/compile/package checks and never calls a p
 | Exact validation target gate | 673 passed | Blocks substitute acceptance/regression commands |
 | v0.2.0 product release | **682 passed** | run/chat/doctor, diagnostics, wheel, 3-version CI, install smoke |
 | Minimum viable Web UI | **689 passed** | File tree, code/diff, Agent chat, task state, Trace terminal, and checkpoint Accept/Reject |
+| Human-in-the-loop phase one | **700 passed** | `CAUTION` pause, allow once/task, deny, cancellation and timeout, redacted preview, bilingual UI |
 
 ---
 
 ## 9. Remaining boundaries
 
-- One full 30-case real-model experiment, targeted gates, and focused confirmation runs have been performed; the formal 30 cases × 3 repetitions have not.
+- One full 30-case real-model experiment, targeted gates, and focused confirmation runs have been performed; the formal 30 cases × 3 repetitions are deferred by the release plan.
 - Requirement extraction can still create mutually exclusive validation contracts. More steps cannot solve that contradiction; pre-activation consistency checks remain future work.
-- Real browser UI interaction has not been part of the required CI path.
+- Human-in-the-loop passed real local-browser interaction checks, but browser validation is still outside the required CI path.
 - Requirement extraction and target selection still combine model judgment with bounded heuristics. Deterministic binding cannot prove arbitrary documentation semantics.
 - Navigation is bounded: workspace scans, convention/dependency sampling, and test indexing have explicit file limits.
 - External-change detection uses stat fingerprints, not filesystem transactions or locks; whole-task undo covers only checkpointed agent edits.

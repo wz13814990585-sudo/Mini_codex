@@ -224,7 +224,7 @@ class MiniCodexAgent:
         # ToolExecutor
         # =====================================================
 
-        self.tool_executor = (
+        self.safety_executor = (
             SafetyToolExecutor(
                 registry=registry,
                 executor=(
@@ -235,6 +235,7 @@ class MiniCodexAgent:
                 ),
             )
         )
+        self.tool_executor = self.safety_executor
 
         # =====================================================
         # Token Metrics

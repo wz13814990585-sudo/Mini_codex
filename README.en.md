@@ -125,7 +125,7 @@ minicodex doctor --json
 minicodex ui --workspace /path/to/project
 ```
 
-The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, Git diff, and task-level Accept / Reject. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
+The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, Git diff, and task-level Accept / Reject. The current development version also pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, then asks the user to Allow once, Allow for task, or Deny. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
 
 The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. The `v0.3.0` wheel includes the UI static assets and launch command.
 
@@ -194,6 +194,7 @@ This flow demonstrates repository inspection, requirement decomposition, code ed
 
 - Informational questions and read-only code review
 - Browsing files, reviewing code and diffs, tracking tasks, and Accept / Reject through the local Web UI
+- Human-in-the-loop approval in the Web UI before caution-level operations execute
 - Creating, modifying, fixing, and refactoring Python, JavaScript, TypeScript, and HTML projects
 - Running commands, pytest, and project test scripts
 - Validating Flask and FastAPI endpoints
@@ -266,7 +267,7 @@ minicodex/
 
 ## Testing and evaluation
 
-The current productization commit passes **689 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
+The current development commit passes **700 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
 
 ```bash
 python -m pytest -q
@@ -302,7 +303,7 @@ Run the full test suite before submitting a focused change.
 - Both the CLI and Web UI are single-process sessions and cannot resume an unfinished task after a crash.
 - In-progress task state and checkpoints exist only in the current process.
 - Browser interaction validation requires optional Playwright and Chromium installs.
-- The Web UI provides task-level Accept / Reject, but not per-command human approval yet.
+- Human-in-the-loop intercepts operations classified as `CAUTION`; it does not prompt for every ordinary read, test, or safe command.
 - Service tools provide bounded processes and loopback HTTP validation, not kernel-level container isolation.
 - Model, network, package registry, and operating-system conditions can still cause failures.
 - Automated validation reduces risk but does not replace human code review or deployment testing.
@@ -313,6 +314,7 @@ Run the full test suite before submitting a focused change.
 | --- | --- | --- |
 | Documentation index | [中文](docs/README.md) | [English](docs/README.en.md) |
 | Local Web workspace | [中文](docs/ui.md) | [English](docs/ui.en.md) |
+| Human-in-the-loop | [中文](docs/human-in-the-loop.md) | [English](docs/human-in-the-loop.en.md) |
 | Architecture | [中文](docs/architecture.md) | [English](docs/architecture.en.md) |
 | Validation Core V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |

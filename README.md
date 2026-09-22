@@ -125,7 +125,7 @@ minicodex doctor --json
 minicodex ui --workspace /path/to/project
 ```
 
-浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、Git Diff，以及任务级 Accept / Reject。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
+浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、Git Diff，以及任务级 Accept / Reject。当前开发版还会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
 
 UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。`v0.3.0` wheel 已包含 UI 静态资源与启动命令。
 
@@ -194,6 +194,7 @@ python -m pytest -q "$demo_dir/tests"
 
 - 信息咨询和只读代码审查
 - 通过本地 Web UI 浏览文件、查看代码和 Diff、跟踪任务并 Accept / Reject
+- 在警示级操作执行前通过 Web UI 做 Human-in-the-loop 审批
 - 创建、修改、修复和重构 Python / JavaScript / TypeScript / HTML 项目
 - 运行命令、pytest 和项目级测试脚本
 - Flask / FastAPI 服务端点验证
@@ -266,7 +267,7 @@ minicodex/
 
 ## 测试与评估
 
-当前产品化提交通过 **689 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
+当前开发提交通过 **700 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
 
 ```bash
 python -m pytest -q
@@ -302,7 +303,7 @@ python -m minicodex.evaluation.run_benchmark \
 - CLI 与 Web UI 都是单进程会话，进程崩溃后不能续跑未完成任务
 - 进行中的任务状态与 checkpoint 只存在于当前进程
 - 浏览器交互验证依赖可选的 Playwright 和 Chromium
-- Web UI 提供任务级 Accept / Reject，但尚未提供逐命令人工审批
+- Human-in-the-loop 只拦截安全策略标记为 `CAUTION` 的操作，不会逐条审批普通读取、测试或安全命令
 - 服务工具提供受限进程和回环 HTTP 验证，不是内核级容器隔离
 - 模型、网络、第三方包源和操作系统权限仍可能导致失败
 - 自动验证降低风险，但不能代替人工代码审查与真实部署测试
@@ -313,6 +314,7 @@ python -m minicodex.evaluation.run_benchmark \
 | --- | --- | --- |
 | 文档索引 | [中文](docs/README.md) | [English](docs/README.en.md) |
 | 本地 Web 工作台 | [中文](docs/ui.md) | [English](docs/ui.en.md) |
+| Human-in-the-loop | [中文](docs/human-in-the-loop.md) | [English](docs/human-in-the-loop.en.md) |
 | 架构说明 | [中文](docs/architecture.md) | [English](docs/architecture.en.md) |
 | 验证核心 V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |

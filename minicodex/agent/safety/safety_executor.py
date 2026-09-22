@@ -29,7 +29,7 @@ class SafetyToolExecutor:
         BLOCKED
             → return ToolResult without execution
 
-        SAFE / CAUTION
+        SAFE / approved CAUTION
             ↓
         downstream executor
             ↓
@@ -192,7 +192,27 @@ class SafetyToolExecutor:
             )
 
         # =====================================================
-        # SAFE / CAUTION
+        # Human approval for CAUTION
+        # =====================================================
+
+        approval_required = bool(
+            decision.requires_attention and self.intervention_hook is not None
+        )
+        if approval_required:
+            try:
+                approved = bool(self.intervention_hook(
+                    decision.intervention, decision, prepared,
+                ))
+            except Exception:
+                approved = False
+            if not approved:
+                return self._approval_denied_execution(
+                    prepared=prepared,
+                    decision=decision,
+                )
+
+        # =====================================================
+        # SAFE / approved CAUTION
         # =====================================================
 
         execution = (
@@ -228,7 +248,40 @@ class SafetyToolExecutor:
                 decision.reason
             )
 
+        if approval_required:
+            result.data["approval"] = {
+                "required": True,
+                "granted": True,
+            }
+
         return execution
+
+    @staticmethod
+    def _approval_denied_execution(
+        *,
+        prepared: PreparedToolCall,
+        decision: SafetyDecision,
+    ) -> ToolExecution:
+        return ToolExecution(
+            tool_name=prepared.tool_name,
+            arguments=prepared.arguments,
+            result=ToolResult(
+                success=False,
+                summary=f"工具 '{prepared.tool_name}' 未获用户批准。",
+                data={
+                    "tool_name": prepared.tool_name,
+                    "failure_type": "permission_denied",
+                    "reason_code": ReasonCode.PERMISSION_DENIED.value,
+                    "safety": decision.to_dict(),
+                    "approval": {"required": True, "granted": False},
+                },
+                error="用户拒绝了这项需要确认的操作。",
+                llm_content=(
+                    "用户拒绝了当前操作。不要原样重试；请采用无需该权限的替代方案，"
+                    "或明确说明任务为何无法继续。"
+                ),
+            ),
+        )
 
     # =========================================================
     # Blocked Result

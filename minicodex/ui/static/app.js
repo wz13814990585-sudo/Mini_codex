@@ -17,6 +17,10 @@ const ui = {
   run: document.getElementById('run-task'),
   cancel: document.getElementById('cancel-task'),
   warning: document.getElementById('config-warning'),
+  approval: document.getElementById('approval-bar'),
+  approvalTool: document.getElementById('approval-tool'),
+  approvalReason: document.getElementById('approval-reason'),
+  approvalTarget: document.getElementById('approval-target'),
 };
 
 const translations = {
@@ -31,6 +35,8 @@ const translations = {
     submitHint: '⌘/Ctrl + Enter 发送', stop: '停止', run: '运行任务', running: '运行中',
     pending: '待确认', accepted: '已接受', rejected: '已回滚', failed: '失败', cancelled: '已取消',
     noDiff: '当前文件没有未提交变更。', treeError: '无法读取文件树', requestFailed: '请求失败',
+    approvalTitle: '操作需要批准', approvalWaiting: '等待批准', deny: '拒绝',
+    allowTask: '本任务允许', allowOnce: '允许一次',
   },
   en: {
     workspace: 'WORKSPACE', files: 'Files', searchFiles: 'Search files', code: 'Code', diff: 'Changes',
@@ -43,6 +49,8 @@ const translations = {
     submitHint: '⌘/Ctrl + Enter to send', stop: 'Stop', run: 'Run task', running: 'Running',
     pending: 'Review', accepted: 'Accepted', rejected: 'Reverted', failed: 'Failed', cancelled: 'Cancelled',
     noDiff: 'This file has no uncommitted changes.', treeError: 'Unable to load file tree', requestFailed: 'Request failed',
+    approvalTitle: 'Approval required', approvalWaiting: 'Approval', deny: 'Deny',
+    allowTask: 'Allow for task', allowOnce: 'Allow once',
   },
 };
 
@@ -57,6 +65,8 @@ const state = {
   taskSignature: '',
   pollTimer: null,
   modelReady: false,
+  approval: null,
+  pendingApprovalId: '',
 };
 
 function t(key) {
@@ -72,6 +82,7 @@ function applyLanguage() {
     element.placeholder = t(element.dataset.i18nPlaceholder);
   });
   document.getElementById('language-toggle').textContent = state.locale === 'zh' ? 'EN' : '中文';
+  renderApproval(state.approval);
 }
 
 async function request(path, options = {}) {
@@ -282,6 +293,7 @@ function renderDynamicState(payload) {
   const git = payload.git || {};
   document.getElementById('branch-name').textContent = git.branch || (git.is_repo ? 'detached' : 'no git');
   renderTask(payload.task, payload.runtime);
+  renderApproval(payload.approval);
   renderMessages(payload.messages || []);
   appendEvents(payload.events || []);
   const summary = payload.trace_summary || {};
@@ -302,7 +314,8 @@ function renderTask(task, runtime) {
   const review = task ? task.review_status : 'not_required';
   let labelKey = 'idle';
   let badgeClass = 'idle';
-  if (task && !task.done) { labelKey = 'running'; badgeClass = 'running'; }
+  if (task && task.awaiting_approval) { labelKey = 'approvalWaiting'; badgeClass = 'pending'; }
+  else if (task && !task.done) { labelKey = 'running'; badgeClass = 'running'; }
   else if (review === 'pending') { labelKey = 'pending'; badgeClass = 'pending'; }
   else if (review === 'accepted') { labelKey = 'accepted'; badgeClass = 'completed'; }
   else if (review === 'rejected') { labelKey = 'rejected'; badgeClass = 'completed'; }
@@ -316,6 +329,39 @@ function renderTask(task, runtime) {
   ui.run.disabled = Boolean(task && (!task.done || review === 'pending')) || !state.modelReady;
   ui.prompt.disabled = Boolean(task && (!task.done || review === 'pending'));
   renderPhases(runtime ? runtime.phase : null);
+}
+
+const approvalReasons = {
+  zh: {
+    dependency_install: '该操作会安装或修改项目依赖。',
+    network_access: '该命令会访问外部网络。',
+    preexisting_user_change: '目标文件在任务开始前已有未提交修改。',
+    git_conflict: '目标文件当前存在 Git 冲突。',
+  },
+  en: {
+    dependency_install: 'This operation installs or changes project dependencies.',
+    network_access: 'This command accesses the external network.',
+    preexisting_user_change: 'The target file already had uncommitted changes before this task.',
+    git_conflict: 'The target file currently has a Git conflict.',
+  },
+};
+
+function renderApproval(approval) {
+  state.approval = approval || null;
+  const pending = approval && approval.pending;
+  state.pendingApprovalId = pending ? pending.request_id : '';
+  ui.approval.classList.toggle('hidden', !pending);
+  if (!pending) return;
+  ui.approvalTool.textContent = `${pending.tool_name} · ${pending.rule}`;
+  ui.approvalReason.textContent = approvalReasons[state.locale][pending.rule] || pending.reason;
+  const details = [];
+  if (pending.command) details.push(pending.command);
+  if (pending.path) details.push(pending.path);
+  for (const [key, value] of Object.entries(pending.arguments || {})) {
+    if ((key === 'command' && pending.command) || (key === 'path' && pending.path)) continue;
+    details.push(`${key}: ${Array.isArray(value) ? value.join(' ') : value}`);
+  }
+  ui.approvalTarget.textContent = details.join('\n') || pending.tool_name;
 }
 
 function renderPhases(phase) {
@@ -422,6 +468,19 @@ async function taskAction(action) {
   }
 }
 
+async function approvalAction(decision) {
+  if (!state.pendingApprovalId) return;
+  try {
+    await request('/api/approvals', {
+      method: 'POST',
+      body: JSON.stringify({ request_id: state.pendingApprovalId, decision }),
+    });
+    await pollState();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
 document.getElementById('task-form').addEventListener('submit', submitTask);
 ui.prompt.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submitTask(event);
@@ -429,6 +488,9 @@ ui.prompt.addEventListener('keydown', (event) => {
 document.getElementById('cancel-task').addEventListener('click', () => taskAction('cancel'));
 document.getElementById('accept-task').addEventListener('click', () => taskAction('accept'));
 document.getElementById('reject-task').addEventListener('click', () => taskAction('reject'));
+document.getElementById('reject-approval').addEventListener('click', () => approvalAction('reject'));
+document.getElementById('allow-task-approval').addEventListener('click', () => approvalAction('allow_task'));
+document.getElementById('allow-once-approval').addEventListener('click', () => approvalAction('allow_once'));
 document.getElementById('refresh-tree').addEventListener('click', loadTree);
 document.getElementById('refresh-view').addEventListener('click', () => state.mode === 'diff' ? openDiff() : openFile(state.activePath));
 ui.filter.addEventListener('input', renderTree);

@@ -13,9 +13,12 @@ import pytest
 import minicodex.main as main_module
 from ..agent.observability import TraceEventType, TraceRecorder
 from ..agent.runtime import AsyncTaskStatus
+from ..agent.runtime import PreparedToolCall
+from ..agent.safety import SafetyDecision, SafetyLevel
 from ..llm import ModelConfig
 from ..tools.results import ToolResult
 from ..ui.server import (
+    MiniCodexHTTPServer,
     MiniCodexUIController,
     UIRequestError,
     WorkspaceBrowser,
@@ -79,6 +82,28 @@ class _FakeAgent:
         return ToolResult(True, "Task changes were restored.", {"restored_paths": ["app.py"]})
 
 
+class _ApprovalFakeAgent(_FakeAgent):
+    def __init__(self, recorder: TraceRecorder):
+        super().__init__(recorder, with_edit=False)
+        self.safety_executor = SimpleNamespace(intervention_hook=None)
+        self.approved = None
+
+    def run(self, user_input, use_planning=None, policy=None):
+        self.trace_recorder.start_task(prompt=user_input)
+        decision = SafetyDecision(
+            SafetyLevel.CAUTION, True, "Dependency install needs approval.",
+            "dependency_install", "install_python_package",
+        )
+        self.approved = self.safety_executor.intervention_hook(
+            decision.intervention,
+            decision,
+            PreparedToolCall(
+                "install_python_package", {"package": "demo", "import_name": "demo"},
+            ),
+        )
+        return "Approval flow finished."
+
+
 def _controller(tmp_path: Path, *, with_edit: bool = True):
     observed = {}
 
@@ -104,6 +129,17 @@ def _wait_for_task(controller: MiniCodexUIController) -> dict:
             return task
         time.sleep(0.01)
     pytest.fail("UI task did not finish")
+
+
+def _wait_for_approval(controller: MiniCodexUIController) -> dict:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        state = controller.state()
+        pending = state["approval"]["pending"]
+        if pending:
+            return pending
+        time.sleep(0.01)
+    pytest.fail("UI approval did not become pending")
 
 
 def test_workspace_browser_is_confined_and_skips_runtime_directories(tmp_path):
@@ -174,6 +210,47 @@ def test_controller_can_open_without_a_model_but_cannot_start_task(tmp_path):
         create_ui_server(_workspace_config(tmp_path), model, host="0.0.0.0", port=0)
 
 
+def test_controller_pauses_and_resumes_for_human_approval(tmp_path):
+    observed = {}
+
+    def factory(_config, *, model_config, output_level):
+        recorder = TraceRecorder()
+        agent = _ApprovalFakeAgent(recorder)
+        observed["agent"] = agent
+        return agent, recorder, None
+
+    controller = MiniCodexUIController(
+        _workspace_config(tmp_path), _ready_model(), agent_factory=factory,
+    )
+    controller.start_task("install dependency")
+    pending = _wait_for_approval(controller)
+    assert controller.state()["task"]["awaiting_approval"] is True
+
+    response = controller.resolve_approval(pending["request_id"], "allow_once")
+    assert response["resolved"]["decision"] == "allow_once"
+    assert _wait_for_task(controller)["status"] == AsyncTaskStatus.COMPLETED.value
+    assert observed["agent"].approved is True
+
+
+def test_controller_cancellation_rejects_pending_approval(tmp_path):
+    observed = {}
+
+    def factory(_config, *, model_config, output_level):
+        recorder = TraceRecorder()
+        agent = _ApprovalFakeAgent(recorder)
+        observed["agent"] = agent
+        return agent, recorder, None
+
+    controller = MiniCodexUIController(
+        _workspace_config(tmp_path), _ready_model(), agent_factory=factory,
+    )
+    controller.start_task("install dependency")
+    _wait_for_approval(controller)
+    controller.cancel_task()
+    assert _wait_for_task(controller)["status"] == AsyncTaskStatus.CANCELLED.value
+    assert observed["agent"].approved is False
+
+
 def test_http_server_serves_shell_and_protects_mutations(tmp_path):
     (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
     server = create_ui_server(_workspace_config(tmp_path), _ready_model(), port=0)
@@ -201,6 +278,55 @@ def test_http_server_serves_shell_and_protects_mutations(tmp_path):
         response = connection.getresponse()
         assert response.status == 421
         response.read()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_http_approval_endpoint_requires_token_and_matching_request(tmp_path):
+    def factory(_config, *, model_config, output_level):
+        recorder = TraceRecorder()
+        return _ApprovalFakeAgent(recorder), recorder, None
+
+    controller = MiniCodexUIController(
+        _workspace_config(tmp_path), _ready_model(), agent_factory=factory,
+    )
+    server = MiniCodexHTTPServer(("127.0.0.1", 0), controller)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+    headers = {
+        "Content-Type": "application/json",
+        "X-MiniCodex-Token": server.token,
+    }
+    try:
+        connection.request(
+            "POST", "/api/tasks", body='{"prompt":"install dependency"}', headers=headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 202
+        response.read()
+        pending = _wait_for_approval(controller)
+
+        connection.request(
+            "POST", "/api/approvals",
+            body='{"request_id":"stale","decision":"allow_once"}', headers=headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 409
+        response.read()
+
+        body = (
+            '{"request_id":"' + pending["request_id"]
+            + '","decision":"allow_once"}'
+        )
+        connection.request("POST", "/api/approvals", body=body, headers=headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        assert _wait_for_task(controller)["status"] == AsyncTaskStatus.COMPLETED.value
     finally:
         connection.close()
         server.shutdown()

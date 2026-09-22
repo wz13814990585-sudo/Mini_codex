@@ -60,6 +60,8 @@ MiniCodex 遵循同一条控制面边界：**语义理解与策略判断属于�
 
 所有变更仍经过 `SafetyToolExecutor`、无编辑权限守卫、工作区 / 受保护路径规则、反测试作弊检查，以及 checkpoint 捕获 / 密封。Checkpoint 执行会检测并发改动；回滚拒绝覆盖 checkpoint 之后的外部编辑。回滚会创建新的单调修订，使验证 / 计划证据与仓库缓存失效，并重新同步任务局部记忆。仅失败数升高本身不会触发回滚。稳定的 `EditFailureType` 与 `ReasonCode` 驱动控制逻辑；面向用户的文案不参与控制。
 
+Web UI 为 `CAUTION` 决策安装任务级 `ApprovalCoordinator`。工具线程在执行前等待允许一次、本任务允许或拒绝；请求只暴露白名单参数，并经过脱敏与长度限制。拒绝生成 `permission_denied` 工具结果，取消任务会同时唤醒等待线程。`BLOCKED` 决策仍由确定性策略直接拒绝，Human-in-the-loop 不能把工作区逃逸、测试作弊或破坏性命令变成可执行操作。CLI 未安装审批宿主时保持原有的警示记录行为。
+
 ## 验证目标选择
 
 `ValidationPlanner` 为每项需求生成成比例的验证契约，`ValidatorResolver` 再根据已注册能力绑定具体验证器。静态 HTML 使用 `validate_static_web`，证明结构、内联语法与配置的静态要求——不证明点击、键盘、玩法或运行时状态。可选的 `validate_browser_app` 用 Playwright 做页面加载、控制台错误、选择器、文本、点击、按键，以及基础 DOM / 文本变化。仅在 Playwright 可用时注册；静态验证仍是回退方案。

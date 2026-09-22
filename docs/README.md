@@ -5,6 +5,7 @@
 | 文档 | 用途 | English |
 | --- | --- | --- |
 | [本地 Web 工作台](ui.md) | 启动、界面区域、任务审查、安全边界和当前范围 | [English](ui.en.md) |
+| [Human-in-the-loop](human-in-the-loop.md) | 警示级操作审批、任务级授权、拒绝与取消语义 | [English](human-in-the-loop.en.md) |
 | [架构说明](architecture.md) | 控制面边界、状态、编排、编辑、安全、上下文和包职责 | [English](architecture.en.md) |
 | [验证核心 V2](validation-core-v2.md) | 验证契约、解析、执行、证据账本和完成条件 | [English](validation-core-v2.en.md) |
 | [Benchmark V1](benchmark-v1.md) | 题库、隐藏 oracle、指标、在线 CLI 和发布门禁 | [English](benchmark-v1.en.md) |

@@ -113,6 +113,23 @@
         </article>
       </div>
 
+      <section class="approval-bar hidden" id="approval-bar" aria-live="assertive">
+        <div class="approval-heading">
+          <span class="approval-icon" aria-hidden="true">!</span>
+          <div>
+            <strong data-i18n="approvalTitle">操作需要批准</strong>
+            <span id="approval-tool">—</span>
+          </div>
+        </div>
+        <p id="approval-reason"></p>
+        <code id="approval-target"></code>
+        <div class="approval-actions">
+          <button class="reject-button" id="reject-approval" type="button" data-i18n="deny">拒绝</button>
+          <button class="secondary-button" id="allow-task-approval" type="button" data-i18n="allowTask">本任务允许</button>
+          <button class="accept-button" id="allow-once-approval" type="button" data-i18n="allowOnce">允许一次</button>
+        </div>
+      </section>
+
       <div class="review-bar hidden" id="review-bar">
         <div>
           <strong data-i18n="reviewTitle">修改等待确认</strong>

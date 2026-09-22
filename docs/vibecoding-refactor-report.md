@@ -6,7 +6,7 @@
 | --- | --- |
 | 发布线 | `v0.2.0` 完成 CLI 产品化；`v0.3.0` 增加本地 Web 工作台；以当前 Git 树为准 |
 | 改动前基线 | `e3510ac` |
-| 最新完整回归 | **689 passed in 23.15s** |
+| 最新完整回归 | **700 passed in 22.78s** |
 | 离线 VibeBench | **15/15**，误完成率 **0** |
 | 在线 R2 smoke | **8/8**，误完成 / 错验证目标 / 步数耗尽均为 **0** |
 | 编译 / diff 检查 | `compileall`、`git diff --check` 通过 |
@@ -270,6 +270,7 @@ python -m minicodex.evaluation.vibebench
 | 精确验证目标门禁 | **673 passed / 20.17s** | 阻止替代 acceptance/regression 命令，保留 diagnostic；离线 VibeBench 15/15 |
 | v0.2.0 产品化 | **682 passed / 24.18s** | 新增 run/chat/doctor、模型配置诊断、wheel、Python 3.11–3.13 CI 与安装验收 |
 | 最小可用 Web UI | **689 passed / 23.15s** | 当前最新；文件树、代码/Diff、Agent Chat、任务状态、Trace 终端与 checkpoint Accept/Reject |
+| Human-in-the-loop 第一阶段 | **700 passed / 22.78s** | `CAUTION` 暂停、允许一次/本任务允许/拒绝、取消与超时、脱敏预览、双语 UI |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 
@@ -277,7 +278,7 @@ CI 只跑确定性 pytest / compileall，不调用真实模型。
 
 ## 9. 真实剩余边界
 
-- 已做一次 30 题真实模型实验、三次 6 题定向门禁、一次 2 题收敛复测及一次精确目标单题确认；尚未做 30 题 3 次重复稳定性实验，也未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
+- 已做一次 30 题真实模型实验、三次 6 题定向门禁、一次 2 题收敛复测及一次精确目标单题确认；30 题 3 次重复稳定性实验按发布安排延后。Human-in-the-loop 已完成真实本地浏览器交互验收，但浏览器验收仍不属于必需 CI 路径
 - 当前已知的在线边界是需求提取可能生成互斥验证契约；更多 step 不能解决这种矛盾，后续需要在计划激活前做契约一致性检查
 - 需求提取与验证目标选择仍依赖模型 / 有限启发式；显式绑定与强度是确定性门禁，但不能自动证明任意文档语义正确
 - 导航有规模界限：session 扫描最多约 1500 文件，约定 / 依赖扫描最多约 80 源文件，TestIndex 最多约 2000 文件
