@@ -10,6 +10,7 @@
 | [验证核心 V2](validation-core-v2.md) | 验证契约、解析、执行、证据账本和完成条件 | [English](validation-core-v2.en.md) |
 | [Benchmark V1](benchmark-v1.md) | 题库、隐藏 oracle、指标、在线 CLI 和发布门禁 | [English](benchmark-v1.en.md) |
 | [重构交付报告](vibecoding-refactor-report.md) | 架构演进、真实模型实验、质量指标和剩余边界 | [English](vibecoding-refactor-report.en.md) |
+| [v0.4.0 发布说明](releases/v0.4.0.zh-CN.md) | Human-in-the-loop 审批、权限模式与审计 Trace | [English](releases/v0.4.0.md) |
 | [v0.3.0 发布说明](releases/v0.3.0.zh-CN.md) | 本地 Web 工作台、任务审查与安全边界 | [English](releases/v0.3.0.md) |
 | [v0.2.0 发布说明](releases/v0.2.0.zh-CN.md) | 首个 Resume-Ready 产品版本的能力与限制 | [English](releases/v0.2.0.md) |
 

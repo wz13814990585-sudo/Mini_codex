@@ -6,6 +6,8 @@ All notable changes to MiniCodex are documented in this file.
 
 ## Unreleased
 
+## 0.4.0 - 2026-09-22
+
 ### Added
 
 - A task-scoped Human-in-the-loop approval coordinator for caution-level operations.
