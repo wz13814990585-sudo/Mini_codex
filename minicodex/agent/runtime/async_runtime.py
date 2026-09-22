@@ -318,7 +318,7 @@ class AsyncAgentTask:
             | None
         ) = None
 
-        self._original_llm = None
+        self._llm_owners = []
 
         self._original_tool_executor = (
             None
@@ -361,6 +361,28 @@ class AsyncAgentTask:
                 .CANCELLED
             )
         )
+
+    @property
+    def result_now(
+        self,
+    ) -> AsyncTaskResult | None:
+        """Return the terminal result without blocking, if one exists."""
+
+        return self._result
+
+    def wait(
+        self,
+        timeout: float | None = None,
+    ) -> AsyncTaskResult | None:
+        """Wait synchronously for completion.
+
+        The Web UI uses this small bridge from a watcher thread. Async callers
+        should continue to use :meth:`result`.
+        """
+
+        if not self._done.wait(timeout):
+            return None
+        return self._result
 
     def _set_status(
         self,
@@ -814,71 +836,33 @@ class AsyncAgentTask:
         self,
     ) -> None:
 
-        self._original_llm = (
-            self.agent.llm
-        )
-
         self._original_tool_executor = (
             self.agent
             .tool_executor
         )
 
-        cancellable_llm = (
-            CancellableLLMClient(
-                client=(
-                    self._original_llm
-                ),
-                token=(
-                    self.token
-                ),
-            )
-        )
-
-        self.agent.llm = (
-            cancellable_llm
-        )
-
-        # Planner and replanner must use the same cancellation
-        # boundary as the main Agent.
-        planner = getattr(
+        # Every task-scoped semantic component needs the same cooperative
+        # boundary. Some use the main model while routing, requirements, and
+        # regression judgment may use separate control models.
+        owners = (
             self.agent,
-            "planner",
-            None,
+            getattr(self.agent, "planner", None),
+            getattr(self.agent, "replanner", None),
+            getattr(self.agent, "task_router", None),
+            getattr(self.agent, "requirements_extractor", None),
+            getattr(self.agent, "semantic_judge", None),
         )
+        self._llm_owners = []
+        for owner in owners:
+            if owner is None or not hasattr(owner, "llm"):
+                continue
+            original = owner.llm
+            if original is None:
+                continue
+            self._llm_owners.append((owner, original))
+            owner.llm = CancellableLLMClient(client=original, token=self.token)
 
-        if (
-            planner
-            is not None
-            and hasattr(
-                planner,
-                "llm",
-            )
-        ):
-
-            planner.llm = (
-                cancellable_llm
-            )
-
-        replanner = getattr(
-            self.agent,
-            "replanner",
-            None,
-        )
-
-        if (
-            replanner
-            is not None
-            and hasattr(
-                replanner,
-                "llm",
-            )
-        ):
-
-            replanner.llm = (
-                cancellable_llm
-            )
-
-        self.agent.runtime = (
+        self.agent.tool_executor = (
             CancellableToolExecutor(
                 executor=(
                     self._original_tool_executor
@@ -897,59 +881,16 @@ class AsyncAgentTask:
         self,
     ) -> None:
 
-        if (
-            self._original_llm
-            is not None
-        ):
-
-            self.agent.llm = (
-                self._original_llm
-            )
-
-            planner = getattr(
-                self.agent,
-                "planner",
-                None,
-            )
-
-            if (
-                planner
-                is not None
-                and hasattr(
-                    planner,
-                    "llm",
-                )
-            ):
-
-                planner.llm = (
-                    self._original_llm
-                )
-
-            replanner = getattr(
-                self.agent,
-                "replanner",
-                None,
-            )
-
-            if (
-                replanner
-                is not None
-                and hasattr(
-                    replanner,
-                    "llm",
-                )
-            ):
-
-                replanner.llm = (
-                    self._original_llm
-                )
+        for owner, original in self._llm_owners:
+            owner.llm = original
+        self._llm_owners = []
 
         if (
             self._original_tool_executor
             is not None
         ):
 
-            self.agent.runtime = (
+            self.agent.tool_executor = (
                 self._original_tool_executor
             )
 

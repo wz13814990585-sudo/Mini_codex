@@ -88,6 +88,19 @@ FAST tasks without a dedicated semantic judge cannot terminate through a fallbac
 
 CLI output levels are `normal`, `verbose`, and `debug`. `normal` hides Harness/provider noise and internal enums. `verbose` keeps execution and phase diagnostics. `debug` also exposes result tokens and post-task trace summaries. The normal final report includes only changed files and validation results.
 
+## Local Web workspace
+
+`minicodex ui` is a thin product shell over the existing Runtime; it does not own a second Agent orchestration path. `MiniCodexUIController` calls `build_agent()` for each task, executes it in the background through `AsyncAgentRunner`, and projects authoritative data directly:
+
+- Task phases, mode, budget, and outcome come from `TaskState`.
+- The activity terminal and counters come from `TraceRecorder`.
+- Worktree status and diffs come from `GitRepositoryInspector`.
+- Reject calls the current Agent's `undo_task()` and restores this task through its sealed checkpoint chain.
+
+Accept only means that the user keeps the current physical changes; it does not fabricate commits, validation evidence, or completion. Reject detects external modifications made after a checkpoint and fails closed instead of using `git reset`. A pending change set blocks the next task until Accept or Reject, preserving the previous task's rollback boundary.
+
+The HTTP layer binds only to a loopback address, requires a random per-session token for mutations, and validates the local Host. Responses enable CSP and disable framing and MIME guessing. File APIs use the shared workspace path boundary, cap preview size, reject binaries and symlinks, and hide `.env`, private keys, and common credential files. The frontend is native HTML, CSS, and JavaScript packaged in the wheel, so it adds neither another service framework nor a frontend build chain.
+
 ## Package ownership
 
 | Package | Responsibility |
@@ -105,6 +118,7 @@ CLI output levels are `normal`, `verbose`, and `debug`. `normal` hides Harness/p
 | `agent/safety/` | Permission policy, fail-closed execution, and process sandbox |
 | `agent/runtime/` | Tool execution, cancellation, async mechanisms, and Git worktree awareness |
 | `agent/observability/` | Execution/token metrics, structured traces, adapters, redaction, and output levels |
+| `ui/` | Local HTTP product shell, task-review session, read-only file APIs, and packaged static interface |
 | `tools/` | Controlled model tools grouped by filesystem, search, editing, execution, validation, planning, and read-only Git capabilities |
 | `utils/` | Domain-independent helpers such as workspace path handling |
 

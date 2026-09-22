@@ -4,9 +4,9 @@
 
 | Item | Result |
 | --- | --- |
-| Branch | Historical refactoring branch `demo_game_try`; `v0.2.0` is merged into `main` |
+| Branch | Historical refactoring branch `demo_game_try`; `v0.2.0` is merged into `main`; UI development branch `codex/minimal-ui` |
 | Pre-change baseline | `e3510ac` |
-| Latest full regression | **682 passed in 24.18s** |
+| Latest full regression | **689 passed in 23.15s** |
 | Offline VibeBench | **15/15**, false-completion rate **0** |
 | Online R2 smoke | **8/8**, with zero false completion, wrong validation target, or step exhaustion |
 | Compile / diff checks | `compileall` and `git diff --check` pass |
@@ -260,6 +260,7 @@ The CI path runs deterministic pytest/compile/package checks and never calls a p
 | Edit-scope provenance | 672 passed | Planner cannot authorize nonexistent paths |
 | Exact validation target gate | 673 passed | Blocks substitute acceptance/regression commands |
 | v0.2.0 product release | **682 passed** | run/chat/doctor, diagnostics, wheel, 3-version CI, install smoke |
+| Minimum viable Web UI | **689 passed** | File tree, code/diff, Agent chat, task state, Trace terminal, and checkpoint Accept/Reject |
 
 ---
 

@@ -119,7 +119,17 @@ minicodex doctor --connect
 minicodex doctor --json
 ```
 
-### 4. 执行任务
+### 4. 启动本地 Web 工作台
+
+```bash
+minicodex ui --workspace /path/to/project
+```
+
+浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、Git Diff，以及任务级 Accept / Reject。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
+
+UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。该命令属于当前源码版本，公开的 `v0.2.0` wheel 尚未包含 UI。
+
+### 5. 使用 CLI 执行任务
 
 执行单个任务后退出：
 
@@ -146,6 +156,7 @@ minicodex --workspace /path/to/project --prompt "修复失败测试"
 
 | 命令 | 用途 | 是否访问模型 |
 | --- | --- | --- |
+| `minicodex ui` | 启动本地 Web 工作台；提交任务后调用同一 Runtime | 启动时否，执行任务时是 |
 | `minicodex run "任务"` | 执行一个任务并退出 | 是 |
 | `minicodex chat` | 启动连续交互会话 | 是 |
 | `minicodex doctor` | 检查 Python、工作区、Git 与模型配置 | 否 |
@@ -182,6 +193,7 @@ python -m pytest -q "$demo_dir/tests"
 ## 支持的工作流
 
 - 信息咨询和只读代码审查
+- 通过本地 Web UI 浏览文件、查看代码和 Diff、跟踪任务并 Accept / Reject
 - 创建、修改、修复和重构 Python / JavaScript / TypeScript / HTML 项目
 - 运行命令、pytest 和项目级测试脚本
 - Flask / FastAPI 服务端点验证
@@ -234,6 +246,7 @@ minicodex/
 ├── doctor.py               # 环境与模型配置诊断
 ├── llm/                    # Provider 配置、客户端与响应类型
 ├── prompts/                # 系统提示词
+├── ui/                     # 本地 Web 工作台、HTTP API 与静态资源
 ├── agent/
 │   ├── orchestration/      # 主循环、工具批次与任务报告
 │   ├── routing/            # 意图、模式与执行策略
@@ -253,7 +266,7 @@ minicodex/
 
 ## 测试与评估
 
-当前产品化提交通过 **682 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
+当前产品化提交通过 **689 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
 
 ```bash
 python -m pytest -q
@@ -286,10 +299,10 @@ python -m minicodex.evaluation.run_benchmark \
 
 ## 当前限制
 
-- CLI 是单进程会话，进程崩溃后不能续跑未完成任务
+- CLI 与 Web UI 都是单进程会话，进程崩溃后不能续跑未完成任务
 - 进行中的任务状态与 checkpoint 只存在于当前进程
 - 浏览器交互验证依赖可选的 Playwright 和 Chromium
-- Alpha 版本尚未提供逐命令人工审批界面
+- Web UI 提供任务级 Accept / Reject，但尚未提供逐命令人工审批
 - 服务工具提供受限进程和回环 HTTP 验证，不是内核级容器隔离
 - 模型、网络、第三方包源和操作系统权限仍可能导致失败
 - 自动验证降低风险，但不能代替人工代码审查与真实部署测试
@@ -299,6 +312,7 @@ python -m minicodex.evaluation.run_benchmark \
 | 文档 | 中文 | English |
 | --- | --- | --- |
 | 文档索引 | [中文](docs/README.md) | [English](docs/README.en.md) |
+| 本地 Web 工作台 | [中文](docs/ui.md) | [English](docs/ui.en.md) |
 | 架构说明 | [中文](docs/architecture.md) | [English](docs/architecture.en.md) |
 | 验证核心 V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |

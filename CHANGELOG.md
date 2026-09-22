@@ -4,6 +4,19 @@
 
 All notable changes to MiniCodex are documented in this file.
 
+## Unreleased
+
+### Added
+
+- A dependency-free local Web workspace launched with `minicodex ui`.
+- File tree and search, code and Git diff views, Agent chat, live task phases, and a Trace activity terminal.
+- Task-level Accept / Reject backed by the existing checkpoint rollback engine.
+- Loopback-only serving, same-origin mutation tokens, Host validation, security headers, and credential-file preview blocking.
+
+### Fixed
+
+- Async cancellation now wraps the Agent's actual `tool_executor` and exposes a synchronous wait bridge for UI task watchers.
+
 ## 0.2.0 - 2026-09-22
 
 ### Added

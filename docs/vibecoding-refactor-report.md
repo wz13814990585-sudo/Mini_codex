@@ -4,9 +4,9 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 分支 | 历史重构分支 `demo_game_try`；`v0.2.0` 已合并到 `main` |
+| 分支 | 历史重构分支 `demo_game_try`；`v0.2.0` 已合并到 `main`；UI 开发分支 `codex/minimal-ui` |
 | 改动前基线 | `e3510ac` |
-| 最新完整回归 | **682 passed in 24.18s** |
+| 最新完整回归 | **689 passed in 23.15s** |
 | 离线 VibeBench | **15/15**，误完成率 **0** |
 | 在线 R2 smoke | **8/8**，误完成 / 错验证目标 / 步数耗尽均为 **0** |
 | 编译 / diff 检查 | `compileall`、`git diff --check` 通过 |
@@ -268,7 +268,8 @@ python -m minicodex.evaluation.vibebench
 | 回归发现顺序修复 | **669 passed / 20.69s** | 当前最新；编辑后先刷新 workspace profile，再生成回归检查 |
 | 路径权限来源收紧 | **672 passed / 20.10s** | 当前最新；Planner 不再授权不存在路径，HTTP scope 锚定现有服务入口；离线 VibeBench 15/15 |
 | 精确验证目标门禁 | **673 passed / 20.17s** | 阻止替代 acceptance/regression 命令，保留 diagnostic；离线 VibeBench 15/15 |
-| v0.2.0 产品化 | **682 passed / 24.18s** | 当前最新；新增 run/chat/doctor、模型配置诊断、wheel、Python 3.11–3.13 CI 与安装验收 |
+| v0.2.0 产品化 | **682 passed / 24.18s** | 新增 run/chat/doctor、模型配置诊断、wheel、Python 3.11–3.13 CI 与安装验收 |
+| 最小可用 Web UI | **689 passed / 23.15s** | 当前最新；文件树、代码/Diff、Agent Chat、任务状态、Trace 终端与 checkpoint Accept/Reject |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 

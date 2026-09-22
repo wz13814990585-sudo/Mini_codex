@@ -119,7 +119,17 @@ Scripts and CI can consume JSON:
 minicodex doctor --json
 ```
 
-### 4. Run a task
+### 4. Start the local Web workspace
+
+```bash
+minicodex ui --workspace /path/to/project
+```
+
+The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, Git diff, and task-level Accept / Reject. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
+
+The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. This command is available in the current source version; the public `v0.2.0` wheel does not include the UI yet.
+
+### 5. Run a task from the CLI
 
 Execute one task and exit:
 
@@ -146,6 +156,7 @@ minicodex --workspace /path/to/project --prompt "Fix the failing tests"
 
 | Command | Purpose | Model access |
 | --- | --- | --- |
+| `minicodex ui` | Start the local Web workspace; submitted tasks use the same Runtime | No at startup; yes when a task runs |
 | `minicodex run "task"` | Execute one task and exit | Yes |
 | `minicodex chat` | Start a continuous interactive session | Yes |
 | `minicodex doctor` | Check Python, workspace, Git, and model configuration | No |
@@ -182,6 +193,7 @@ This flow demonstrates repository inspection, requirement decomposition, code ed
 ## Supported workflows
 
 - Informational questions and read-only code review
+- Browsing files, reviewing code and diffs, tracking tasks, and Accept / Reject through the local Web UI
 - Creating, modifying, fixing, and refactoring Python, JavaScript, TypeScript, and HTML projects
 - Running commands, pytest, and project test scripts
 - Validating Flask and FastAPI endpoints
@@ -234,6 +246,7 @@ minicodex/
 ├── doctor.py               # environment and model configuration diagnostics
 ├── llm/                    # provider configuration, client, and response types
 ├── prompts/                # system prompts
+├── ui/                     # local Web workspace, HTTP API, and static assets
 ├── agent/
 │   ├── orchestration/      # main loop, tool batches, and task reporting
 │   ├── routing/            # intent, modes, and execution policy
@@ -253,7 +266,7 @@ minicodex/
 
 ## Testing and evaluation
 
-The current productization commit passes **682 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
+The current productization commit passes **689 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
 
 ```bash
 python -m pytest -q
@@ -286,10 +299,10 @@ Run the full test suite before submitting a focused change.
 
 ## Current limitations
 
-- The CLI is a single-process session and cannot resume an unfinished task after a crash.
+- Both the CLI and Web UI are single-process sessions and cannot resume an unfinished task after a crash.
 - In-progress task state and checkpoints exist only in the current process.
 - Browser interaction validation requires optional Playwright and Chromium installs.
-- The Alpha release does not yet provide per-command human approval.
+- The Web UI provides task-level Accept / Reject, but not per-command human approval yet.
 - Service tools provide bounded processes and loopback HTTP validation, not kernel-level container isolation.
 - Model, network, package registry, and operating-system conditions can still cause failures.
 - Automated validation reduces risk but does not replace human code review or deployment testing.
@@ -299,6 +312,7 @@ Run the full test suite before submitting a focused change.
 | Document | 中文 | English |
 | --- | --- | --- |
 | Documentation index | [中文](docs/README.md) | [English](docs/README.en.md) |
+| Local Web workspace | [中文](docs/ui.md) | [English](docs/ui.en.md) |
 | Architecture | [中文](docs/architecture.md) | [English](docs/architecture.en.md) |
 | Validation Core V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |

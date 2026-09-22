@@ -160,6 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
     chat = commands.add_parser("chat", help="启动交互式编码会话")
     _add_runtime_options(chat, preserve_parent=True)
 
+    ui = commands.add_parser("ui", help="启动本地 MiniCodex Web 工作台")
+    _add_runtime_options(ui, preserve_parent=True)
+    ui.add_argument("--port", type=int, default=8765,
+                    help="本地 UI 端口（默认：8765；使用 0 自动分配）")
+    ui.add_argument("--no-browser", action="store_true",
+                    help="启动服务但不自动打开浏览器")
+
     doctor = commands.add_parser("doctor", help="检查本机环境与模型配置")
     doctor.add_argument("--workspace", "-w", metavar="PATH",
                         default=argparse.SUPPRESS,
@@ -212,6 +219,25 @@ def main(argv=None) -> int:
         report = diagnose(config, model_config, connect=args.connect)
         print(report.render_json() if args.json else report.render())
         return 0 if report.ready else 1
+
+    if args.command == "ui":
+        from .ui import run_ui
+
+        try:
+            run_ui(
+                config,
+                model_config,
+                port=args.port,
+                output_level=args.output,
+                open_browser=not args.no_browser,
+            )
+        except KeyboardInterrupt:
+            print("\nMiniCodex UI 已停止。", file=sys.stderr)
+            return 130
+        except OSError as exc:
+            print(f"无法启动 MiniCodex UI：{exc}", file=sys.stderr)
+            return 4
+        return 0
 
     prompt = args.task if args.command == "run" else args.prompt
     try:

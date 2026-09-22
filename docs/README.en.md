@@ -4,6 +4,7 @@
 
 | Document | Purpose | 中文 |
 | --- | --- | --- |
+| [Local Web workspace](ui.en.md) | Startup, interface areas, task review, security boundary, and current scope | [中文](ui.md) |
 | [Architecture](architecture.en.md) | Control-plane boundaries, state, orchestration, editing, safety, context, and package ownership | [中文](architecture.md) |
 | [Validation Core V2](validation-core-v2.en.md) | Validation contracts, resolution, execution, evidence ledger, and completion | [中文](validation-core-v2.md) |
 | [Benchmark V1](benchmark-v1.en.md) | Task catalog, hidden oracles, metrics, online CLI, and release gate | [中文](benchmark-v1.md) |

@@ -88,6 +88,19 @@ FAST 任务在没有专用语义评判器时，不会因兜底 `semantic` 契约
 
 CLI 级别为 `normal`、`verbose`、`debug`。`normal` 隐藏 Harness / 提供商噪声与内部枚举。`verbose` 保留执行 / 阶段诊断。`debug` 还会暴露结果 token 与任务后的 trace 摘要。`normal` 最终报告只包含变更文件与验证结果。
 
+## 本地 Web 工作台
+
+`minicodex ui` 是现有 Runtime 之上的薄产品壳，不拥有第二套 Agent 编排逻辑。`MiniCodexUIController` 为每个任务调用 `build_agent()`，通过 `AsyncAgentRunner` 在后台执行，并直接投影以下权威数据：
+
+- 任务阶段、模式、预算和结果来自 `TaskState`
+- 活动终端和计数来自 `TraceRecorder`
+- 工作树状态和 Diff 来自 `GitRepositoryInspector`
+- Reject 调用当前 Agent 的 `undo_task()`，沿密封 checkpoint 链恢复本次编辑
+
+Accept 只表示用户保留当前物理修改；它不会伪造提交、测试证据或完成状态。Reject 检测 checkpoint 后的外部修改并失败关闭，不使用 `git reset`。有待审查的修改在 Accept / Reject 前会阻止下一个任务，避免新任务覆盖旧任务的回滚边界。
+
+HTTP 层只监听回环地址，变更请求要求每个 UI 会话的随机令牌并校验本地 Host；响应启用 CSP、禁止 frame 和 MIME 猜测。文件 API 使用统一工作区路径约束，限制预览大小，拒绝二进制和符号链接，并隐藏 `.env`、私钥及常见凭证文件。前端是打包进 wheel 的原生 HTML / CSS / JavaScript，不引入另一套服务框架或前端构建链。
+
 ## 包职责划分
 
 | 包 | 职责 |
@@ -105,6 +118,7 @@ CLI 级别为 `normal`、`verbose`、`debug`。`normal` 隐藏 Harness / 提供�
 | `agent/safety/` | 权限策略、失败即关闭的执行与进程沙箱 |
 | `agent/runtime/` | 工具执行、取消、异步任务机制与 Git 工作树感知 |
 | `agent/observability/` | 执行 / token 指标、结构化 trace 事件与适配器、输出级别选择 |
+| `ui/` | 本地 HTTP 产品壳、任务审查会话、只读文件 API 与打包静态界面 |
 | `tools/` | 模型可调用能力，按 `filesystem`、`search`、`editing`、`execution`、`validation`、`planning` 与只读 `git` 分组；仅核心类型留在浅层的 `base.py`、`registry.py`、`results.py` |
 | `utils/` | 仅领域无关辅助，包括工作区路径解析 |
 

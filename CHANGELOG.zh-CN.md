@@ -4,6 +4,19 @@
 
 MiniCodex 的重要变化记录在此文件中。
 
+## 未发布
+
+### 新增
+
+- 通过 `minicodex ui` 启动的无额外依赖本地 Web 工作台。
+- 文件树与搜索、代码和 Git Diff 查看、Agent 对话、实时任务阶段与 Trace 活动终端。
+- 复用现有 checkpoint rollback 引擎的任务级 Accept / Reject。
+- 仅回环地址监听、同源变更令牌、Host 校验、安全响应头与凭证文件预览封锁。
+
+### 修复
+
+- 异步取消现在包装 Agent 实际使用的 `tool_executor`，并为 UI 任务监听器提供同步等待接口。
+
 ## 0.2.0 - 2026-09-22
 
 ### 新增
