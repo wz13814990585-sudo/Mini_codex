@@ -6,6 +6,13 @@ All notable changes to MiniCodex are documented in this file.
 
 ## Unreleased
 
+## 0.4.1 - 2026-09-22
+
+### Fixed
+
+- Preserve the declared validation purpose when normalizing semantic, static Web, and browser validator results. A passing regression check can now become current-revision proof and close the completion gate instead of exhausting Agent steps.
+- Add deterministic regression tests shaped like the parser-extraction and Web-script-extraction cases that exposed this bug.
+
 ## 0.4.0 - 2026-09-22
 
 ### Added

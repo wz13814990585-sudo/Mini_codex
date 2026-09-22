@@ -11,7 +11,7 @@ MiniCodex 是一个运行在本地代码仓库上的自主编程 Agent。它使�
 
 它的核心边界是：**模型负责理解与决策，确定性 Harness 负责事实、权限、安全、执行、验证、恢复和最终完成判定。** 模型不能仅靠回复“已完成”结束修改任务。
 
-> 当前公开版本：[`v0.4.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.0)（Alpha）。请先在已提交或已备份的工作区中使用。
+> 当前公开版本：[`v0.4.1`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.1)（Alpha）。请先在已提交或已备份的工作区中使用。
 
 ## 为什么是 MiniCodex
 
@@ -74,11 +74,11 @@ py -3.11 -m venv .venv
 python -m pip install -e .
 ```
 
-也可以直接安装 `v0.4.0` wheel：
+也可以直接安装 `v0.4.1` wheel：
 
 ```bash
 python -m pip install \
-  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.4.0/mini_codex-0.4.0-py3-none-any.whl
+  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.4.1/mini_codex-0.4.1-py3-none-any.whl
 ```
 
 开发和测试依赖：
@@ -267,7 +267,7 @@ minicodex/
 
 ## 测试与评估
 
-当前开发提交通过 **708 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
+当前开发提交通过 **710 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
 
 ```bash
 python -m pytest -q
@@ -319,6 +319,7 @@ python -m minicodex.evaluation.run_benchmark \
 | 验证核心 V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |
 | 重构交付报告 | [中文](docs/vibecoding-refactor-report.md) | [English](docs/vibecoding-refactor-report.en.md) |
+| v0.4.1 Release notes | [中文](docs/releases/v0.4.1.zh-CN.md) | [English](docs/releases/v0.4.1.md) |
 | v0.4.0 Release notes | [中文](docs/releases/v0.4.0.zh-CN.md) | [English](docs/releases/v0.4.0.md) |
 | v0.3.0 Release notes | [中文](docs/releases/v0.3.0.zh-CN.md) | [English](docs/releases/v0.3.0.md) |
 | v0.2.0 Release notes | [中文](docs/releases/v0.2.0.zh-CN.md) | [English](docs/releases/v0.2.0.md) |
