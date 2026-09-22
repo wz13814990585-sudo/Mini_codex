@@ -182,6 +182,34 @@ async def test_async_agent_task_completes():
         is False
     )
 
+def test_async_task_sync_wait_and_tool_boundary_restoration():
+    class BoundaryAgent(FakeAgent):
+        def __init__(self):
+            super().__init__()
+            self.observed_executor = None
+            self.control_llm = SimpleNamespace()
+            self.task_router = SimpleNamespace(llm=self.control_llm)
+            self.observed_control_llm = None
+
+        def run(self, user_input, use_planning=True):
+            self.observed_executor = type(self.tool_executor).__name__
+            self.observed_control_llm = type(self.task_router.llm).__name__
+            return super().run(user_input, use_planning=use_planning)
+
+    agent = BoundaryAgent()
+    original_executor = agent.tool_executor
+    task = AsyncAgentRunner(agent=agent).start("sync wait")
+
+    result = task.wait(timeout=2)
+
+    assert result is not None
+    assert result.status == AsyncTaskStatus.COMPLETED
+    assert task.result_now == result
+    assert agent.observed_executor == "CancellableToolExecutor"
+    assert agent.observed_control_llm == "CancellableLLMClient"
+    assert agent.tool_executor is original_executor
+    assert agent.task_router.llm is agent.control_llm
+
 
 # =============================================================
 # Streaming

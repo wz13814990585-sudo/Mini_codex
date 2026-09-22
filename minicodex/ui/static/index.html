@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="minicodex-token" content="__MINICODEX_TOKEN__">
+  <title>MiniCodex Workspace</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <div>
+        <strong>MiniCodex</strong>
+        <span class="brand-subtitle">Workspace Agent</span>
+      </div>
+    </div>
+    <div class="workspace-meta">
+      <span class="status-dot" id="model-dot"></span>
+      <span id="workspace-name">Loading workspace…</span>
+      <span class="branch-pill" id="branch-name">—</span>
+    </div>
+    <div class="top-actions">
+      <button class="ghost-button" id="language-toggle" type="button">EN</button>
+      <span class="version" id="version">v—</span>
+    </div>
+  </header>
+
+  <main class="workspace-grid">
+    <aside class="file-panel panel">
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow" data-i18n="workspace">WORKSPACE</span>
+          <h2 data-i18n="files">文件</h2>
+        </div>
+        <button class="icon-button" id="refresh-tree" type="button" aria-label="Refresh files">↻</button>
+      </div>
+      <label class="search-box">
+        <span aria-hidden="true">⌕</span>
+        <input id="file-filter" type="search" placeholder="搜索文件" data-i18n-placeholder="searchFiles">
+      </label>
+      <nav class="file-tree" id="file-tree" aria-label="Workspace files"></nav>
+    </aside>
+
+    <section class="workbench panel">
+      <div class="editor-toolbar">
+        <div class="view-tabs" role="tablist">
+          <button class="view-tab active" id="code-tab" type="button" role="tab" data-i18n="code">代码</button>
+          <button class="view-tab" id="diff-tab" type="button" role="tab" data-i18n="diff">变更</button>
+        </div>
+        <span class="active-path" id="active-path" title="">README.md</span>
+        <button class="icon-button" id="refresh-view" type="button" aria-label="Refresh view">↻</button>
+      </div>
+      <div class="editor" id="editor">
+        <div class="empty-state" id="editor-empty">
+          <span class="empty-glyph">⌘</span>
+          <strong data-i18n="selectFile">选择一个文件开始查看</strong>
+          <span data-i18n="selectFileHint">任务运行后可切换到 Diff 审查修改</span>
+        </div>
+        <pre class="code-view hidden" id="code-view" tabindex="0"><code id="code-content"></code></pre>
+      </div>
+
+      <section class="terminal-panel">
+        <div class="terminal-heading">
+          <div class="terminal-title">
+            <span class="terminal-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <strong data-i18n="activity">运行活动</strong>
+          </div>
+          <div class="terminal-stats">
+            <span id="tool-count">0 tools</span>
+            <span id="validation-count">0 checks</span>
+            <button class="text-button" id="clear-terminal" type="button" data-i18n="clear">清空</button>
+          </div>
+        </div>
+        <div class="terminal-output" id="terminal-output" aria-live="polite">
+          <div class="terminal-line muted"><span>›</span> <span data-i18n="ready">等待任务…</span></div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="agent-panel panel">
+      <div class="agent-heading">
+        <div>
+          <span class="eyebrow">AGENT</span>
+          <h2 data-i18n="agentChat">Agent 对话</h2>
+        </div>
+        <span class="task-badge idle" id="task-badge" data-i18n="idle">空闲</span>
+      </div>
+
+      <div class="phase-track" id="phase-track" aria-label="Task phases">
+        <span data-phase="inspecting" data-i18n="inspect">检查</span>
+        <i></i>
+        <span data-phase="acting" data-i18n="act">执行</span>
+        <i></i>
+        <span data-phase="validating" data-i18n="validate">验证</span>
+        <i></i>
+        <span data-phase="done" data-i18n="done">完成</span>
+      </div>
+
+      <div class="config-warning hidden" id="config-warning">
+        <strong data-i18n="configNeeded">需要配置模型</strong>
+        <span id="config-problem"></span>
+      </div>
+
+      <div class="chat-log" id="chat-log">
+        <article class="message assistant welcome-message">
+          <div class="message-avatar">M</div>
+          <div class="message-body">
+            <strong>MiniCodex</strong>
+            <p data-i18n="welcome">描述你想完成的代码任务。我会先检查仓库，再编辑、测试并给出可审查的 Diff。</p>
+          </div>
+        </article>
+      </div>
+
+      <div class="review-bar hidden" id="review-bar">
+        <div>
+          <strong data-i18n="reviewTitle">修改等待确认</strong>
+          <span data-i18n="reviewHint">Accept 保留修改，Reject 安全回滚本次任务</span>
+        </div>
+        <div class="review-actions">
+          <button class="reject-button" id="reject-task" type="button" data-i18n="reject">Reject</button>
+          <button class="accept-button" id="accept-task" type="button" data-i18n="accept">Accept</button>
+        </div>
+      </div>
+
+      <form class="composer" id="task-form">
+        <textarea id="task-prompt" rows="4" placeholder="例如：为用户 API 添加分页，并补充测试" data-i18n-placeholder="promptPlaceholder"></textarea>
+        <div class="composer-footer">
+          <span class="composer-hint" data-i18n="submitHint">⌘/Ctrl + Enter 发送</span>
+          <button class="cancel-button hidden" id="cancel-task" type="button" data-i18n="stop">停止</button>
+          <button class="run-button" id="run-task" type="submit">
+            <span data-i18n="run">运行任务</span><span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </form>
+    </aside>
+  </main>
+
+  <div class="toast-region" id="toast-region" aria-live="assertive"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

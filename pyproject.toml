@@ -55,5 +55,8 @@ exclude = ["minicodex.tests*"]
 [tool.setuptools]
 include-package-data = false
 
+[tool.setuptools.package-data]
+"minicodex.ui" = ["static/*.html", "static/*.css", "static/*.js"]
+
 [tool.setuptools.dynamic]
 version = { attr = "minicodex.__version__" }
