@@ -80,3 +80,50 @@ def test_informational_questions_do_not_require_coding_action(prompt):
 
 def test_explicit_change_request_requires_coding_action():
     assert TaskRouter().route("Please fix app.py now").requires_coding_action is True
+
+
+@pytest.mark.parametrize("prompt", [
+    "创建一个贪吃蛇小游戏",
+    "Build a browser game",
+    "创建一个网页",
+])
+def test_unspecified_web_creation_gets_a_conventional_target(prompt):
+    route = TaskRouter().route(prompt)
+    assert route.requires_coding_action
+    assert route.target_paths == ("index.html",)
+
+    from ..agent.planning.requirements import RequirementsExtractor
+    requirements = RequirementsExtractor().extract(
+        prompt, mode=route.mode, target_paths=route.target_paths,
+    )
+    assert requirements.items[0].contract.path == "index.html"
+
+
+def test_explicit_creation_path_wins_over_default():
+    route = TaskRouter().route("创建一个贪吃蛇游戏，保存到 games/snake.html")
+    assert route.target_paths == ("games/snake.html",)
+
+
+def test_directory_hint_is_preserved_for_unspecified_web_filename():
+    route = TaskRouter().route("Create a Snake game under try_code")
+    assert route.target_paths == ("try_code/index.html",)
+
+
+@pytest.mark.parametrize("prompt", [
+    "创建一个 Python 命令行贪吃蛇游戏",
+    "创建一个 Python 贪吃蛇游戏",
+])
+def test_python_game_does_not_get_a_browser_target(prompt):
+    route = TaskRouter().route(prompt)
+    assert route.target_paths == ()
+
+
+def test_external_workspace_limit_does_not_make_creation_read_only():
+    route = TaskRouter().route("创建一个网页，不要修改工作区外的文件")
+    assert route.requires_coding_action
+    assert route.target_paths == ("index.html",)
+
+
+def test_global_no_edit_still_forces_read_only():
+    route = TaskRouter().route("创建一个网页，但不要修改任何文件")
+    assert not route.requires_coding_action

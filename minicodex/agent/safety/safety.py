@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import shlex
 
+from ...utils.task_constraints import has_global_no_edit_constraint
+
 
 # =============================================================
 # Safety Levels
@@ -269,10 +271,7 @@ class SafetyPolicy:
         """Derive non-negotiable permissions from raw user text, not LLM output."""
         text = str(user_request or "")
         self.user_request = text
-        explicit_no_edit = bool(re.search(
-            r"\b(?:do not|don't|dont|without)\s+(?:change|modify|edit|write)(?:ing)?\b|"
-            r"(?:不要|无需|不需要)(?:修改|改动|编辑|写入)", text, re.IGNORECASE,
-        ))
+        explicit_no_edit = has_global_no_edit_constraint(text)
         routed = getattr(routed_intent, "value", routed_intent)
         self.edits_authorized = not explicit_no_edit and routed == "modify"
         self.test_changes_authorized = bool(re.search(

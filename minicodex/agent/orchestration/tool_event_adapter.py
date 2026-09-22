@@ -178,6 +178,25 @@ class ToolEventAdapter:
                 )
             )
         self._append_observation(messages, tool_call.id, result)
+        safety = result.data.get("safety") or {}
+        if (
+            is_edit
+            and not result.success
+            and result.data.get("failure_type") == "safety_blocked"
+            and safety.get("rule") == "task_no_edit_constraint"
+        ):
+            # This is a task-level prohibition, not an edit that another
+            # filename or another model turn can repair. Stop after the first
+            # denial instead of spending the entire step budget retrying it.
+            reason = str(result.error or "当前任务未授权修改仓库。")
+            signal = ProgressSignal(ProgressKind.NONE, "任务级编辑权限已拒绝。")
+            signals.append(signal)
+            self._observe(agent, tool_name, signal)
+            self._close(messages, tool_calls[index + 1 :], "任务级编辑权限已拒绝", reason)
+            return ToolBatchResult(
+                tuple(runs), tuple(evidence_items), tuple(signals),
+                early_stop=reason, reason_code=ReasonCode.BLOCKED,
+            )
         if metrics is not None:
             telemetry = result.data.get("semantic_judge_telemetry")
             if telemetry:

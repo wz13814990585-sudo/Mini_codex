@@ -319,13 +319,17 @@ function schedulePoll(delay) {
 
 function renderDynamicState(payload) {
   const git = payload.git || {};
+  const events = payload.events || [];
   document.getElementById('branch-name').textContent = git.branch || (git.is_repo ? 'detached' : 'no git');
   const changed = payload.task_git && payload.task_git.agent_current_changed_files;
   state.changedPaths = changed || [];
   renderTask(payload.task, payload.runtime);
   renderApproval(payload.approval);
   renderMessages(payload.messages || []);
-  appendEvents(payload.events || []);
+  appendEvents(events);
+  // New files should become visible while the Agent is still working, not
+  // only after the task finishes and opens a reviewable diff.
+  if (events.some((event) => event.event_type === 'edit_applied')) loadTree();
   const summary = payload.trace_summary || {};
   document.getElementById('tool-count').textContent = `${summary.tool_calls || 0} tools`;
   document.getElementById('validation-count').textContent = `${summary.validation_runs || 0} checks`;

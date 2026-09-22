@@ -7,6 +7,7 @@ import re
 import time
 
 from ...utils.paths import normalize_repo_path
+from ...utils.task_constraints import has_global_no_edit_constraint
 from .structured_output import StructuredOutputError, parse_bounded_json_object
 from .execution_mode import ExecutionMode
 from .intent import TaskIntent
@@ -86,10 +87,6 @@ class TaskRouter:
         r"[\w.-]+\.(?:py|html|css|js|ts|md|toml|json|ya?ml)|README(?:\.md)?)",
         re.IGNORECASE,
     )
-    _NO_EDIT = re.compile(
-        r"\b(?:do not|don't|dont|without)\s+(?:change|modify|edit|write)(?:ing)?\b|"
-        r"(?:不要|无需|不需要)(?:修改|改动|编辑|写入)", re.IGNORECASE,
-    )
     _HOW_TO = re.compile(
         r"^\s*(?:explain\s+how|tell me how|how (?:can|do|should) i)|"
         r"^\s*(?:请?(?:解释|告诉我).*(?:如何|怎么)|分析一下.*为什么)", re.IGNORECASE,
@@ -104,6 +101,10 @@ class TaskRouter:
         del repo_state
         text = str(user_request or "").strip()
         targets = tuple(dict.fromkeys(self._extract_paths(text)))
+        if not targets:
+            inferred = self._default_creation_target(text)
+            if inferred:
+                targets = (inferred,)
         if self.llm is None:
             self.last_telemetry = RoutingTelemetry(fallback_count=1)
             return self._fallback(text, targets, reason="控制模型当前不可用")
@@ -168,11 +169,11 @@ class TaskRouter:
     def _fallback(self, text: str, targets: tuple[str, ...], *, reason: str) -> RoutingDecision:
         """One conservative fallback; it is never the primary semantic path."""
         lowered = text.casefold()
-        no_edit = bool(self._NO_EDIT.search(text))
+        no_edit = has_global_no_edit_constraint(text)
         inspect = any(x in lowered for x in ("inspect", "review", "analyze", "analyse", "检查", "分析", "审查"))
         modify = bool(re.search(
-            r"\b(?:create|add|update|fix|implement|refactor|change|delete|rename|improve|perform|set)\b|"
-            r"^\s*do\s+(?:a|the|this)\b|(?:创建|添加|修改|修复|重构|实现|删除|优化|完成)",
+            r"\b(?:create|build|make|develop|add|update|fix|implement|refactor|change|delete|rename|improve|perform|set)\b|"
+            r"^\s*do\s+(?:a|the|this)\b|(?:创建|制作|开发|做一个|添加|修改|修复|重构|实现|删除|优化|完成)",
             lowered, re.IGNORECASE,
         ))
         if no_edit:
@@ -219,3 +220,33 @@ class TaskRouter:
             if path and not path.startswith("../"):
                 paths.append(path)
         return paths
+
+    @staticmethod
+    def _default_creation_target(text: str) -> str:
+        """Choose a conventional entry file for an unspecified web creation.
+
+        The target is an initial implementation location, not a replacement
+        for an explicit user path. A browser game/page can be created in an
+        empty repository without requiring the user to know file names first.
+        """
+
+        if not re.search(
+            r"\b(?:create|build|make|implement)\b|创建|制作|开发|实现|做一个",
+            text, re.IGNORECASE,
+        ):
+            return ""
+        if not re.search(
+            r"\b(?:web|browser|html|page|site|game|snake)\b|"
+            r"网页|网站|浏览器|页面|前端|游戏|贪吃蛇",
+            text, re.IGNORECASE,
+        ):
+            return ""
+        if re.search(r"\b(?:python|pygame|terminal|console|tkinter|flask|fastapi|django)\b|命令行|终端游戏|控制台游戏", text, re.IGNORECASE):
+            return ""
+        directory = re.search(
+            r"\b(?:under|inside)\s+([A-Za-z_][\w.-]*)\b|"
+            r"在\s*(?:文件|目录)?\s*([A-Za-z_][\w.-]*)\s*(?:目录)?\s*(?:中|下|内)",
+            text, re.IGNORECASE,
+        )
+        folder = next((part for part in directory.groups() if part), "") if directory else ""
+        return f"{folder}/index.html" if folder else "index.html"

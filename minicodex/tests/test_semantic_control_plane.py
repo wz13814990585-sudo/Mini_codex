@@ -714,6 +714,40 @@ def test_raw_no_edit_constraint_overrides_wrong_semantic_route(tmp_path):
     assert decision.rule == "task_no_edit_constraint"
 
 
+@pytest.mark.parametrize("scope", [
+    "不要修改工作区外的文件",
+    "不要修改当前工作区以外的文件",
+    "do not modify files outside the workspace",
+])
+def test_external_workspace_limit_keeps_internal_edit_authorized(tmp_path, scope):
+    policy = SafetyPolicy(workspace=tmp_path)
+    policy.begin_task(f"创建 index.html。{scope}", routed_intent=TaskIntent.MODIFY)
+    decision = policy.assess("write_file", {"path": "index.html", "content": "ok"})
+    assert decision.allowed is True
+    outside = policy.assess("write_file", {"path": "../outside.html", "content": "no"})
+    assert outside.rule == "workspace_escape"
+
+
+def test_global_no_edit_survives_external_workspace_limit(tmp_path):
+    policy = SafetyPolicy(workspace=tmp_path)
+    policy.begin_task(
+        "不要修改工作区外的文件，也不要修改工作区内的任何文件",
+        routed_intent=TaskIntent.MODIFY,
+    )
+    decision = policy.assess("write_file", {"path": "index.html", "content": "ok"})
+    assert decision.rule == "task_no_edit_constraint"
+
+
+def test_external_and_internal_limits_in_one_clause_still_block_edit(tmp_path):
+    policy = SafetyPolicy(workspace=tmp_path)
+    policy.begin_task(
+        "不要修改工作区外的文件或仓库里的任何文件",
+        routed_intent=TaskIntent.MODIFY,
+    )
+    decision = policy.assess("write_file", {"path": "index.html", "content": "ok"})
+    assert decision.rule == "task_no_edit_constraint"
+
+
 def test_anti_test_gaming_blocks_skip_without_legitimate_test_request(tmp_path):
     policy = SafetyPolicy(workspace=tmp_path)
     policy.begin_task("Fix auth.py", routed_intent=TaskIntent.MODIFY)

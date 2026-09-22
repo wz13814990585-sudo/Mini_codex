@@ -262,7 +262,7 @@ class ValidatorResolver:
         if isinstance(contract, SemanticContract):
             if not contract.path:
                 return self._unresolved(check, ResolutionStatus.TARGET_UNRESOLVED,
-                                        "语义契约缺少目标路径。")
+                                        "无法确定要创建或验证的文件。请在任务中指定文件名，例如 index.html。")
             return self._tool(registry, check, "validation.semantic", "validate_semantic",
                               {**common, "path": contract.path, "claim": contract.claim},
                               contract.path)
