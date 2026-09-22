@@ -1,5 +1,7 @@
 # MiniCodex Benchmark V1
 
+**简体中文** · [English](benchmark-v1.en.md)
+
 `minicodex-bench-v1-r2` 是固定的、需显式启用的仓库编码基准，用于对比可信的简单 baseline 与当前 MiniCodex 控制面。R2 修正了会拒绝标准 TypeScript 类型注解、`querySelector` 与 DOM `onclick` 的过窄 oracle。
 它复用 `EvaluationHarness`、`EvaluationCheckRunner`、运行时 trace 与 `ExecutionMetrics`，**不是**另一套评测框架。
 
@@ -97,8 +99,9 @@ benchmark_results/minicodex-bench-v1-r2/<experiment-id>/
 先在隔离的真实仓库副本上用单任务模式执行任务，人工检查 diff、测试结果与 trace：
 
 ```bash
-minicodex --workspace /path/to/repository-copy \
-  --prompt "实现一个边界清晰、可验证的真实需求" --output verbose
+minicodex run "实现一个边界清晰、可验证的真实需求" \
+  --workspace /path/to/repository-copy \
+  --output verbose
 ```
 
 完整 30 题在线结果生成后，再运行发布门禁：

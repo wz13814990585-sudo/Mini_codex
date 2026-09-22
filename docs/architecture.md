@@ -1,5 +1,7 @@
 # MiniCodex Vibecoding 架构说明
 
+**简体中文** · [English](architecture.en.md)
+
 MiniCodex 遵循同一条控制面边界：**语义理解与策略判断属于有界 LLM 调用；事实状态、安全、执行、策略、恢复与完成判定属于确定性 Harness。**
 
 需求—证据重构及其验证结果见 [交付报告](vibecoding-refactor-report.md)。可复用的 `WorkspaceSession` 保存有界的项目知识；每次请求都会获得全新的任务局部运行时、需求、验证账本、恢复与计划状态。
@@ -60,7 +62,7 @@ MiniCodex 遵循同一条控制面边界：**语义理解与策略判断属于�
 
 ## 验证目标选择
 
-`ValidationSelector` 推荐一个成比例的验证器。静态 HTML 使用 `validate_static_web`，证明结构、内联语法与配置的静态要求——不证明点击、键盘、玩法或运行时状态。可选的 `validate_browser_app` 用 Playwright 做页面加载、控制台错误、选择器、文本、点击、按键，以及基础 DOM / 文本变化。仅在 Playwright 可用时注册；静态验证仍是回退方案。
+`ValidationPlanner` 为每项需求生成成比例的验证契约，`ValidatorResolver` 再根据已注册能力绑定具体验证器。静态 HTML 使用 `validate_static_web`，证明结构、内联语法与配置的静态要求——不证明点击、键盘、玩法或运行时状态。可选的 `validate_browser_app` 用 Playwright 做页面加载、控制台错误、选择器、文本、点击、按键，以及基础 DOM / 文本变化。仅在 Playwright 可用时注册；静态验证仍是回退方案。
 
 带修订缓存、基于 AST 的 `TestIndex` 把被导入 / 引用的 Python 源模块映射到测试。`TestTargetResolver` 按精确 basename、导入匹配、同包测试、更广测试目录排序。只有真正聚焦的候选才标为验收；包级 / 宽范围候选仍是回归。源模块绝不会当作 pytest 验收目标。`run_tests` 从失败 node ID 与 traceback / 错误位置发出保守的仓库相对 `failure_paths`，以及有界失败指纹。回归基线证据区分：预先存在、持续存在、已解决、新引入。工具执行失败与超时是不确定的环境证据，不是自动代码失败。
 

@@ -1,10 +1,12 @@
 # Vibecoding 重构交付报告
 
+**简体中文** · [English](vibecoding-refactor-report.en.md)
+
 | 项目 | 说明 |
 | --- | --- |
-| 分支 | `demo_game_try` |
+| 分支 | 历史重构分支 `demo_game_try`；`v0.2.0` 已合并到 `main` |
 | 改动前基线 | `e3510ac` |
-| 最新完整回归 | **654 passed in 21.63s** |
+| 最新完整回归 | **682 passed in 24.18s** |
 | 离线 VibeBench | **15/15**，误完成率 **0** |
 | 在线 R2 smoke | **8/8**，误完成 / 错验证目标 / 步数耗尽均为 **0** |
 | 编译 / diff 检查 | `compileall`、`git diff --check` 通过 |
@@ -26,7 +28,6 @@
 - [minicodex/agent/runtime/managed_process.py](../minicodex/agent/runtime/managed_process.py)
 - [minicodex/agent/validation/decision_policy.py](../minicodex/agent/validation/decision_policy.py)
 - [minicodex/agent/validation/evidence.py](../minicodex/agent/validation/evidence.py)
-- [minicodex/agent/validation/ladder.py](../minicodex/agent/validation/ladder.py)
 - [minicodex/agent/validation/ledger.py](../minicodex/agent/validation/ledger.py)
 - [minicodex/agent/validation/plan.py](../minicodex/agent/validation/plan.py)
 - [minicodex/evaluation/vibebench.py](../minicodex/evaluation/vibebench.py)
@@ -34,7 +35,7 @@
 - [minicodex/tests/test_vibecoding_runtime.py](../minicodex/tests/test_vibecoding_runtime.py)
 - [minicodex/tools/validation/validate_service.py](../minicodex/tools/validation/validate_service.py)
 
-后续轮次还新增了：`validator_resolver.py`、`tool_result_handlers.py`、`real_vibebench.py`、`workspace.py`、`verification_spec.py`、`validate_semantic.py`、`real_repo_bench.py` 等（以当前 Git 树为准）。
+后续轮次还新增了：`validator_resolver.py`、`contracts.py`、`tool_result_handlers.py`、`real_vibebench.py`、`workspace.py`、`validate_semantic.py`、`real_repo_bench.py` 等（以当前 Git 树为准）。
 
 ### 修改
 
@@ -157,7 +158,7 @@ DiffQualityGate 会检查：
 
 ### Verification Ladder
 
-`validation/ladder.py` 表达七级强度：结构 → lint / typecheck → 针对性测试 → 相关回归 → build → 运行时 → 全量回归。
+`validation/plan.py` 中的 `EvidenceStrength` 与验证 purpose / scope 共同表达分级证据：结构 → lint / typecheck → 针对性测试 → 相关回归 → build → 运行时 → 全量回归。
 
 - Planner 将观察到的 lint / build 命令加入 required 检查
 - 交互 HTML / game 需求要求 browser runtime 强度
@@ -208,7 +209,9 @@ DiffQualityGate 会检查：
 
 第二轮 6 题定向在线复测基于 commit `0ec76cf`，结果提升为 4/6。三个已修复的 Flask/折扣场景通过；Node test-script 从 17 agent step、88,898 tokens 降为 2 step、6,189 tokens，证明 workspace profile 刷新顺序修复生效。剩余 `fix_flask_missing_query` 因 Planner/requirements 臆造 Express 文件而在错误技术栈耗尽 20 步；`followup_calculator_subtract` 的 Python 契约与 oracle 均通过，但 Planner 把不存在的 `calculator.js` 重新注入 relevant paths，造成 wrong-file。当前已将 Planner 路径降级为“仅可引用已有文件”的建议，并让 HTTP 契约从现有应用入口/路由源码确定编辑范围；用户显式路径和 typed file contract 仍可授权创建新文件。结果位于 `benchmark_results/minicodex-bench-v1-r2/product_r2_targeted_after_boundary_fix_v2/`；该最新路径权限修复尚未在线复测。
 
-第三轮仅复测上述两个失败场景，基于 commit `167ef58` 获得 2/2，隐藏 oracle、wrong-file、越权编辑和 step exhaustion 均为 0。`fix_flask_missing_query` 只编辑 `app.py`，2 step / 6,138 tokens；`followup_calculator_subtract` 只编辑两个真实 Python 包文件，功能通过，但在包导出检查失败后运行了两个仅验证 service 模块的自选 acceptance 命令，因此仍产生一次 wrong-validation-target 信号并使用 7 step / 24,286 tokens。当前执行边界已增加精确验证目标门禁：Harness 存在 resolved validator 时，acceptance/regression 调用必须与其完全一致；自选诊断仍可使用 `purpose=diagnostic`。结果位于 `benchmark_results/minicodex-bench-v1-r2/product_r2_targeted_scope_fix_v3/`；该最新目标门禁尚未在线复测。
+第三轮仅复测上述两个失败场景，基于 commit `167ef58` 获得 2/2，隐藏 oracle、wrong-file、越权编辑和 step exhaustion 均为 0。`fix_flask_missing_query` 只编辑 `app.py`，2 step / 6,138 tokens；`followup_calculator_subtract` 只编辑两个真实 Python 包文件，功能通过，但在包导出检查失败后运行了两个仅验证 service 模块的自选 acceptance 命令，因此仍产生一次 wrong-validation-target 信号并使用 7 step / 24,286 tokens。随后执行边界增加精确验证目标门禁：Harness 存在 resolved validator 时，acceptance/regression 调用必须与其完全一致；自选诊断仍可使用 `purpose=diagnostic`。结果位于 `benchmark_results/minicodex-bench-v1-r2/product_r2_targeted_scope_fix_v3/`。
+
+精确目标门禁在 commit `ae2d98e` 上对 `followup_calculator_subtract` 做了单题在线确认：隐藏 oracle 通过，wrong-validation-target、错误文件、越权编辑、失败工具调用和 ghost step 均为 0；步数从 7 降到 4，tokens 从 24,286 降到 12,927。随后相同 commit 的 6 题门禁得到 5/6，五个场景全部通过且错误目标率为 0；唯一失败 `modify_discount_bounds` 来自需求模型生成的两个互斥契约——同一个越界比例既要求返回 0，又要求抛出 `ValueError`——最终安全耗尽而没有误完成。这证明精确目标绑定已生效，也暴露了仍需处理的上游契约一致性问题。
 
 ### 行动效率指标
 
@@ -227,9 +230,10 @@ DiffQualityGate 会检查：
 - `ValidationCheck.spec` 使用 typed union：文件、测试、命令、HTTP、浏览器、语义
 - Browser spec 必须提供 selector、动作和 post-action assertion
 - `validation.semantic` 先做确定性字面内容证明，再使用无工具、受限 JSON judge
-- `.minicodex` 被 RepoMap 忽略并受 Safety 保护，不能作为普通 edit target
+- 运行时数据保存在 `~/.minicodex/workspaces/`；目标仓库中若存在 `.minicodex`，仍会被 RepoMap 忽略并受 Safety 保护，不能作为普通 edit target
 - 目标项目优先使用其 `.venv` / `venv`；识别 `uv.lock` / `poetry.lock`
 - 验证循环在 prompt 渲染前准备当前 required check；`TARGET_UNRESOLVED` 仅允许一次限定侦察
+- `v0.2.0` 增加 run/chat/doctor、离线与 JSON 诊断、provider-neutral 环境变量、wheel 打包及 Python 3.11–3.13 CI
 
 ---
 
@@ -263,7 +267,8 @@ python -m minicodex.evaluation.vibebench
 | 定向 R2 反馈修复 | **668 passed / 24.36s** | backend 元数据隔离、混合幻觉路径清理、服务进程竞态回收；离线 VibeBench 15/15 |
 | 回归发现顺序修复 | **669 passed / 20.69s** | 当前最新；编辑后先刷新 workspace profile，再生成回归检查 |
 | 路径权限来源收紧 | **672 passed / 20.10s** | 当前最新；Planner 不再授权不存在路径，HTTP scope 锚定现有服务入口；离线 VibeBench 15/15 |
-| 精确验证目标门禁 | **673 passed / 20.17s** | 当前最新；阻止替代 acceptance/regression 命令，保留 diagnostic；离线 VibeBench 15/15 |
+| 精确验证目标门禁 | **673 passed / 20.17s** | 阻止替代 acceptance/regression 命令，保留 diagnostic；离线 VibeBench 15/15 |
+| v0.2.0 产品化 | **682 passed / 24.18s** | 当前最新；新增 run/chat/doctor、模型配置诊断、wheel、Python 3.11–3.13 CI 与安装验收 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 
@@ -271,7 +276,8 @@ CI 只跑确定性 pytest / compileall，不调用真实模型。
 
 ## 9. 真实剩余边界
 
-- 已做一次 30 题真实模型实验、两次 6 题定向复测及一次 2 题收敛复测；最新精确验证目标门禁尚未在线复测，也尚未做 3 次重复稳定性实验；未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
+- 已做一次 30 题真实模型实验、三次 6 题定向门禁、一次 2 题收敛复测及一次精确目标单题确认；尚未做 30 题 3 次重复稳定性实验，也未执行真实浏览器 UI 交互验收（可选 Playwright 不作为本次 CI 前提）
+- 当前已知的在线边界是需求提取可能生成互斥验证契约；更多 step 不能解决这种矛盾，后续需要在计划激活前做契约一致性检查
 - 需求提取与验证目标选择仍依赖模型 / 有限启发式；显式绑定与强度是确定性门禁，但不能自动证明任意文档语义正确
 - 导航有规模界限：session 扫描最多约 1500 文件，约定 / 依赖扫描最多约 80 源文件，TestIndex 最多约 2000 文件
 - 外部变更检测是 stat 指纹，不是文件系统事务 / 锁；整任务撤销仅覆盖检查点化编辑

@@ -1,5 +1,7 @@
 # Changelog
 
+[简体中文](CHANGELOG.zh-CN.md) · **English**
+
 All notable changes to MiniCodex are documented in this file.
 
 ## 0.2.0 - 2026-09-22

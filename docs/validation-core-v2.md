@@ -1,5 +1,7 @@
 # Validation Core V2
 
+**简体中文** · [English](validation-core-v2.en.md)
+
 MiniCodex 的验证链只有七个权威概念：
 
 1. `TaskRequirement.contract`：类型化、与工具无关的机器契约；中文描述只用于展示。
