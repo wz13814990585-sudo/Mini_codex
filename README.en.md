@@ -7,22 +7,24 @@
 [![Release](https://img.shields.io/github/v/release/wz13814990585-sudo/Mini_codex)](https://github.com/wz13814990585-sudo/Mini_codex/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-MiniCodex is an autonomous coding agent that works on local code repositories. It uses DeepSeek or another OpenAI Chat Completions-compatible model to understand natural-language tasks, then completes code changes through controlled browsing, search, editing, command, test, and validation tools.
+MiniCodex is a **CLI-first local AI coding agent**. Give it a natural-language task and it inspects the repository, edits code, and runs relevant checks. With `--review`, it also shows the resulting diff in the terminal for a human to accept or reject. It supports DeepSeek and other OpenAI Chat Completions-compatible models. The Web workspace is optional; both interfaces use the same runtime.
 
 Its central boundary is: **the model handles understanding and decisions; the deterministic Harness owns facts, permissions, safety, execution, validation, recovery, and final completion.** A model message saying “done” can never finish a modification task by itself.
 
-> Current public release: [`v0.4.1`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.1) (Alpha). Use it in a committed or backed-up workspace.
+> Current source version: `0.4.2.dev0`; the latest packaged release is still [`v0.4.1`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.1). Install from source for the CLI review and editor features described below. This is an Alpha project: try it only in a trusted, committed or backed-up workspace.
+
+This README addresses three reproducible questions: Can the agent change a real repository? What evidence lets it call a task complete? How can a user inspect and undo its edits? The demo, architecture, and test sections answer these questions; the [architecture guide](docs/architecture.en.md) and [benchmark guide](docs/benchmark-v1.en.md) cover implementation details.
 
 ## Why MiniCodex
 
 | Capability | Implementation | User value |
 | --- | --- | --- |
 | Repository-level coding | Repository map, symbol index, relevant paths, and test targeting | Locates and edits code in real projects instead of generating isolated snippets |
-| Evidence-based completion | Typed validation contracts, an evidence ledger, and an independent completion gate | Never claims success without evidence for the current revision |
+| Evidence-based completion | Typed validation contracts, a revision-aware evidence ledger, and an independent completion gate | Does not treat the model's “done” message as validation |
 | Safe editing | Workspace boundaries, safety policy, checkpoints, and concurrent-change detection | Limits file scope and avoids overwriting external changes during rollback |
 | Bounded recovery | Failure classification, rereads, retries, replanning, and rollback | Recovers from stale context and failed tests without unbounded loops |
 | Observable execution | JSONL traces, token/call metrics, and structured task reports | Makes it possible to inspect why the agent read, edited, validated, or stopped |
-| Repeatable evaluation | 30 isolated tasks, hidden oracles, baseline comparison, and a release gate | Measures correctness with executable evidence instead of model prose |
+| Repeatable evaluation | 30 isolated tasks, hidden oracles, baseline comparison, and a release gate | Separates passing code tests from real-model task success |
 
 ## Product flow
 
@@ -35,7 +37,7 @@ Inspect repository → plan when needed → controlled edits
     ↓
 Targeted acceptance → related regression → fix / recover
     ↓
-Deterministic completion gate → structured task report
+Deterministic completion gate → structured report → optional human diff review / accept or reject
 ```
 
 The runtime has one control-plane source of truth: `TaskRuntime.state`.
@@ -74,14 +76,7 @@ py -3.11 -m venv .venv
 python -m pip install -e .
 ```
 
-You can also install the `v0.4.1` wheel directly:
-
-```bash
-python -m pip install \
-  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.4.1/mini_codex-0.4.1-py3-none-any.whl
-```
-
-Install development and test dependencies with:
+Install from source to reproduce the current features described here. For development and tests, install:
 
 ```bash
 python -m pip install -e ".[test]"
@@ -119,63 +114,43 @@ Scripts and CI can consume JSON:
 minicodex doctor --json
 ```
 
-### 4. Optional: start the local Web workspace
+### 4. Run a CLI task
 
-The recommended path is now the CLI workflow in step 5. The Web workspace remains available for visual demos, but it is not required to run MiniCodex.
+Start with an isolated test repository and use `--review` to inspect the diff:
+
+```bash
+minicodex run "Fix email validation in the registration endpoint and run the relevant tests" \
+  --workspace /path/to/project \
+  --review
+```
+
+At the prompt, enter `accept` to keep the edits or `reject` to undo this task's checkpointed Agent edits. Rejection does not reset the Git repository. MiniCodex refuses to overwrite a file changed by another program after the Agent's edit. Interrupting review leaves the files for manual resolution.
+
+For a continuing conversation, run:
+
+```bash
+minicodex chat --workspace /path/to/project --review
+```
+
+Omit `--review` for non-interactive scripts. Running without a subcommand still opens the compatible interactive mode, and the legacy `--prompt` entry point remains available. Traces are stored locally by workspace.
+
+### 5. Optional: local Web workspace
 
 ```bash
 minicodex ui --workspace /path/to/project
 ```
 
-The browser workspace provides a file tree, editable multi-file tabs, an interactive terminal, Agent chat, live task phases, a Trace activity log, per-file diff navigation, and task-level Accept / Reject. The editor supports syntax highlighting, line numbers, undo/redo, find/replace, and a save shortcut. You can create files/folders, rename files, and move deleted files to the workspace's `.minicodex/trash/` directory. Drag the dividers—or focus one and use arrow keys—to resize the file sidebar, Agent sidebar, and terminal. Saving detects changes made by another program. Manual changes are unavailable while an Agent task runs or awaits review. This is a lightweight IDE workspace; it does not yet include a language server, debugger, or extension system.
-
-The bottom pane defaults to an interactive shell that starts only when you click **Start terminal**. It runs as your OS user and **does not inherit the Agent tool safety policy**; it can access files and the network outside the workspace. Use it only with trusted local workspaces and close it before starting an Agent task. The **Run activity** tab still shows Agent Trace events. Git workspaces use Git diff; non-Git workspaces can review this Agent task from its checkpoints. v0.4.0 offers per-task Review, Auto, and Read-only Agent permission modes. Review pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, asks the user to Allow once, Allow for task, or Deny, and records that decision in the Trace audit trail. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
-
-The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. Built UI assets are included in the package, so Node.js is not required to run it. Frontend contributors should run `npm ci && npm run build:ui` after changing source files.
-
-### 5. Recommended: run a task from the CLI
-
-Execute one task and exit:
-
-```bash
-minicodex run "Fix email validation in the registration endpoint and run the relevant tests" \
-  --workspace /path/to/project \
-  --output verbose
-```
-
-Start an interactive session:
-
-```bash
-minicodex chat --workspace /path/to/project
-```
-
-Add `--review` to see this task's Agent diff in the terminal and accept or reject its edits:
-
-```bash
-minicodex run "Create a keyboard-controlled snake game in index.html" \
-  --workspace /path/to/project --review
-
-minicodex chat --workspace /path/to/project --review
-```
-
-`--review` covers checkpointed Agent edits only; rejecting does not reset the Git repository. If a file changes externally after the Agent edits it, the CLI refuses to overwrite it. Interrupting review leaves the files in place with review pending.
-
-Running without a subcommand still starts interactive mode. The original `--prompt` entry point also remains compatible:
-
-```bash
-minicodex
-minicodex --workspace /path/to/project --prompt "Fix the failing tests"
-```
+The optional workspace provides a file tree, code editor, interactive terminal, Agent chat, traces, diffs, and Accept / Reject; panes are resizable. It has no language server, debugger, or extension system and is not a full IDE. Its terminal runs as your OS user and **does not inherit the Agent tool safety policy**. Use it only in trusted workspaces. See the [UI guide](docs/ui.en.md) for details and safety notes.
 
 ## CLI reference
 
 | Command | Purpose | Model access |
 | --- | --- | --- |
-| `minicodex ui` | Start the local Web workspace; submitted tasks use the same Runtime | No at startup; yes when a task runs |
 | `minicodex run "task"` | Execute one task and exit; optional `--review` shows the diff | Yes |
 | `minicodex chat` | Start a continuous interactive session; optional `--review` after each task | Yes |
 | `minicodex doctor` | Check Python, workspace, Git, and model configuration | No |
 | `minicodex doctor --connect` | Also verify a real model connection | Yes, one minimal request |
+| `minicodex ui` | Start the optional Web workspace; tasks use the same runtime | No at startup; yes when a task runs |
 | `minicodex --version` | Print the version | No |
 | `minicodex-release-gate --summary ...` | Check local regressions and an online Benchmark report | Reads the report by default |
 
@@ -198,12 +173,12 @@ cp -R examples/calculator_demo "$demo_dir"
 minicodex run \
   "Update src/calculator.py so divide(a, b) raises ValueError when b is zero, add a regression test to tests/test_calculator.py, and run the tests." \
   --workspace "$demo_dir" \
-  --output verbose
+  --review
 
 python -m pytest -q "$demo_dir/tests"
 ```
 
-This flow demonstrates repository inspection, requirement decomposition, code editing, targeted acceptance, related regression, and final reporting. See the [calculator demo](examples/calculator_demo/README.en.md) for details.
+Choose `accept` at the review prompt before running the final test command. This flow demonstrates repository inspection, editing, targeted checks, a diff, and human confirmation. Real-model output can vary by model and environment. See the [calculator demo](examples/calculator_demo/README.en.md) for details.
 
 ## Supported workflows
 
@@ -286,7 +261,7 @@ minicodex/
 
 ## Testing and evaluation
 
-The current development commit passes **710 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
+The latest local full regression (macOS, Python 3.13) was **745 passed**. That is a code-test result, **not the Agent's online task success rate**. CI is configured for Python 3.11, 3.12, and 3.13, builds the wheel, and checks its installed entry point outside the source checkout. Normal tests never call a paid model:
 
 ```bash
 python -m pytest -q
@@ -304,7 +279,7 @@ python -m minicodex.evaluation.run_benchmark \
   --smoke
 ```
 
-The formal gate requires at least three repetitions of all 30 tasks on the current Git commit, 100% task success, and zero false completions, unauthorized edits, wrong-file edits, wrong validation targets, step exhaustion, and ghost steps. See the [Benchmark guide](docs/benchmark-v1.en.md) for metric definitions and usage. Historical refactoring and experiment results are recorded in the [delivery report](docs/vibecoding-refactor-report.en.md).
+`30 tasks × 3 runs, 100% success, and zero critical errors` is the **target release gate, not a result achieved here**. This source commit has not completed that repeated online evaluation, so this README does not claim a fresh success rate. See the [Benchmark guide](docs/benchmark-v1.en.md) for metric definitions. Earlier experiments and their conditions are in the [delivery report](docs/vibecoding-refactor-report.en.md); they do not represent this commit.
 
 ## Development constraints
 
