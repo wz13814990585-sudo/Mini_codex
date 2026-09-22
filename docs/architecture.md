@@ -60,7 +60,7 @@ MiniCodex 遵循同一条控制面边界：**语义理解与策略判断属于�
 
 所有变更仍经过 `SafetyToolExecutor`、无编辑权限守卫、工作区 / 受保护路径规则、反测试作弊检查，以及 checkpoint 捕获 / 密封。Checkpoint 执行会检测并发改动；回滚拒绝覆盖 checkpoint 之后的外部编辑。回滚会创建新的单调修订，使验证 / 计划证据与仓库缓存失效，并重新同步任务局部记忆。仅失败数升高本身不会触发回滚。稳定的 `EditFailureType` 与 `ReasonCode` 驱动控制逻辑；面向用户的文案不参与控制。
 
-Web UI 为 `CAUTION` 决策安装任务级 `ApprovalCoordinator`。工具线程在执行前等待允许一次、本任务允许或拒绝；请求只暴露白名单参数，并经过脱敏与长度限制。拒绝生成 `permission_denied` 工具结果，取消任务会同时唤醒等待线程。`BLOCKED` 决策仍由确定性策略直接拒绝，Human-in-the-loop 不能把工作区逃逸、测试作弊或破坏性命令变成可执行操作。CLI 未安装审批宿主时保持原有的警示记录行为。
+Web UI 为每个任务选择 `PermissionMode`。默认的审查模式为 `CAUTION` 决策安装任务级 `ApprovalCoordinator`；自动模式保持策略允许的自主执行；只读模式同时过滤具有副作用的工具 schema，并在 `SafetyToolExecutor` 执行边界再次失败关闭。工具线程在审批前等待允许一次、本任务允许或拒绝；请求只暴露白名单参数，并经过脱敏与长度限制。请求与处理结果生成持久化 `approval_requested` / `approval_resolved` Trace 事件。拒绝生成 `permission_denied` 工具结果，取消任务会同时唤醒等待线程。`BLOCKED` 决策仍由确定性策略直接拒绝，任何模式都不能把工作区逃逸、测试作弊或破坏性命令变成可执行操作。CLI 默认保持原有的自动警示行为。
 
 ## 验证目标选择
 

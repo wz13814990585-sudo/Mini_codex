@@ -14,6 +14,7 @@ class ReasonCode(str, Enum):
     FULL_REGRESSION_MISSING = "full_regression_missing"
     UNSAFE_COMMAND = "unsafe_command"
     PERMISSION_DENIED = "permission_denied"
+    READ_ONLY_MODE = "read_only_mode"
     DUPLICATE_TOOL_CALL = "duplicate_tool_call"
     VALIDATION_TARGET_MISMATCH = "validation_target_mismatch"
     PLAN_INCOMPLETE = "plan_incomplete"
@@ -33,6 +34,7 @@ _DISPLAY_LABELS: dict[ReasonCode, str] = {
     ReasonCode.FULL_REGRESSION_MISSING: "缺少完整回归证据",
     ReasonCode.UNSAFE_COMMAND: "命令不安全",
     ReasonCode.PERMISSION_DENIED: "用户拒绝了操作权限",
+    ReasonCode.READ_ONLY_MODE: "只读模式禁止该操作",
     ReasonCode.DUPLICATE_TOOL_CALL: "重复的工具调用",
     ReasonCode.VALIDATION_TARGET_MISMATCH: "验证目标与当前契约不匹配",
     ReasonCode.PLAN_INCOMPLETE: "计划未完成",

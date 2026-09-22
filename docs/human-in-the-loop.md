@@ -2,14 +2,24 @@
 
 **简体中文** · [English](human-in-the-loop.en.md)
 
-Human-in-the-loop 是安全策略和宿主 UI 之间的任务级审批协议。它只处理 Harness 已判定为“允许但需要注意”的 `CAUTION` 操作，不改变安全策略本身。
+Human-in-the-loop 是安全策略和宿主 UI 之间的任务级权限协议。它不改变确定性安全策略本身，而是在策略已允许的操作上应用用户为本任务选择的执行姿态。
+
+## 权限模式
+
+| 模式 | 警示级操作 | 有副作用的工具 | 完成后的 Diff |
+| --- | --- | --- | --- |
+| 审查（默认） | 执行前等待人工决定 | 按安全策略执行 | 保留任务级 Accept / Reject |
+| 自动 | 不弹审批，自动执行策略允许的操作 | 按安全策略执行 | 仍保留任务级 Accept / Reject |
+| 只读 | 不执行 | 工具 schema 会被过滤，执行边界再次失败关闭 | 不应产生 Agent 修改 |
+
+只读模式只开放 registry 标记为 `read_only` 的读取、搜索与 Git 检查能力。编辑、命令、测试进程、浏览器 / 服务验证进程和依赖安装不会被暴露；即使某条内部路径直接尝试调用，也会得到稳定的 `read_only_mode` 拒绝。
 
 ## 执行流程
 
 ```text
 工具调用 → SafetyPolicy
-              ├─ SAFE → 直接执行
-              ├─ CAUTION → ApprovalCoordinator → 允许 / 拒绝
+              ├─ SAFE → 按当前权限模式执行或拒绝
+              ├─ CAUTION → 审查模式下由 ApprovalCoordinator 允许 / 拒绝
               └─ BLOCKED → 直接拒绝，不可审批绕过
 ```
 
@@ -30,6 +40,8 @@ Human-in-the-loop 是安全策略和宿主 UI 之间的任务级审批协议。�
 
 拒绝不是伪造成功。Agent 必须寻找不需要该权限的替代方案，或把它记录为具体阻断原因。等待审批有五分钟超时并失败关闭；Stop 会拒绝待处理审批，再通过现有协作式取消边界结束任务。
 
+每个审批请求和最终处理结果都会生成 `approval_requested` 与 `approval_resolved` Trace 事件。事件包含脱敏后的工具、规则、目标、决策与处理来源，并随任务 JSONL 一起保存；UI 的运行活动区域会实时展示这些事件。
+
 ## 安全边界
 
 - 工作区逃逸、破坏性命令、Git 写操作、checkpoint 绕过、未授权编辑和反测试作弊等 `BLOCKED` 操作不能通过 UI 解锁。
@@ -40,4 +52,4 @@ Human-in-the-loop 是安全策略和宿主 UI 之间的任务级审批协议。�
 
 ## 当前范围
 
-审批宿主目前由本地 Web UI 提供。CLI 仍保持原有的自主警示行为。后续工作包括可选的 Review / Auto / Read-only 运行模式、审批审计事件，以及更细粒度的 Diff 审查。
+审批宿主与三种权限模式目前由本地 Web UI 提供。CLI 仍保持原有的自主警示行为。Diff 可以在全部任务变更和单个变更文件之间切换，但 Accept / Reject 仍以整个任务为原子边界，避免不安全的部分 checkpoint 回滚。

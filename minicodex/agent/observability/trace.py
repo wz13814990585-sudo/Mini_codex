@@ -42,6 +42,8 @@ class TraceEventType(
     TOOL_BLOCKED = "tool_blocked"
 
     SAFETY_DECISION = "safety_decision"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_RESOLVED = "approval_resolved"
 
     EDIT_APPLIED = "edit_applied"
 

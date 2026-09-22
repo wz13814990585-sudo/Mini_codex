@@ -14,7 +14,7 @@ import minicodex.main as main_module
 from ..agent.observability import TraceEventType, TraceRecorder
 from ..agent.runtime import AsyncTaskStatus
 from ..agent.runtime import PreparedToolCall
-from ..agent.safety import SafetyDecision, SafetyLevel
+from ..agent.safety import PermissionMode, SafetyDecision, SafetyLevel
 from ..llm import ModelConfig
 from ..tools.results import ToolResult
 from ..ui.server import (
@@ -85,7 +85,10 @@ class _FakeAgent:
 class _ApprovalFakeAgent(_FakeAgent):
     def __init__(self, recorder: TraceRecorder):
         super().__init__(recorder, with_edit=False)
-        self.safety_executor = SimpleNamespace(intervention_hook=None)
+        self.safety_executor = SimpleNamespace(
+            intervention_hook=None,
+            permission_mode=PermissionMode.AUTO,
+        )
         self.approved = None
 
     def run(self, user_input, use_planning=None, policy=None):
@@ -94,13 +97,16 @@ class _ApprovalFakeAgent(_FakeAgent):
             SafetyLevel.CAUTION, True, "Dependency install needs approval.",
             "dependency_install", "install_python_package",
         )
-        self.approved = self.safety_executor.intervention_hook(
-            decision.intervention,
-            decision,
-            PreparedToolCall(
-                "install_python_package", {"package": "demo", "import_name": "demo"},
-            ),
-        )
+        if self.safety_executor.permission_mode == PermissionMode.REVIEW:
+            self.approved = self.safety_executor.intervention_hook(
+                decision.intervention,
+                decision,
+                PreparedToolCall(
+                    "install_python_package", {"package": "demo", "import_name": "demo"},
+                ),
+            )
+        else:
+            self.approved = True
         return "Approval flow finished."
 
 
@@ -230,6 +236,37 @@ def test_controller_pauses_and_resumes_for_human_approval(tmp_path):
     assert response["resolved"]["decision"] == "allow_once"
     assert _wait_for_task(controller)["status"] == AsyncTaskStatus.COMPLETED.value
     assert observed["agent"].approved is True
+    event_types = [event["event_type"] for event in controller.state()["events"]]
+    assert "approval_requested" in event_types
+    assert "approval_resolved" in event_types
+
+
+def test_controller_auto_mode_skips_caution_prompt_and_records_mode(tmp_path):
+    observed = {}
+
+    def factory(_config, *, model_config, output_level):
+        recorder = TraceRecorder()
+        agent = _ApprovalFakeAgent(recorder)
+        observed["agent"] = agent
+        return agent, recorder, None
+
+    controller = MiniCodexUIController(
+        _workspace_config(tmp_path), _ready_model(), agent_factory=factory,
+    )
+    started = controller.start_task("install dependency", permission_mode="auto")
+
+    assert started["permission_mode"] == "auto"
+    assert _wait_for_task(controller)["status"] == AsyncTaskStatus.COMPLETED.value
+    assert observed["agent"].approved is True
+    assert controller.state()["approval"]["pending"] is None
+    assert controller.state()["approval"]["audit"] == []
+
+
+def test_controller_rejects_unknown_permission_mode(tmp_path):
+    controller, _observed = _controller(tmp_path)
+
+    with pytest.raises(UIRequestError, match="permission mode"):
+        controller.start_task("inspect", permission_mode="unrestricted")
 
 
 def test_controller_cancellation_rejects_pending_approval(tmp_path):
@@ -263,6 +300,8 @@ def test_http_server_serves_shell_and_protects_mutations(tmp_path):
         html = response.read().decode("utf-8")
         assert response.status == 200
         assert "MiniCodex Workspace" in html
+        assert 'data-mode="review"' in html
+        assert 'id="diff-file-bar"' in html
         assert server.token in html
         assert "frame-ancestors 'none'" in response.getheader("Content-Security-Policy")
 

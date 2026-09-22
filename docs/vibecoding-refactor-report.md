@@ -6,7 +6,7 @@
 | --- | --- |
 | 发布线 | `v0.2.0` 完成 CLI 产品化；`v0.3.0` 增加本地 Web 工作台；以当前 Git 树为准 |
 | 改动前基线 | `e3510ac` |
-| 最新完整回归 | **700 passed in 22.78s** |
+| 最新完整回归 | **708 passed in 23.15s** |
 | 离线 VibeBench | **15/15**，误完成率 **0** |
 | 在线 R2 smoke | **8/8**，误完成 / 错验证目标 / 步数耗尽均为 **0** |
 | 编译 / diff 检查 | `compileall`、`git diff --check` 通过 |
@@ -271,6 +271,7 @@ python -m minicodex.evaluation.vibebench
 | v0.2.0 产品化 | **682 passed / 24.18s** | 新增 run/chat/doctor、模型配置诊断、wheel、Python 3.11–3.13 CI 与安装验收 |
 | 最小可用 Web UI | **689 passed / 23.15s** | 当前最新；文件树、代码/Diff、Agent Chat、任务状态、Trace 终端与 checkpoint Accept/Reject |
 | Human-in-the-loop 第一阶段 | **700 passed / 22.78s** | `CAUTION` 暂停、允许一次/本任务允许/拒绝、取消与超时、脱敏预览、双语 UI |
+| Human-in-the-loop 第二阶段 | **708 passed / 23.15s** | 审查/自动/只读模式、Trace 审批审计、单文件 Diff 导航、双层只读门禁 |
 
 CI 只跑确定性 pytest / compileall，不调用真实模型。
 

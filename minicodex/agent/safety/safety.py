@@ -32,6 +32,14 @@ class InterventionCategory(str, Enum):
     CLARIFICATION = "clarification"
 
 
+class PermissionMode(str, Enum):
+    """Host-selected execution posture for otherwise policy-allowed tools."""
+
+    AUTO = "auto"
+    REVIEW = "review"
+    READ_ONLY = "read_only"
+
+
 # =============================================================
 # Safety Decision
 # =============================================================

@@ -1,5 +1,6 @@
 from ..agent.safety import (
     InterventionCategory,
+    PermissionMode,
     SafetyLevel,
     SafetyDecision,
 )
@@ -356,6 +357,7 @@ def test_caution_call_waits_for_hook_and_records_approval():
     executor = SafetyToolExecutor(
         executor=downstream,
         policy=FakePolicy(decision),
+        permission_mode=PermissionMode.REVIEW,
         intervention_hook=lambda category, safety, prepared: calls.append(
             (category, safety.rule, prepared.tool_name)
         ) or True,
@@ -380,6 +382,7 @@ def test_rejected_caution_never_reaches_downstream():
     executor = SafetyToolExecutor(
         executor=downstream,
         policy=FakePolicy(decision),
+        permission_mode=PermissionMode.REVIEW,
         intervention_hook=lambda *_args: False,
     )
 
@@ -389,6 +392,123 @@ def test_rejected_caution_never_reaches_downstream():
 
     assert execution.result.success is False
     assert execution.result.data["failure_type"] == "permission_denied"
+    assert execution.result.data["reason_code"] == "permission_denied"
+    assert downstream.execution_count == 0
+
+
+def test_auto_mode_executes_caution_without_calling_approval_hook():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.CAUTION, True, "Needs review.", "network_access",
+        "run_command", command="curl https://example.test",
+    )
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        permission_mode=PermissionMode.AUTO,
+        intervention_hook=lambda *_args: False,
+    )
+
+    execution = executor.execute_prepared(PreparedToolCall(
+        "run_command", {"command": "curl https://example.test"},
+    ))
+
+    assert execution.result.success is True
+    assert "approval" not in execution.result.data
+    assert downstream.execution_count == 1
+
+
+def test_read_only_mode_blocks_non_read_only_tool_before_execution():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.SAFE, True, "Normally safe.", "workspace_edit",
+        "patch_file", path="app.py",
+    )
+
+    class Registry:
+        def metadata_for(self, name):
+            return type("Metadata", (), {"read_only": name == "read_file"})()
+
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        permission_mode=PermissionMode.READ_ONLY,
+        registry=Registry(),
+    )
+    execution = executor.execute_prepared(PreparedToolCall(
+        "patch_file", {"path": "app.py", "patch": "replacement"},
+    ))
+
+    assert execution.result.success is False
+    assert execution.result.data["reason_code"] == "read_only_mode"
+    assert execution.result.data["permission_mode"] == "read_only"
+    assert downstream.execution_count == 0
+
+
+def test_read_only_mode_fails_closed_for_tool_without_capabilities():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.SAFE, True, "Unknown legacy tool.", "default_safe",
+        "legacy_tool",
+    )
+
+    class Registry:
+        def metadata_for(self, _name):
+            return type("Metadata", (), {"read_only": True, "capabilities": frozenset()})()
+
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        permission_mode=PermissionMode.READ_ONLY,
+        registry=Registry(),
+    )
+    execution = executor.execute_prepared(PreparedToolCall("legacy_tool", {}))
+
+    assert execution.result.data["reason_code"] == "read_only_mode"
+    assert downstream.execution_count == 0
+
+
+def test_read_only_mode_allows_declared_read_only_tool():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.SAFE, True, "Read only.", "read_only_tool", "read_file",
+    )
+
+    class Registry:
+        def metadata_for(self, _name):
+            return type("Metadata", (), {
+                "read_only": True,
+                "capabilities": frozenset({"filesystem.read"}),
+            })()
+
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        permission_mode=PermissionMode.READ_ONLY,
+        registry=Registry(),
+    )
+    execution = executor.execute_prepared(PreparedToolCall("read_file", {"path": "a.py"}))
+
+    assert execution.result.success is True
+    assert downstream.execution_count == 1
+
+
+def test_review_mode_without_host_hook_fails_closed_for_caution():
+    downstream = FakeExecutor()
+    decision = SafetyDecision(
+        SafetyLevel.CAUTION, True, "Needs review.", "network_access",
+        "run_command", command="curl https://example.test",
+    )
+    executor = SafetyToolExecutor(
+        executor=downstream,
+        policy=FakePolicy(decision),
+        permission_mode=PermissionMode.REVIEW,
+    )
+
+    execution = executor.execute_prepared(PreparedToolCall(
+        "run_command", {"command": "curl https://example.test"},
+    ))
+
     assert execution.result.data["reason_code"] == "permission_denied"
     assert downstream.execution_count == 0
 

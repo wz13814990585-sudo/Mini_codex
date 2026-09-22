@@ -125,7 +125,7 @@ minicodex doctor --json
 minicodex ui --workspace /path/to/project
 ```
 
-The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, Git diff, and task-level Accept / Reject. The current development version also pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, then asks the user to Allow once, Allow for task, or Deny. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
+The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, per-file Git diff navigation, and task-level Accept / Reject. The current development version offers per-task Review, Auto, and Read-only permission modes. Review pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, asks the user to Allow once, Allow for task, or Deny, and records that decision in the Trace audit trail. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
 
 The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. The `v0.3.0` wheel includes the UI static assets and launch command.
 
@@ -267,7 +267,7 @@ minicodex/
 
 ## Testing and evaluation
 
-The current development commit passes **700 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
+The current development commit passes **708 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
 
 ```bash
 python -m pytest -q
@@ -303,7 +303,7 @@ Run the full test suite before submitting a focused change.
 - Both the CLI and Web UI are single-process sessions and cannot resume an unfinished task after a crash.
 - In-progress task state and checkpoints exist only in the current process.
 - Browser interaction validation requires optional Playwright and Chromium installs.
-- Human-in-the-loop intercepts operations classified as `CAUTION`; it does not prompt for every ordinary read, test, or safe command.
+- Review mode prompts only for operations classified as `CAUTION`; Read-only separately blocks every side-effecting tool but is not kernel-level isolation.
 - Service tools provide bounded processes and loopback HTTP validation, not kernel-level container isolation.
 - Model, network, package registry, and operating-system conditions can still cause failures.
 - Automated validation reduces risk but does not replace human code review or deployment testing.

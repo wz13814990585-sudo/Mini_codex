@@ -125,7 +125,7 @@ minicodex doctor --json
 minicodex ui --workspace /path/to/project
 ```
 
-浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、Git Diff，以及任务级 Accept / Reject。当前开发版还会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
+浏览器工作台提供文件树、代码查看、Agent 对话、实时任务阶段、Trace 活动终端、文件级 Git Diff 导航，以及任务级 Accept / Reject。当前开发版提供审查、自动和只读三种每任务权限模式；审查模式会在依赖安装、外部网络访问、覆盖既有用户修改等警示级操作前暂停，等待用户选择允许一次、本任务允许或拒绝，并把决策写入 Trace 审计记录。Reject 复用 Harness 的 checkpoint rollback，只撤销本次 Agent 编辑，并在检测到外部并发修改时拒绝覆盖。
 
 UI 仅监听 `127.0.0.1`；敏感凭证文件不会进入文件树或预览 API。可用 `--port 9000` 指定端口，或用 `--no-browser` 只启动服务。`v0.3.0` wheel 已包含 UI 静态资源与启动命令。
 
@@ -267,7 +267,7 @@ minicodex/
 
 ## 测试与评估
 
-当前开发提交通过 **700 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
+当前开发提交通过 **708 项确定性测试**，CI 覆盖 Python 3.11、3.12 和 3.13，并构建 wheel 后在源码目录外验证安装入口。普通测试不会访问付费模型：
 
 ```bash
 python -m pytest -q
@@ -303,7 +303,7 @@ python -m minicodex.evaluation.run_benchmark \
 - CLI 与 Web UI 都是单进程会话，进程崩溃后不能续跑未完成任务
 - 进行中的任务状态与 checkpoint 只存在于当前进程
 - 浏览器交互验证依赖可选的 Playwright 和 Chromium
-- Human-in-the-loop 只拦截安全策略标记为 `CAUTION` 的操作，不会逐条审批普通读取、测试或安全命令
+- 审查模式只审批安全策略标记为 `CAUTION` 的操作；只读模式会另行阻止所有带副作用的工具，但不是内核级隔离
 - 服务工具提供受限进程和回环 HTTP 验证，不是内核级容器隔离
 - 模型、网络、第三方包源和操作系统权限仍可能导致失败
 - 自动验证降低风险，但不能代替人工代码审查与真实部署测试

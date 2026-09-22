@@ -8,7 +8,7 @@ from enum import Enum
 from threading import Condition, RLock
 import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from ..observability.redaction import redact
 from ..runtime.execution_control import ACTIVE_CANCELLATION
@@ -60,6 +60,10 @@ class ApprovalCoordinator:
         self._choice: ApprovalChoice | None = None
         self._allowed_rules: set[str] = set()
         self._closed_reason: str | None = None
+        self._resolution_source: str | None = None
+        self._audit: list[dict[str, Any]] = []
+        self._audit_sequence = 0
+        self._event_sink: Callable[[str, dict[str, Any]], Any] | None = None
 
     def begin_task(self) -> None:
         """Reset task-scoped grants before a new task starts."""
@@ -70,6 +74,19 @@ class ApprovalCoordinator:
             self._choice = None
             self._allowed_rules.clear()
             self._closed_reason = None
+            self._resolution_source = None
+            self._audit.clear()
+            self._audit_sequence = 0
+            self._event_sink = None
+
+    def set_event_sink(
+        self,
+        sink: Callable[[str, dict[str, Any]], Any] | None,
+    ) -> None:
+        """Attach the current task Trace sink after its recorder is created."""
+
+        with self._condition:
+            self._event_sink = sink
 
     def intervene(self, category, decision: SafetyDecision, prepared) -> bool:
         """SafetyToolExecutor hook; block until approval or rejection."""
@@ -93,6 +110,8 @@ class ApprovalCoordinator:
             self._pending = self._build_request(decision, prepared)
             self._choice = None
             self._closed_reason = None
+            self._resolution_source = None
+            self._record_event("approval_requested", self._pending.to_dict())
             self._condition.notify_all()
             deadline = time.monotonic() + self.timeout_seconds
 
@@ -100,16 +119,26 @@ class ApprovalCoordinator:
                 token = ACTIVE_CANCELLATION.get()
                 if token is not None and token.is_cancelled:
                     self._closed_reason = token.reason or "Task cancelled."
+                    self._resolution_source = "cancelled"
                     self._choice = ApprovalChoice.REJECT
                     break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._closed_reason = "Approval request timed out."
+                    self._resolution_source = "timeout"
                     self._choice = ApprovalChoice.REJECT
                     break
                 self._condition.wait(min(0.1, remaining))
 
             choice = self._choice
+            resolution = {
+                **self._pending.to_dict(),
+                "decision": choice.value,
+                "resolution": self._resolution_source or "user",
+            }
+            if self._closed_reason:
+                resolution["reason"] = self._closed_reason
+            self._record_event("approval_resolved", resolution)
             if choice == ApprovalChoice.ALLOW_TASK:
                 self._allowed_rules.add(decision.rule)
             self._pending = None
@@ -131,6 +160,7 @@ class ApprovalCoordinator:
                 raise ValueError("Approval request is stale.")
             payload = self._pending.to_dict()
             payload["decision"] = normalized.value
+            self._resolution_source = "user"
             self._choice = normalized
             self._condition.notify_all()
             return payload
@@ -142,6 +172,7 @@ class ApprovalCoordinator:
             if self._pending is None or self._choice is not None:
                 return False
             self._closed_reason = str(reason or "Task cancelled.")
+            self._resolution_source = "cancelled"
             self._choice = ApprovalChoice.REJECT
             self._condition.notify_all()
             return True
@@ -151,7 +182,26 @@ class ApprovalCoordinator:
             return {
                 "pending": self._pending.to_dict() if self._pending is not None else None,
                 "allowed_rules": sorted(self._allowed_rules),
+                "audit": [dict(event) for event in self._audit],
             }
+
+    def _record_event(self, event_type: str, data: dict[str, Any]) -> None:
+        self._audit_sequence += 1
+        event = {
+            "sequence": self._audit_sequence,
+            "event_type": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "data": redact(data),
+        }
+        self._audit.append(event)
+        if len(self._audit) > 100:
+            self._audit = self._audit[-100:]
+        if self._event_sink is not None:
+            try:
+                self._event_sink(event_type, event["data"])
+            except Exception:
+                # Audit observation must never change the permission decision.
+                pass
 
     @classmethod
     def _build_request(cls, decision: SafetyDecision, prepared) -> ApprovalRequest:

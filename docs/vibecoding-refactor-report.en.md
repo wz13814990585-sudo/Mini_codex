@@ -6,7 +6,7 @@
 | --- | --- |
 | Release line | `v0.2.0` productized the CLI; `v0.3.0` adds the local Web workspace; the current Git tree is authoritative |
 | Pre-change baseline | `e3510ac` |
-| Latest full regression | **700 passed in 22.78s** |
+| Latest full regression | **708 passed in 23.15s** |
 | Offline VibeBench | **15/15**, false-completion rate **0** |
 | Online R2 smoke | **8/8**, with zero false completion, wrong validation target, or step exhaustion |
 | Compile / diff checks | `compileall` and `git diff --check` pass |
@@ -262,6 +262,7 @@ The CI path runs deterministic pytest/compile/package checks and never calls a p
 | v0.2.0 product release | **682 passed** | run/chat/doctor, diagnostics, wheel, 3-version CI, install smoke |
 | Minimum viable Web UI | **689 passed** | File tree, code/diff, Agent chat, task state, Trace terminal, and checkpoint Accept/Reject |
 | Human-in-the-loop phase one | **700 passed** | `CAUTION` pause, allow once/task, deny, cancellation and timeout, redacted preview, bilingual UI |
+| Human-in-the-loop phase two | **708 passed** | Review/Auto/Read-only modes, Trace approval audit, per-file diff navigation, layered read-only enforcement |
 
 ---
 

@@ -2,14 +2,24 @@
 
 [简体中文](human-in-the-loop.md) · **English**
 
-Human-in-the-loop is a task-scoped approval protocol between the safety policy and a host UI. It handles only operations the Harness has already classified as allowed but caution-worthy; it never changes the safety policy itself.
+Human-in-the-loop is a task-scoped permission protocol between the safety policy and a host UI. It never changes deterministic safety policy; it applies the user's task posture to operations that policy has already allowed.
+
+## Permission modes
+
+| Mode | Caution operations | Side-effecting tools | Final diff |
+| --- | --- | --- | --- |
+| Review (default) | Wait for a human decision before execution | Run according to safety policy | Keep task-level Accept / Reject |
+| Auto | Run policy-allowed operations without approval prompts | Run according to safety policy | Still keep task-level Accept / Reject |
+| Read-only | Do not execute | Filter tool schemas and fail closed again at execution | Should produce no Agent edits |
+
+Read-only exposes only registry capabilities marked `read_only`, including file reads, search, and Git inspection. Edits, commands, test processes, browser/service validation processes, and dependency installation are not advertised. Any internal path that still attempts one receives a stable `read_only_mode` denial.
 
 ## Execution flow
 
 ```text
 Tool call → SafetyPolicy
-              ├─ SAFE → execute directly
-              ├─ CAUTION → ApprovalCoordinator → allow / deny
+              ├─ SAFE → execute or deny under the current permission mode
+              ├─ CAUTION → ApprovalCoordinator in Review mode → allow / deny
               └─ BLOCKED → deny directly; approval cannot override it
 ```
 
@@ -30,6 +40,8 @@ Typical approval triggers currently include:
 
 Denial never fabricates success. The Agent must find an alternative that does not require the permission or record a concrete blocker. Approval waits time out after five minutes and fail closed. Stop rejects the pending approval before ending the task through the existing cooperative cancellation boundary.
 
+Every request and final resolution emits `approval_requested` and `approval_resolved` Trace events. They contain the redacted tool, rule, target, decision, and resolution source, are saved with the task JSONL, and appear live in the UI activity stream.
+
 ## Security boundary
 
 - `BLOCKED` operations such as workspace escape, destructive commands, Git writes, checkpoint bypass, unauthorized edits, and test gaming cannot be unlocked through the UI.
@@ -40,4 +52,4 @@ Denial never fabricates success. The Agent must find an alternative that does no
 
 ## Current scope
 
-The local Web UI is currently the approval host. The CLI retains its existing autonomous caution behavior. Follow-up work includes optional Review / Auto / Read-only modes, approval audit events, and finer-grained diff review.
+The local Web UI currently hosts approvals and the three permission modes. The CLI retains its existing autonomous caution behavior. Diff review can switch between the complete task change set and one changed file, while Accept / Reject remains task-atomic to avoid unsafe partial checkpoint rollback.

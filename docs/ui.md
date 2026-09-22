@@ -27,24 +27,26 @@ minicodex ui --workspace /path/to/project --port 0 --no-browser
 | 区域 | 数据来源 | 功能 |
 | --- | --- | --- |
 | 文件树 | 受工作区约束的只读文件 API | 搜索和选择文本文件；默认排除生成目录与凭证文件 |
-| Code / Changes | 文件 API / `GitRepositoryInspector` | 查看源码或当前文件的 Git Diff |
+| Code / Changes | 文件 API / `GitRepositoryInspector` | 查看源码，在完整任务 Diff 与单个变更文件之间切换 |
 | Agent Chat | UI 任务会话 | 提交自然语言任务并保留本次进程中的消息 |
 | 任务阶段 | `TaskState` | 展示 Inspect、Act、Validate、Done 及阻塞 / 失败状态 |
 | 运行活动 | `TraceRecorder` | 显示模型、工具、安全、编辑与验证事件，不提供任意 shell 输入 |
 | 操作审批 | `ApprovalCoordinator` / `SafetyDecision` | 在警示级操作执行前提供允许一次、本任务允许或拒绝 |
+| 权限模式 | `PermissionMode` / `ToolMetadata` | 为每个任务选择审查、自动或只读，并在执行边界强制生效 |
 | Accept / Reject | checkpoint 生命周期 | 保留修改，或安全撤销当前任务的 Agent 编辑 |
 
 界面右上角可在中文和英文之间切换。切换只影响 UI 文案，不改变发送给模型的任务文本。
 
 ## 任务与审查流程
 
-1. 在 Agent Chat 中描述代码目标。
+1. 选择权限模式，并在 Agent Chat 中描述代码目标。默认的**审查**模式适合日常 vibecoding；**自动**模式跳过警示级弹窗但不绕过硬安全规则；**只读**模式只用于分析。
 2. UI 创建一个新的 `MiniCodexAgent`，并通过 `AsyncAgentRunner` 后台执行。
 3. 页面轮询权威 `TaskState` 和结构化 Trace；Agent 仍按 CLI 相同的策略编辑和验证。
-4. 如果安全策略把操作标记为 `CAUTION`，后台 Agent 暂停并等待审批；普通安全操作不会制造无意义的弹窗。
+4. 在审查模式下，如果安全策略把操作标记为 `CAUTION`，后台 Agent 暂停并等待审批；普通安全操作不会制造无意义的弹窗。
 5. 用户可以允许一次、对当前任务允许同一规则，或拒绝。拒绝会向 Agent 返回稳定的 `permission_denied` 结果。
-6. 如果任务产生密封 checkpoint，完成后进入 `pending` 审查状态，并阻止开始下一任务。
-7. **Accept** 保留物理工作区中的修改；**Reject** 调用 `undo_task()` 逆序恢复本次 checkpoint。
+6. 审批请求与处理结果进入 Trace 审计流，并随任务 JSONL 保存。
+7. 如果任务产生密封 checkpoint，完成后进入 `pending` 审查状态，并阻止开始下一任务。Changes 工具栏可以分别查看全部变更或单个变更文件。
+8. **Accept** 保留物理工作区中的修改；**Reject** 调用 `undo_task()` 逆序恢复本次 checkpoint。
 
 Reject 不运行 `git reset`，也不会还原任务开始前已存在的其他未提交修改。如果文件在 checkpoint 之后被 IDE 或用户再次改动，回滚会报告冲突并拒绝覆盖。
 
@@ -64,7 +66,7 @@ Reject 不运行 `git reset`，也不会还原任务开始前已存在的其他�
 ## 当前范围
 
 - 一次只运行一个 Agent 任务。
-- 审查粒度是整个任务，不是每条命令。
+- Diff 查看可细化到单文件；Accept / Reject 仍以整个任务为原子单位。
 - 执行前审批只覆盖 `CAUTION` 操作；确定性 `BLOCKED` 操作不可被 UI 解锁。
 - 终端是只读活动流，不是交互式 shell。
 - 消息、运行中状态和 Reject checkpoint 都是进程内状态；关闭服务后不能恢复未完成任务。

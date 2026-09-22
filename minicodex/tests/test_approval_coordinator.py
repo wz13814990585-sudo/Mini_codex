@@ -61,6 +61,10 @@ def _start_request(coordinator: ApprovalCoordinator, *, rule="dependency_install
 def test_allow_once_unblocks_one_redacted_request():
     coordinator = ApprovalCoordinator(timeout_seconds=2)
     coordinator.begin_task()
+    trace_events = []
+    coordinator.set_event_sink(
+        lambda event_type, data: trace_events.append((event_type, data)),
+    )
     thread, result = _start_request(coordinator)
     pending = _wait_for_pending(coordinator)
 
@@ -70,7 +74,16 @@ def test_allow_once_unblocks_one_redacted_request():
     thread.join(timeout=1)
 
     assert result == {"approved": True}
-    assert coordinator.snapshot() == {"pending": None, "allowed_rules": []}
+    snapshot = coordinator.snapshot()
+    assert snapshot["pending"] is None
+    assert snapshot["allowed_rules"] == []
+    assert [event["event_type"] for event in snapshot["audit"]] == [
+        "approval_requested", "approval_resolved",
+    ]
+    assert snapshot["audit"][1]["data"]["decision"] == "allow_once"
+    assert [event_type for event_type, _data in trace_events] == [
+        "approval_requested", "approval_resolved",
+    ]
 
 
 def test_allow_task_reuses_only_the_same_rule_until_next_task():
@@ -89,6 +102,7 @@ def test_allow_task_reuses_only_the_same_rule_until_next_task():
 
     coordinator.begin_task()
     assert coordinator.snapshot()["allowed_rules"] == []
+    assert coordinator.snapshot()["audit"] == []
 
 
 def test_reject_and_stale_request_fail_closed():
@@ -115,6 +129,7 @@ def test_hard_denial_never_becomes_approvable():
         PreparedToolCall("write_file", {"path": "../outside"}),
     ) is False
     assert coordinator.snapshot()["pending"] is None
+    assert coordinator.snapshot()["audit"] == []
 
 
 def test_unanswered_request_times_out_closed():
@@ -126,3 +141,4 @@ def test_unanswered_request_times_out_closed():
         PreparedToolCall("run_command", {"command": "curl https://example.test"}),
     ) is False
     assert coordinator.snapshot()["pending"] is None
+    assert coordinator.snapshot()["audit"][-1]["data"]["resolution"] == "timeout"

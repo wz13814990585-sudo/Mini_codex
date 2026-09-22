@@ -859,6 +859,14 @@ class MiniCodexAgent:
                 or (schema.get("function", {}).get("name") in getattr(self.registry, "_tools", {})
                     and bool(self.registry.capabilities_for(schema["function"]["name"]) & allowed_capabilities))
             ]
+        # Host permission modes are enforced again at execution time. Filtering
+        # here keeps a read-only task from advertising tools it can never run.
+        schemas = [
+            schema for schema in schemas
+            if self.safety_executor.tool_allowed_in_mode(
+                schema.get("function", {}).get("name", "")
+            )
+        ]
         return schemas
 
     def get_tool_schemas(self) -> list[dict]:

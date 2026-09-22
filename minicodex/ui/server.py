@@ -20,7 +20,7 @@ import webbrowser
 
 from .. import __version__
 from ..agent.runtime import AsyncAgentRunner, GitRepositoryInspector
-from ..agent.safety import ApprovalCoordinator
+from ..agent.safety import ApprovalCoordinator, PermissionMode
 from ..doctor import diagnose
 from ..llm import ModelConfig, ModelConfigurationError
 from ..utils.paths import resolve_workspace_path
@@ -186,6 +186,7 @@ class MiniCodexUIController:
         self._review_status = "not_required"
         self._messages: list[dict[str, Any]] = []
         self._approval = ApprovalCoordinator()
+        self._permission_mode = PermissionMode.REVIEW
 
     @staticmethod
     def _default_agent_factory(config, *, model_config, output_level):
@@ -212,7 +213,11 @@ class MiniCodexUIController:
             "state": self.state(),
         }
 
-    def start_task(self, prompt: str) -> dict[str, Any]:
+    def start_task(
+        self,
+        prompt: str,
+        permission_mode: str | PermissionMode | None = None,
+    ) -> dict[str, Any]:
         prompt = str(prompt or "").strip()
         if not prompt:
             raise UIRequestError("Task prompt cannot be empty.")
@@ -222,6 +227,10 @@ class MiniCodexUIController:
             self.model_config.require_ready()
         except ModelConfigurationError as exc:
             raise UIRequestError(str(exc), HTTPStatus.PRECONDITION_FAILED) from exc
+        try:
+            selected_mode = PermissionMode(permission_mode or self._permission_mode)
+        except ValueError as exc:
+            raise UIRequestError("Unknown permission mode.") from exc
 
         with self._lock:
             if self._task is not None and not self._task.done:
@@ -237,7 +246,8 @@ class MiniCodexUIController:
                 model_config=self.model_config,
                 output_level=self.output_level,
             )
-            self._install_approval_hook(agent)
+            self._permission_mode = selected_mode
+            self._install_permission_mode(agent, recorder, selected_mode)
             runner = self._runner_factory(agent=agent)
             task = runner.start(prompt)
             self._agent = agent
@@ -308,7 +318,13 @@ class MiniCodexUIController:
             "task": self._task_payload(),
         }
 
-    def _install_approval_hook(self, agent: Any) -> None:
+    def _install_permission_mode(
+        self,
+        agent: Any,
+        recorder: Any,
+        mode: PermissionMode,
+    ) -> None:
+        self._approval.set_event_sink(getattr(recorder, "emit", None))
         executor = getattr(agent, "safety_executor", None)
         if executor is None:
             executor = getattr(agent, "tool_executor", None)
@@ -318,8 +334,16 @@ class MiniCodexUIController:
                 if hasattr(executor, "intervention_hook"):
                     break
                 executor = getattr(executor, "executor", None)
-        if executor is not None and hasattr(executor, "intervention_hook"):
-            executor.intervention_hook = self._approval.intervene
+        if executor is None:
+            return
+        if hasattr(executor, "set_permission_mode"):
+            executor.set_permission_mode(mode)
+        else:
+            executor.permission_mode = mode
+        if hasattr(executor, "intervention_hook"):
+            executor.intervention_hook = (
+                self._approval.intervene if mode == PermissionMode.REVIEW else None
+            )
 
     def accept(self) -> dict[str, Any]:
         with self._lock:
@@ -397,6 +421,8 @@ class MiniCodexUIController:
             "git": git_state,
             "task_git": task_git,
             "approval": self._approval.snapshot(),
+            "permission_mode": self._permission_mode.value,
+            "permission_modes": [mode.value for mode in PermissionMode],
         }
 
     def _task_payload(self) -> dict[str, Any] | None:
@@ -414,6 +440,7 @@ class MiniCodexUIController:
             "can_cancel": not self._task.done,
             "can_review": self._task.done and self._review_status == "pending",
             "awaiting_approval": self._approval.snapshot()["pending"] is not None,
+            "permission_mode": self._permission_mode.value,
         }
 
     def diff(self, path: str | None = None) -> dict[str, Any]:
@@ -520,7 +547,9 @@ class MiniCodexRequestHandler(BaseHTTPRequestHandler):
         try:
             route = urlparse(self.path).path
             if route == "/api/tasks":
-                result = self.server.controller.start_task(payload.get("prompt", ""))
+                result = self.server.controller.start_task(
+                    payload.get("prompt", ""), payload.get("permission_mode"),
+                )
                 self._json(result, HTTPStatus.ACCEPTED)
             elif route == "/api/tasks/cancel":
                 self._json(self.server.controller.cancel_task())
