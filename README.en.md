@@ -11,7 +11,7 @@ MiniCodex is an autonomous coding agent that works on local code repositories. I
 
 Its central boundary is: **the model handles understanding and decisions; the deterministic Harness owns facts, permissions, safety, execution, validation, recovery, and final completion.** A model message saying “done” can never finish a modification task by itself.
 
-> Current public release: [`v0.4.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.0) (Alpha). Use it in a committed or backed-up workspace.
+> Current public release: [`v0.4.1`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.1) (Alpha). Use it in a committed or backed-up workspace.
 
 ## Why MiniCodex
 
@@ -74,11 +74,11 @@ py -3.11 -m venv .venv
 python -m pip install -e .
 ```
 
-You can also install the `v0.4.0` wheel directly:
+You can also install the `v0.4.1` wheel directly:
 
 ```bash
 python -m pip install \
-  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.4.0/mini_codex-0.4.0-py3-none-any.whl
+  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.4.1/mini_codex-0.4.1-py3-none-any.whl
 ```
 
 Install development and test dependencies with:
@@ -267,7 +267,7 @@ minicodex/
 
 ## Testing and evaluation
 
-The current development commit passes **708 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
+The current development commit passes **710 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
 
 ```bash
 python -m pytest -q
@@ -319,6 +319,7 @@ Run the full test suite before submitting a focused change.
 | Validation Core V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |
 | Refactoring delivery report | [中文](docs/vibecoding-refactor-report.md) | [English](docs/vibecoding-refactor-report.en.md) |
+| v0.4.1 release notes | [中文](docs/releases/v0.4.1.zh-CN.md) | [English](docs/releases/v0.4.1.md) |
 | v0.4.0 release notes | [中文](docs/releases/v0.4.0.zh-CN.md) | [English](docs/releases/v0.4.0.md) |
 | v0.3.0 release notes | [中文](docs/releases/v0.3.0.zh-CN.md) | [English](docs/releases/v0.3.0.md) |
 | v0.2.0 release notes | [中文](docs/releases/v0.2.0.zh-CN.md) | [English](docs/releases/v0.2.0.md) |

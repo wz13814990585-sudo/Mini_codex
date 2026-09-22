@@ -19,6 +19,7 @@ from ..agent.validation import (
     BrowserInteractionContract,
     BrowserNoOpBehavior,
     CompletionStatus,
+    FileContainsContract,
     FileExistsContract,
     HttpContract,
     NodeBehaviorContract,
@@ -34,6 +35,7 @@ from ..agent.validation import (
     ValidationScope,
     ValidatorResolver,
     RegressionRequirement,
+    SemanticContract,
 )
 from ..evaluation.harness import EvaluationHarness
 from ..agent.observability.trace import TraceEventType, TraceRecorder
@@ -713,6 +715,148 @@ def test_completion_requires_policy_regression_obligation_after_edit():
 
     assert decision.status == CompletionStatus.NEEDS_RELEVANT_VALIDATION
     assert decision.can_complete is False
+
+
+def test_parser_refactor_semantic_regression_pass_closes_completion_chain():
+    task_requirements = TaskRequirements([
+        TaskRequirement(
+            "R1",
+            "parser module contains parse_record",
+            contract=FileContainsContract("src/parser.py", "def parse_record"),
+        ),
+        TaskRequirement(
+            "R2",
+            "service imports parse_record without redefining it",
+            category=RequirementCategory.REGRESSION,
+            contract=SemanticContract(
+                "src/service.py",
+                "imports parse_record from src.parser and does not define parse_record",
+            ),
+        ),
+    ])
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(task_requirements)
+    pipeline.record_edit()
+    acceptance, regression = pipeline.state.plan.checks
+
+    pipeline.observe(
+        "run_command",
+        {"command": "check parser", "purpose": "acceptance"},
+        ToolResult(True, "pass", {"command_succeeded": True}),
+        resolution=ValidatorResolution(
+            acceptance.id,
+            ResolutionStatus.RESOLVED,
+            "run_command",
+            {},
+            "process.run",
+            "src/parser.py",
+            "file_contains|src/parser.py",
+        ),
+    )
+    evidence = pipeline.observe(
+        "validate_semantic",
+        {
+            "path": "src/service.py",
+            "claim": regression.contract.claim,
+            "purpose": "regression",
+        },
+        ToolResult(True, "pass", {"outcome": "passed", "errors": []}),
+        frozenset({"validation.semantic"}),
+        resolution=ValidatorResolution(
+            regression.id,
+            ResolutionStatus.RESOLVED,
+            "validate_semantic",
+            {},
+            "validation.semantic",
+            "src/service.py",
+            "semantic|src/service.py",
+        ),
+    )
+
+    assert evidence.purpose == ValidationPurpose.REGRESSION
+    assert pipeline.state.proof(regression.id) is evidence
+    assert pipeline.state.targeted_passed is True
+    decision = TaskCompletionPolicy().evaluate(SimpleNamespace(
+        validation_pipeline=pipeline,
+        task_requirements=task_requirements,
+        current_regression_requirement=lambda: RegressionRequirement.RELEVANT_ONLY,
+    ))
+    assert decision.status == CompletionStatus.READY
+
+
+def test_web_script_refactor_semantic_regression_pass_closes_completion_chain():
+    task_requirements = TaskRequirements([
+        TaskRequirement(
+            "R1",
+            "app.js exists",
+            contract=FileExistsContract("app.js"),
+        ),
+        TaskRequirement(
+            "R2",
+            "clicking move updates state",
+            contract=BrowserInteractionContract(
+                "app.js",
+                BrowserAction("click", "#move"),
+                BrowserAssertion("text_equals", "#state", "moved"),
+            ),
+        ),
+        TaskRequirement(
+            "R3",
+            "index loads app.js and has no inline click handler",
+            category=RequirementCategory.REGRESSION,
+            contract=SemanticContract(
+                "index.html",
+                "#move has no inline onclick and index.html loads app.js",
+            ),
+        ),
+    ])
+    pipeline = ValidationPipeline()
+    pipeline.state.plan = ValidationPlanner().build(task_requirements)
+    pipeline.record_edit()
+
+    for check in pipeline.state.plan.checks[:2]:
+        pipeline.observe(
+            "run_command",
+            {"command": f"check {check.id}", "purpose": "acceptance"},
+            ToolResult(True, "pass", {"command_succeeded": True}),
+            resolution=ValidatorResolution(
+                check.id,
+                ResolutionStatus.RESOLVED,
+                "run_command",
+                {},
+                "process.run",
+                check.contract.path,
+                f"{check.contract_type}|{check.contract.path}",
+            ),
+        )
+    regression = pipeline.state.plan.checks[2]
+    evidence = pipeline.observe(
+        "validate_semantic",
+        {
+            "path": "index.html",
+            "claim": regression.contract.claim,
+            "purpose": "regression",
+        },
+        ToolResult(True, "pass", {"outcome": "passed", "errors": []}),
+        frozenset({"validation.semantic"}),
+        resolution=ValidatorResolution(
+            regression.id,
+            ResolutionStatus.RESOLVED,
+            "validate_semantic",
+            {},
+            "validation.semantic",
+            "index.html",
+            "semantic|index.html",
+        ),
+    )
+
+    assert pipeline.state.proof(regression.id) is evidence
+    decision = TaskCompletionPolicy().evaluate(SimpleNamespace(
+        validation_pipeline=pipeline,
+        task_requirements=task_requirements,
+        current_regression_requirement=lambda: RegressionRequirement.RELEVANT_ONLY,
+    ))
+    assert decision.status == CompletionStatus.READY
 
 
 def test_completion_requires_full_check_for_required_regression():

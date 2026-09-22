@@ -203,7 +203,9 @@ class ValidationPipeline:
             execution_succeeded=result.success,
             outcome=outcome,
             scope=ValidationScope.TARGETED,
-            purpose=ValidationPurpose.ACCEPTANCE,
+            purpose=self._validation_purpose(
+                arguments.get("purpose", "acceptance")
+            ),
             edit_revision=self.state.edit_revision,
             failed=(
                 failure_count
