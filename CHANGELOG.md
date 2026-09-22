@@ -6,6 +6,23 @@ All notable changes to MiniCodex are documented in this file.
 
 ## Unreleased
 
+## 0.4.0 - 2026-09-22
+
+### Added
+
+- A task-scoped Human-in-the-loop approval coordinator for caution-level operations.
+- Web UI decisions for **Allow once**, **Allow for task**, and **Deny**, with bounded redacted operation previews.
+- Cooperative cancellation and timeout behavior while an Agent is waiting for approval.
+- Per-task **Review**, **Auto**, and **Read-only** permission modes enforced at the tool boundary.
+- Persistent Trace audit events for approval requests and resolutions.
+- Task-change navigation for reviewing either the complete diff or one changed file at a time.
+
+### Changed
+
+- `SafetyToolExecutor` now pauses UI-hosted caution operations before execution; deterministic hard blocks remain non-overridable.
+- Rejected approval requests produce a stable `permission_denied` result so the Agent can choose a safer alternative or report a concrete blocker.
+- Read-only mode filters side-effecting tool schemas and independently rejects any attempted edit, process, validation process, or dependency installation at execution time.
+
 ## 0.3.0 - 2026-09-22
 
 ### Added

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .safety import (
+    PermissionMode,
     SafetyDecision,
 )
 from ..runtime.tool_types import (
@@ -29,7 +30,7 @@ class SafetyToolExecutor:
         BLOCKED
             → return ToolResult without execution
 
-        SAFE / CAUTION
+        SAFE / approved CAUTION
             ↓
         downstream executor
             ↓
@@ -42,6 +43,7 @@ class SafetyToolExecutor:
         executor,
         policy,
         intervention_hook=None,
+        permission_mode: PermissionMode | str = PermissionMode.AUTO,
         registry=None,
     ):
 
@@ -55,7 +57,24 @@ class SafetyToolExecutor:
         # The host may request approval or clarification. A hook never silently
         # overrides a safety denial; an approved task must be explicitly retried.
         self.intervention_hook = intervention_hook
+        self.permission_mode = PermissionMode(permission_mode)
         self.registry = registry
+
+    def set_permission_mode(self, mode: PermissionMode | str) -> None:
+        """Set the host posture without weakening deterministic safety policy."""
+
+        self.permission_mode = PermissionMode(mode)
+
+    def tool_allowed_in_mode(self, tool_name: str) -> bool:
+        if self.permission_mode != PermissionMode.READ_ONLY:
+            return True
+        try:
+            metadata = self.registry.metadata_for(tool_name)
+            return bool(metadata.read_only and metadata.capabilities)
+        except Exception:
+            # An unknown or legacy tool must never become an accidental write
+            # escape hatch when a host explicitly selected read-only mode.
+            return False
 
     # =========================================================
     # Prepare
@@ -192,7 +211,43 @@ class SafetyToolExecutor:
             )
 
         # =====================================================
-        # SAFE / CAUTION
+        # Host permission mode
+        # =====================================================
+
+        if not self.tool_allowed_in_mode(prepared.tool_name):
+            return self._read_only_denied_execution(
+                prepared=prepared,
+                decision=decision,
+            )
+
+        # =====================================================
+        # Human approval for CAUTION
+        # =====================================================
+
+        approval_required = bool(
+            decision.requires_attention
+            and self.permission_mode == PermissionMode.REVIEW
+        )
+        if approval_required:
+            if self.intervention_hook is None:
+                return self._approval_denied_execution(
+                    prepared=prepared,
+                    decision=decision,
+                )
+            try:
+                approved = bool(self.intervention_hook(
+                    decision.intervention, decision, prepared,
+                ))
+            except Exception:
+                approved = False
+            if not approved:
+                return self._approval_denied_execution(
+                    prepared=prepared,
+                    decision=decision,
+                )
+
+        # =====================================================
+        # SAFE / approved CAUTION
         # =====================================================
 
         execution = (
@@ -228,7 +283,67 @@ class SafetyToolExecutor:
                 decision.reason
             )
 
+        if approval_required:
+            result.data["approval"] = {
+                "required": True,
+                "granted": True,
+            }
+
         return execution
+
+    def _read_only_denied_execution(
+        self,
+        *,
+        prepared: PreparedToolCall,
+        decision: SafetyDecision,
+    ) -> ToolExecution:
+        return ToolExecution(
+            tool_name=prepared.tool_name,
+            arguments=prepared.arguments,
+            result=ToolResult(
+                success=False,
+                summary=f"只读模式禁止执行工具 '{prepared.tool_name}'。",
+                data={
+                    "tool_name": prepared.tool_name,
+                    "failure_type": "permission_denied",
+                    "reason_code": ReasonCode.READ_ONLY_MODE.value,
+                    "permission_mode": self.permission_mode.value,
+                    "safety": decision.to_dict(),
+                },
+                error="当前任务使用只读模式，不能执行会产生副作用的工具。",
+                llm_content=(
+                    "当前任务处于只读模式。不要重试修改、运行进程或安装依赖；"
+                    "请仅使用只读工具完成分析，并明确说明未执行任何更改。"
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _approval_denied_execution(
+        *,
+        prepared: PreparedToolCall,
+        decision: SafetyDecision,
+    ) -> ToolExecution:
+        return ToolExecution(
+            tool_name=prepared.tool_name,
+            arguments=prepared.arguments,
+            result=ToolResult(
+                success=False,
+                summary=f"工具 '{prepared.tool_name}' 未获用户批准。",
+                data={
+                    "tool_name": prepared.tool_name,
+                    "failure_type": "permission_denied",
+                    "reason_code": ReasonCode.PERMISSION_DENIED.value,
+                    "safety": decision.to_dict(),
+                    "approval": {"required": True, "granted": False},
+                },
+                error="用户拒绝了这项需要确认的操作。",
+                llm_content=(
+                    "用户拒绝了当前操作。不要原样重试；请采用无需该权限的替代方案，"
+                    "或明确说明任务为何无法继续。"
+                ),
+            ),
+        )
 
     # =========================================================
     # Blocked Result

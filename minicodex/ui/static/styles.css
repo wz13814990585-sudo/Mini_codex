@@ -49,7 +49,7 @@ button { color: inherit; }
 
 .brand, .workspace-meta, .top-actions, .panel-heading, .agent-heading,
 .editor-toolbar, .terminal-heading, .terminal-title, .terminal-stats,
-.composer-footer, .review-actions {
+.composer-footer, .review-actions, .approval-actions, .approval-heading {
   display: flex;
   align-items: center;
 }
@@ -138,12 +138,16 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: -.02em; }
 .tree-name { overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .tree-children.collapsed { display: none; }
 
-.workbench { display: grid; grid-template-rows: 46px minmax(240px, 1fr) 210px; background: #0e1113; }
+.workbench { display: grid; grid-template-rows: 46px auto minmax(240px, 1fr) 210px; background: #0e1113; }
 .editor-toolbar { padding: 0 14px; border-bottom: 1px solid var(--line); gap: 14px; }
 .view-tabs { display: flex; padding: 3px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); }
 .view-tab { padding: 5px 11px; border-radius: 5px; color: var(--muted); font-size: 11px; }
 .view-tab.active { background: var(--panel-soft); color: var(--text); }
 .active-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.diff-file-bar { display: flex; gap: 6px; overflow-x: auto; padding: 7px 14px; border-bottom: 1px solid var(--line); background: #0b0e10; }
+.diff-file { flex: 0 0 auto; max-width: 220px; overflow: hidden; padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font: 9px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.diff-file:hover { border-color: var(--line-strong); color: var(--text); }
+.diff-file.active { border-color: rgba(159, 255, 201, .25); background: rgba(159, 255, 201, .07); color: var(--accent); }
 
 .editor { min-height: 0; overflow: hidden; position: relative; }
 .empty-state { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--muted); text-align: center; }
@@ -167,7 +171,8 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: -.02em; }
 .terminal-lights i:first-child { background: #74514d; }
 .terminal-lights i:nth-child(2) { background: #786a43; }
 .terminal-output { flex: 1; overflow: auto; padding: 9px 14px 14px; font: 11px/1.65 var(--mono); }
-.terminal-line { display: grid; grid-template-columns: 64px 100px 1fr; gap: 8px; color: #a6b0ac; }
+.terminal-line { display: grid; grid-template-columns: 64px 132px minmax(0, 1fr); gap: 8px; color: #a6b0ac; }
+.terminal-line > span:last-child { overflow-wrap: anywhere; }
 .terminal-line .time { color: #47514d; }
 .terminal-line .event { color: var(--blue); }
 .terminal-line.success .event { color: var(--accent-strong); }
@@ -202,6 +207,19 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: -.02em; }
 .message.user .message-body p { border: 0; border-radius: 10px 4px 10px 10px; background: #26312c; color: #e5eee9; }
 .message.system .message-body p { background: rgba(255, 210, 122, .05); color: #cbbd98; }
 
+.approval-bar { margin: 0 14px 10px; padding: 11px; border: 1px solid rgba(255, 210, 122, .28); border-radius: 9px; background: rgba(255, 210, 122, .06); }
+.approval-heading { gap: 9px; }
+.approval-heading > div { min-width: 0; }
+.approval-heading strong, .approval-heading span { display: block; }
+.approval-heading strong { font-size: 11px; color: var(--warning); }
+.approval-heading span { margin-top: 2px; overflow: hidden; color: var(--muted); font: 9px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.approval-icon { display: grid; flex: 0 0 auto; place-items: center; width: 24px; height: 24px; border: 1px solid rgba(255, 210, 122, .3); border-radius: 7px; color: var(--warning); font-weight: 800; }
+.approval-bar p { margin: 9px 0 7px; color: #d7c99f; font-size: 10px; line-height: 1.45; }
+.approval-bar code { display: block; max-height: 74px; overflow: auto; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: rgba(0, 0, 0, .2); color: var(--muted-strong); font: 9px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-actions { margin-top: 9px; gap: 6px; }
+.approval-actions button { flex: 1; min-width: 0; min-height: 31px; padding: 4px 6px; border-radius: 7px; cursor: pointer; font-size: 9px; font-weight: 650; }
+.secondary-button { border: 1px solid #4a4536; background: rgba(255, 210, 122, .04); color: var(--warning); }
+
 .review-bar { margin: 0 14px 10px; padding: 11px; border: 1px solid rgba(159, 255, 201, .17); border-radius: 9px; background: rgba(159, 255, 201, .04); }
 .review-bar > div:first-child strong, .review-bar > div:first-child span { display: block; }
 .review-bar > div:first-child strong { font-size: 11px; }
@@ -215,6 +233,12 @@ h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: -.02em; }
 .composer:focus-within { border-color: #4b5e55; box-shadow: 0 0 0 3px rgba(159, 255, 201, .025); }
 .composer textarea { width: 100%; min-height: 72px; max-height: 170px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; line-height: 1.5; }
 .composer textarea::placeholder { color: #59625e; }
+.permission-mode { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.mode-button { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 9px; font-weight: 650; }
+.mode-button:hover:not(:disabled) { border-color: var(--line-strong); color: var(--text); }
+.mode-button.active { border-color: rgba(159, 255, 201, .22); background: rgba(159, 255, 201, .07); color: var(--accent); }
+.mode-button:disabled { cursor: not-allowed; opacity: .48; }
+.permission-mode > span { flex: 1 0 100%; color: #66706c; font-size: 9px; line-height: 1.4; }
 .composer-footer { justify-content: flex-end; gap: 8px; margin-top: 7px; }
 .composer-hint { margin-right: auto; color: #56605c; font-size: 9px; }
 .run-button, .cancel-button { height: 32px; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 700; }

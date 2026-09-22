@@ -52,6 +52,7 @@
         <span class="active-path" id="active-path" title="">README.md</span>
         <button class="icon-button" id="refresh-view" type="button" aria-label="Refresh view">↻</button>
       </div>
+      <div class="diff-file-bar hidden" id="diff-file-bar" aria-label="Changed files"></div>
       <div class="editor" id="editor">
         <div class="empty-state" id="editor-empty">
           <span class="empty-glyph">⌘</span>
@@ -113,10 +114,27 @@
         </article>
       </div>
 
+      <section class="approval-bar hidden" id="approval-bar" aria-live="assertive">
+        <div class="approval-heading">
+          <span class="approval-icon" aria-hidden="true">!</span>
+          <div>
+            <strong data-i18n="approvalTitle">操作需要批准</strong>
+            <span id="approval-tool">—</span>
+          </div>
+        </div>
+        <p id="approval-reason"></p>
+        <code id="approval-target"></code>
+        <div class="approval-actions">
+          <button class="reject-button" id="reject-approval" type="button" data-i18n="deny">拒绝</button>
+          <button class="secondary-button" id="allow-task-approval" type="button" data-i18n="allowTask">本任务允许</button>
+          <button class="accept-button" id="allow-once-approval" type="button" data-i18n="allowOnce">允许一次</button>
+        </div>
+      </section>
+
       <div class="review-bar hidden" id="review-bar">
         <div>
           <strong data-i18n="reviewTitle">修改等待确认</strong>
-          <span data-i18n="reviewHint">Accept 保留修改，Reject 安全回滚本次任务</span>
+          <span id="review-hint" data-i18n="reviewHint">Accept 保留修改，Reject 安全回滚本次任务</span>
         </div>
         <div class="review-actions">
           <button class="reject-button" id="reject-task" type="button" data-i18n="reject">Reject</button>
@@ -125,6 +143,12 @@
       </div>
 
       <form class="composer" id="task-form">
+        <div class="permission-mode" id="permission-mode" role="radiogroup" aria-label="Permission mode">
+          <button class="mode-button active" type="button" data-mode="review" data-i18n="modeReview" data-i18n-title="modeReviewHelp" aria-pressed="true">审查</button>
+          <button class="mode-button" type="button" data-mode="auto" data-i18n="modeAuto" data-i18n-title="modeAutoHelp" aria-pressed="false">自动</button>
+          <button class="mode-button" type="button" data-mode="read_only" data-i18n="modeReadOnly" data-i18n-title="modeReadOnlyHelp" aria-pressed="false">只读</button>
+          <span id="permission-mode-help" data-i18n="modeReviewHelp">警示操作执行前询问，任务结束后审查全部修改</span>
+        </div>
         <textarea id="task-prompt" rows="4" placeholder="例如：为用户 API 添加分页，并补充测试" data-i18n-placeholder="promptPlaceholder"></textarea>
         <div class="composer-footer">
           <span class="composer-hint" data-i18n="submitHint">⌘/Ctrl + Enter 发送</span>

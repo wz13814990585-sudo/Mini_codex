@@ -11,7 +11,7 @@ MiniCodex is an autonomous coding agent that works on local code repositories. I
 
 Its central boundary is: **the model handles understanding and decisions; the deterministic Harness owns facts, permissions, safety, execution, validation, recovery, and final completion.** A model message saying “done” can never finish a modification task by itself.
 
-> Current public release: [`v0.3.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.3.0) (Alpha). Use it in a committed or backed-up workspace.
+> Current public release: [`v0.4.0`](https://github.com/wz13814990585-sudo/Mini_codex/releases/tag/v0.4.0) (Alpha). Use it in a committed or backed-up workspace.
 
 ## Why MiniCodex
 
@@ -74,11 +74,11 @@ py -3.11 -m venv .venv
 python -m pip install -e .
 ```
 
-You can also install the `v0.3.0` wheel directly:
+You can also install the `v0.4.0` wheel directly:
 
 ```bash
 python -m pip install \
-  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.3.0/mini_codex-0.3.0-py3-none-any.whl
+  https://github.com/wz13814990585-sudo/Mini_codex/releases/download/v0.4.0/mini_codex-0.4.0-py3-none-any.whl
 ```
 
 Install development and test dependencies with:
@@ -125,9 +125,9 @@ minicodex doctor --json
 minicodex ui --workspace /path/to/project
 ```
 
-The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, Git diff, and task-level Accept / Reject. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
+The browser workspace provides a file tree, code viewer, Agent chat, live task phases, Trace activity terminal, per-file Git diff navigation, and task-level Accept / Reject. v0.4.0 offers per-task Review, Auto, and Read-only permission modes. Review pauses before caution-level operations such as dependency installation, external network access, or editing pre-existing user changes, asks the user to Allow once, Allow for task, or Deny, and records that decision in the Trace audit trail. Reject reuses the Harness checkpoint rollback: it undoes only edits from that task and refuses to overwrite concurrent external changes.
 
-The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. The `v0.3.0` wheel includes the UI static assets and launch command.
+The UI binds only to `127.0.0.1`, and sensitive credential files never enter the file tree or preview API. Use `--port 9000` to select a port or `--no-browser` to start the service without opening a browser. The `v0.4.0` wheel includes the UI static assets and launch command.
 
 ### 5. Run a task from the CLI
 
@@ -194,6 +194,7 @@ This flow demonstrates repository inspection, requirement decomposition, code ed
 
 - Informational questions and read-only code review
 - Browsing files, reviewing code and diffs, tracking tasks, and Accept / Reject through the local Web UI
+- Human-in-the-loop approval in the Web UI before caution-level operations execute
 - Creating, modifying, fixing, and refactoring Python, JavaScript, TypeScript, and HTML projects
 - Running commands, pytest, and project test scripts
 - Validating Flask and FastAPI endpoints
@@ -266,7 +267,7 @@ minicodex/
 
 ## Testing and evaluation
 
-The current productization commit passes **689 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
+The current development commit passes **708 deterministic tests**. CI covers Python 3.11, 3.12, and 3.13, builds the wheel, and verifies its installed entry point outside the source checkout. Normal tests never call a paid model:
 
 ```bash
 python -m pytest -q
@@ -302,7 +303,7 @@ Run the full test suite before submitting a focused change.
 - Both the CLI and Web UI are single-process sessions and cannot resume an unfinished task after a crash.
 - In-progress task state and checkpoints exist only in the current process.
 - Browser interaction validation requires optional Playwright and Chromium installs.
-- The Web UI provides task-level Accept / Reject, but not per-command human approval yet.
+- Review mode prompts only for operations classified as `CAUTION`; Read-only separately blocks every side-effecting tool but is not kernel-level isolation.
 - Service tools provide bounded processes and loopback HTTP validation, not kernel-level container isolation.
 - Model, network, package registry, and operating-system conditions can still cause failures.
 - Automated validation reduces risk but does not replace human code review or deployment testing.
@@ -313,10 +314,12 @@ Run the full test suite before submitting a focused change.
 | --- | --- | --- |
 | Documentation index | [中文](docs/README.md) | [English](docs/README.en.md) |
 | Local Web workspace | [中文](docs/ui.md) | [English](docs/ui.en.md) |
+| Human-in-the-loop | [中文](docs/human-in-the-loop.md) | [English](docs/human-in-the-loop.en.md) |
 | Architecture | [中文](docs/architecture.md) | [English](docs/architecture.en.md) |
 | Validation Core V2 | [中文](docs/validation-core-v2.md) | [English](docs/validation-core-v2.en.md) |
 | Benchmark V1 | [中文](docs/benchmark-v1.md) | [English](docs/benchmark-v1.en.md) |
 | Refactoring delivery report | [中文](docs/vibecoding-refactor-report.md) | [English](docs/vibecoding-refactor-report.en.md) |
+| v0.4.0 release notes | [中文](docs/releases/v0.4.0.zh-CN.md) | [English](docs/releases/v0.4.0.md) |
 | v0.3.0 release notes | [中文](docs/releases/v0.3.0.zh-CN.md) | [English](docs/releases/v0.3.0.md) |
 | v0.2.0 release notes | [中文](docs/releases/v0.2.0.zh-CN.md) | [English](docs/releases/v0.2.0.md) |
 | Changelog | [中文](CHANGELOG.zh-CN.md) | [English](CHANGELOG.md) |

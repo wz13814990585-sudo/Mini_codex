@@ -11,6 +11,7 @@ from ..agent.progress import ProgressKind, ProgressSignal
 from ..agent.planning import AgentPlan, PlanStep
 from ..agent.planning import EvidenceStrength, StepEvidenceStore
 from ..agent.routing import TaskRouter
+from ..agent.safety import PermissionMode
 from ..agent.task_state import TaskState
 from ..tools.registry import ToolRegistry
 from ..tools.results import ToolResult
@@ -102,6 +103,27 @@ def test_fast_tool_exposure_is_planless():
     assert {"read_file", "write_file", "run_tests"} <= names
     assert "complete_plan_step" not in names
     assert "replan" not in names
+
+
+def test_read_only_permission_mode_filters_side_effecting_tool_schemas():
+    class NamedTool:
+        def __init__(self, name):
+            self.name = name
+
+        def to_schema(self):
+            return {"type": "function", "function": {"name": self.name}}
+
+    registry = ToolRegistry()
+    for name in ("read_file", "search_code", "write_file", "run_tests"):
+        registry.register(NamedTool(name))
+    agent = MiniCodexAgent(llm=None, registry=registry, planner=None, repo_map=None)
+    agent.execution_policy = policy_for(ExecutionMode.FAST)
+    agent.safety_executor.set_permission_mode(PermissionMode.READ_ONLY)
+
+    names = {schema["function"]["name"] for schema in agent.get_base_tool_schemas()}
+    assert {"read_file", "search_code"} <= names
+    assert "write_file" not in names
+    assert "run_tests" not in names
 
 
 def test_fast_is_planless_even_when_legacy_caller_requests_planning(tmp_path):

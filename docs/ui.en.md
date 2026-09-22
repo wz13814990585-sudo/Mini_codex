@@ -27,21 +27,26 @@ minicodex ui --workspace /path/to/project --port 0 --no-browser
 | Area | Source of truth | Purpose |
 | --- | --- | --- |
 | File tree | Workspace-confined read-only file API | Search and select text files; generated directories and credential files are excluded |
-| Code / Changes | File API / `GitRepositoryInspector` | View source or the selected file's Git diff |
+| Code / Changes | File API / `GitRepositoryInspector` | View source and switch between the complete task diff and individual changed files |
 | Agent Chat | UI task session | Submit natural-language tasks and retain messages for this process |
 | Task phases | `TaskState` | Show Inspect, Act, Validate, Done, blocked, and failed states |
 | Run activity | `TraceRecorder` | Show model, tool, safety, edit, and validation events; arbitrary shell input is not exposed |
+| Operation approval | `ApprovalCoordinator` / `SafetyDecision` | Allow once, allow for the task, or deny before a caution-level operation executes |
+| Permission modes | `PermissionMode` / `ToolMetadata` | Select Review, Auto, or Read-only per task and enforce it at execution time |
 | Accept / Reject | Checkpoint lifecycle | Keep changes or safely undo the current task's Agent edits |
 
 The top-right control switches between Chinese and English. It changes interface copy only, never the task text sent to the model.
 
 ## Task and review flow
 
-1. Describe the coding goal in Agent Chat.
+1. Select a permission mode and describe the coding goal in Agent Chat. The default **Review** mode fits everyday vibecoding; **Auto** skips caution prompts without bypassing hard safety; **Read-only** is for analysis.
 2. The UI creates a fresh `MiniCodexAgent` and runs it in the background through `AsyncAgentRunner`.
 3. The page polls authoritative `TaskState` and structured Trace data. The Agent edits and validates through the same policy as the CLI.
-4. If the task produced sealed checkpoints, completion enters `pending` review and blocks the next task.
-5. **Accept** keeps the physical workspace changes. **Reject** calls `undo_task()` and restores this task's checkpoints in reverse order.
+4. In Review mode, if safety classifies an operation as `CAUTION`, the background Agent pauses for approval; ordinary safe operations do not create noisy prompts.
+5. The user can allow it once, allow the same rule for this task, or deny it. Denial returns a stable `permission_denied` result to the Agent.
+6. Approval requests and resolutions enter the Trace audit stream and are saved with the task JSONL.
+7. If the task produced sealed checkpoints, completion enters `pending` review and blocks the next task. The Changes toolbar can show the complete diff or one changed file.
+8. **Accept** keeps the physical workspace changes. **Reject** calls `undo_task()` and restores this task's checkpoints in reverse order.
 
 Reject never runs `git reset` and does not restore unrelated uncommitted changes that predated the task. If the IDE or user changes a file after its checkpoint, rollback reports a conflict and refuses to overwrite it.
 
@@ -61,7 +66,8 @@ This local UI is not a remote multi-user service. Do not expose it through a rev
 ## Current scope
 
 - One Agent task runs at a time.
-- Review applies to the whole task, not each command.
+- Diff viewing can narrow to one file; Accept / Reject remains atomic for the whole task.
+- Pre-execution approval covers `CAUTION` operations only; deterministic `BLOCKED` operations cannot be unlocked by the UI.
 - The terminal is a read-only activity stream, not an interactive shell.
 - Messages, in-progress state, and Reject checkpoints are process-local; unfinished tasks cannot resume after the service closes.
 - Diff reflects the current Git worktree. A file that was already dirty and then edited by the Agent may still contain mixed changes and needs human review.

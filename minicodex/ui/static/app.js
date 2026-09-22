@@ -17,6 +17,14 @@ const ui = {
   run: document.getElementById('run-task'),
   cancel: document.getElementById('cancel-task'),
   warning: document.getElementById('config-warning'),
+  approval: document.getElementById('approval-bar'),
+  approvalTool: document.getElementById('approval-tool'),
+  approvalReason: document.getElementById('approval-reason'),
+  approvalTarget: document.getElementById('approval-target'),
+  diffFiles: document.getElementById('diff-file-bar'),
+  modeHelp: document.getElementById('permission-mode-help'),
+  modeButtons: Array.from(document.querySelectorAll('[data-mode]')),
+  reviewHint: document.getElementById('review-hint'),
 };
 
 const translations = {
@@ -31,6 +39,13 @@ const translations = {
     submitHint: '⌘/Ctrl + Enter 发送', stop: '停止', run: '运行任务', running: '运行中',
     pending: '待确认', accepted: '已接受', rejected: '已回滚', failed: '失败', cancelled: '已取消',
     noDiff: '当前文件没有未提交变更。', treeError: '无法读取文件树', requestFailed: '请求失败',
+    approvalTitle: '操作需要批准', approvalWaiting: '等待批准', deny: '拒绝',
+    allowTask: '本任务允许', allowOnce: '允许一次',
+    modeReview: '审查', modeAuto: '自动', modeReadOnly: '只读',
+    modeReviewHelp: '警示操作执行前询问，任务结束后审查全部修改',
+    modeAutoHelp: '安全策略允许的操作自动执行，任务结束后仍可审查修改',
+    modeReadOnlyHelp: '仅开放读取、搜索和 Git 检查，不允许修改或运行进程',
+    allChanges: '全部变更', changedFiles: '个文件等待审查',
   },
   en: {
     workspace: 'WORKSPACE', files: 'Files', searchFiles: 'Search files', code: 'Code', diff: 'Changes',
@@ -43,6 +58,13 @@ const translations = {
     submitHint: '⌘/Ctrl + Enter to send', stop: 'Stop', run: 'Run task', running: 'Running',
     pending: 'Review', accepted: 'Accepted', rejected: 'Reverted', failed: 'Failed', cancelled: 'Cancelled',
     noDiff: 'This file has no uncommitted changes.', treeError: 'Unable to load file tree', requestFailed: 'Request failed',
+    approvalTitle: 'Approval required', approvalWaiting: 'Approval', deny: 'Deny',
+    allowTask: 'Allow for task', allowOnce: 'Allow once',
+    modeReview: 'Review', modeAuto: 'Auto', modeReadOnly: 'Read-only',
+    modeReviewHelp: 'Ask before caution operations, then review the complete task diff',
+    modeAutoHelp: 'Run safety-allowed operations automatically; final changes remain reviewable',
+    modeReadOnlyHelp: 'Allow reads, search, and Git inspection only; block edits and processes',
+    allChanges: 'All changes', changedFiles: 'files awaiting review',
   },
 };
 
@@ -57,6 +79,12 @@ const state = {
   taskSignature: '',
   pollTimer: null,
   modelReady: false,
+  approval: null,
+  pendingApprovalId: '',
+  permissionMode: ['review', 'auto', 'read_only'].includes(localStorage.getItem('minicodex-permission-mode'))
+    ? localStorage.getItem('minicodex-permission-mode') : 'review',
+  changedPaths: [],
+  diffPath: '',
 };
 
 function t(key) {
@@ -71,7 +99,14 @@ function applyLanguage() {
   document.querySelectorAll('[data-i18n-placeholder]').forEach((element) => {
     element.placeholder = t(element.dataset.i18nPlaceholder);
   });
+  document.querySelectorAll('[data-i18n-title]').forEach((element) => {
+    element.title = t(element.dataset.i18nTitle);
+  });
   document.getElementById('language-toggle').textContent = state.locale === 'zh' ? 'EN' : '中文';
+  renderApproval(state.approval);
+  renderPermissionMode();
+  renderDiffFiles();
+  renderReviewHint();
 }
 
 async function request(path, options = {}) {
@@ -210,6 +245,7 @@ function fileGlyph(name) {
 
 async function openFile(path) {
   state.activePath = path;
+  state.diffPath = '';
   state.mode = 'code';
   syncTabs();
   renderTree();
@@ -223,14 +259,17 @@ async function openFile(path) {
   }
 }
 
-async function openDiff() {
+async function openDiff(path) {
+  const target = path === undefined ? (state.diffPath || state.activePath || '') : path;
   state.mode = 'diff';
+  state.diffPath = target || '';
   syncTabs();
+  renderDiffFiles();
   try {
-    const suffix = state.activePath ? `?path=${encodeURIComponent(state.activePath)}` : '';
+    const suffix = state.diffPath ? `?path=${encodeURIComponent(state.diffPath)}` : '';
     const payload = await request(`/api/diff${suffix}`);
     renderCode(payload.text || t('noDiff'), true);
-    ui.activePath.textContent = state.activePath ? `${state.activePath} · diff` : 'Workspace diff';
+    ui.activePath.textContent = state.diffPath ? `${state.diffPath} · diff` : t('allChanges');
   } catch (error) {
     toast(error.message, 'error');
   }
@@ -281,18 +320,22 @@ function schedulePoll(delay) {
 function renderDynamicState(payload) {
   const git = payload.git || {};
   document.getElementById('branch-name').textContent = git.branch || (git.is_repo ? 'detached' : 'no git');
+  const changed = payload.task_git && payload.task_git.agent_current_changed_files;
+  state.changedPaths = changed || [];
   renderTask(payload.task, payload.runtime);
+  renderApproval(payload.approval);
   renderMessages(payload.messages || []);
   appendEvents(payload.events || []);
   const summary = payload.trace_summary || {};
   document.getElementById('tool-count').textContent = `${summary.tool_calls || 0} tools`;
   document.getElementById('validation-count').textContent = `${summary.validation_runs || 0} checks`;
-  const changed = payload.task_git && payload.task_git.agent_current_changed_files;
+  renderDiffFiles();
   const signature = JSON.stringify(changed || []);
   if (payload.task && payload.task.done && changed && changed.length && state.taskSignature !== `${payload.task.id}:${signature}`) {
     state.taskSignature = `${payload.task.id}:${signature}`;
     state.activePath = changed[0];
-    openDiff();
+    state.diffPath = changed[0];
+    openDiff(changed[0]);
     loadTree();
   }
 }
@@ -300,9 +343,14 @@ function renderDynamicState(payload) {
 function renderTask(task, runtime) {
   const status = task ? task.status : 'idle';
   const review = task ? task.review_status : 'not_required';
+  if (task && task.permission_mode && (!task.done || review === 'pending')) {
+    state.permissionMode = task.permission_mode;
+    localStorage.setItem('minicodex-permission-mode', state.permissionMode);
+  }
   let labelKey = 'idle';
   let badgeClass = 'idle';
-  if (task && !task.done) { labelKey = 'running'; badgeClass = 'running'; }
+  if (task && task.awaiting_approval) { labelKey = 'approvalWaiting'; badgeClass = 'pending'; }
+  else if (task && !task.done) { labelKey = 'running'; badgeClass = 'running'; }
   else if (review === 'pending') { labelKey = 'pending'; badgeClass = 'pending'; }
   else if (review === 'accepted') { labelKey = 'accepted'; badgeClass = 'completed'; }
   else if (review === 'rejected') { labelKey = 'rejected'; badgeClass = 'completed'; }
@@ -315,7 +363,81 @@ function renderTask(task, runtime) {
   ui.cancel.classList.toggle('hidden', !(task && task.can_cancel));
   ui.run.disabled = Boolean(task && (!task.done || review === 'pending')) || !state.modelReady;
   ui.prompt.disabled = Boolean(task && (!task.done || review === 'pending'));
+  ui.modeButtons.forEach((button) => {
+    button.disabled = Boolean(task && (!task.done || review === 'pending'));
+  });
+  renderReviewHint();
+  renderPermissionMode();
   renderPhases(runtime ? runtime.phase : null);
+}
+
+function renderPermissionMode() {
+  for (const button of ui.modeButtons) {
+    const active = button.dataset.mode === state.permissionMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  const helpKey = ({ review: 'modeReviewHelp', auto: 'modeAutoHelp', read_only: 'modeReadOnlyHelp' })[state.permissionMode];
+  ui.modeHelp.textContent = t(helpKey || 'modeReviewHelp');
+}
+
+function renderReviewHint() {
+  const pending = !ui.review.classList.contains('hidden');
+  ui.reviewHint.textContent = pending && state.changedPaths.length
+    ? `${state.changedPaths.length} ${t('changedFiles')} · ${t('reviewHint')}`
+    : t('reviewHint');
+}
+
+function renderDiffFiles() {
+  ui.diffFiles.classList.toggle('hidden', state.mode !== 'diff' || !state.changedPaths.length);
+  ui.diffFiles.replaceChildren();
+  if (state.mode !== 'diff' || !state.changedPaths.length) return;
+  const entries = [['', t('allChanges')], ...state.changedPaths.map((path) => [path, path])];
+  for (const [path, label] of entries) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `diff-file${state.diffPath === path ? ' active' : ''}`;
+    button.textContent = label;
+    button.title = label;
+    button.addEventListener('click', () => {
+      if (path) state.activePath = path;
+      openDiff(path);
+    });
+    ui.diffFiles.append(button);
+  }
+}
+
+const approvalReasons = {
+  zh: {
+    dependency_install: '该操作会安装或修改项目依赖。',
+    network_access: '该命令会访问外部网络。',
+    preexisting_user_change: '目标文件在任务开始前已有未提交修改。',
+    git_conflict: '目标文件当前存在 Git 冲突。',
+  },
+  en: {
+    dependency_install: 'This operation installs or changes project dependencies.',
+    network_access: 'This command accesses the external network.',
+    preexisting_user_change: 'The target file already had uncommitted changes before this task.',
+    git_conflict: 'The target file currently has a Git conflict.',
+  },
+};
+
+function renderApproval(approval) {
+  state.approval = approval || null;
+  const pending = approval && approval.pending;
+  state.pendingApprovalId = pending ? pending.request_id : '';
+  ui.approval.classList.toggle('hidden', !pending);
+  if (!pending) return;
+  ui.approvalTool.textContent = `${pending.tool_name} · ${pending.rule}`;
+  ui.approvalReason.textContent = approvalReasons[state.locale][pending.rule] || pending.reason;
+  const details = [];
+  if (pending.command) details.push(pending.command);
+  if (pending.path) details.push(pending.path);
+  for (const [key, value] of Object.entries(pending.arguments || {})) {
+    if ((key === 'command' && pending.command) || (key === 'path' && pending.path)) continue;
+    details.push(`${key}: ${Array.isArray(value) ? value.join(' ') : value}`);
+  }
+  ui.approvalTarget.textContent = details.join('\n') || pending.tool_name;
 }
 
 function renderPhases(phase) {
@@ -388,7 +510,7 @@ function formatTime(timestamp) {
 
 function eventDetail(event) {
   const data = event.data || {};
-  const parts = [data.tool_name, data.summary, data.path, data.phase, data.reason, data.error].filter(Boolean);
+  const parts = [data.tool_name, data.rule, data.decision, data.resolution, data.summary, data.path, data.phase, data.reason, data.error].filter(Boolean);
   if (data.duration_seconds != null) parts.push(`${Number(data.duration_seconds).toFixed(2)}s`);
   return parts.join(' · ') || '—';
 }
@@ -398,7 +520,10 @@ async function submitTask(event) {
   const prompt = ui.prompt.value.trim();
   if (!prompt) return;
   try {
-    await request('/api/tasks', { method: 'POST', body: JSON.stringify({ prompt }) });
+    await request('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, permission_mode: state.permissionMode }),
+    });
     ui.prompt.value = '';
     state.lastSequence = 0;
     state.terminalEvents = [];
@@ -422,6 +547,19 @@ async function taskAction(action) {
   }
 }
 
+async function approvalAction(decision) {
+  if (!state.pendingApprovalId) return;
+  try {
+    await request('/api/approvals', {
+      method: 'POST',
+      body: JSON.stringify({ request_id: state.pendingApprovalId, decision }),
+    });
+    await pollState();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
 document.getElementById('task-form').addEventListener('submit', submitTask);
 ui.prompt.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submitTask(event);
@@ -429,11 +567,20 @@ ui.prompt.addEventListener('keydown', (event) => {
 document.getElementById('cancel-task').addEventListener('click', () => taskAction('cancel'));
 document.getElementById('accept-task').addEventListener('click', () => taskAction('accept'));
 document.getElementById('reject-task').addEventListener('click', () => taskAction('reject'));
+document.getElementById('reject-approval').addEventListener('click', () => approvalAction('reject'));
+document.getElementById('allow-task-approval').addEventListener('click', () => approvalAction('allow_task'));
+document.getElementById('allow-once-approval').addEventListener('click', () => approvalAction('allow_once'));
 document.getElementById('refresh-tree').addEventListener('click', loadTree);
-document.getElementById('refresh-view').addEventListener('click', () => state.mode === 'diff' ? openDiff() : openFile(state.activePath));
+document.getElementById('refresh-view').addEventListener('click', () => state.mode === 'diff' ? openDiff(state.diffPath) : openFile(state.activePath));
 ui.filter.addEventListener('input', renderTree);
 ui.codeTab.addEventListener('click', () => state.activePath && openFile(state.activePath));
-ui.diffTab.addEventListener('click', openDiff);
+ui.diffTab.addEventListener('click', () => openDiff(state.activePath || ''));
+ui.modeButtons.forEach((button) => button.addEventListener('click', () => {
+  if (button.disabled) return;
+  state.permissionMode = button.dataset.mode;
+  localStorage.setItem('minicodex-permission-mode', state.permissionMode);
+  renderPermissionMode();
+}));
 document.getElementById('clear-terminal').addEventListener('click', () => ui.terminal.replaceChildren());
 document.getElementById('language-toggle').addEventListener('click', () => {
   state.locale = state.locale === 'zh' ? 'en' : 'zh';
