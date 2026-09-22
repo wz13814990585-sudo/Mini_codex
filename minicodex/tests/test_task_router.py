@@ -72,6 +72,8 @@ def test_runtime_word_alone_does_not_force_complex_mode():
         "How can I add a button to app.py?",
         "Explain how to refactor app.py",
         "分析一下 app.py 为什么无法运行",
+        "如何创建一个网页游戏？",
+        "请问怎样制作贪吃蛇游戏？",
     ],
 )
 def test_informational_questions_do_not_require_coding_action(prompt):

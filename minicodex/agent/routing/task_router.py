@@ -89,7 +89,8 @@ class TaskRouter:
     )
     _HOW_TO = re.compile(
         r"^\s*(?:explain\s+how|tell me how|how (?:can|do|should) i)|"
-        r"^\s*(?:请?(?:解释|告诉我).*(?:如何|怎么)|分析一下.*为什么)", re.IGNORECASE,
+        r"^\s*(?:请?(?:解释|告诉我).*(?:如何|怎么)|"
+        r"(?:请问)?(?:我该)?(?:如何|怎么|怎样)|分析一下.*为什么)", re.IGNORECASE,
     )
 
     def __init__(self, llm=None, *, confidence_floor: float = 0.0) -> None:
